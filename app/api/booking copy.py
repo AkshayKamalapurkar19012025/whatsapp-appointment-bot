@@ -1,21 +1,12 @@
 from datetime import date, datetime, time, timedelta, timezone
 from functools import wraps
-import logging
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.db.connection import get_connection
 from app.api.patients import insert_patient
-from app.utils.timezone import (
-    make_aware_datetime,
-    ensure_aware_datetime,
-    validate_timezone,
-    overlaps,
-)
 
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/booking",
@@ -370,44 +361,50 @@ def parse_time(value: str):
     return None
 
 
-def get_doctor_timezone(cur, doctor_id: int) -> str:
+def make_aware_datetime(
+    selected_date: date,
+    selected_time: time,
+    tzinfo,
+):
     """
-    Get the timezone for a doctor.
-    
-    Args:
-        cur: Database cursor
-        doctor_id: Doctor ID
-        
-    Returns:
-        IANA timezone name (e.g., 'Asia/Kolkata')
-        
-    Raises:
-        Exception if doctor not found
+    Create a timezone-aware datetime.
+
+    PostgreSQL TIMESTAMPTZ values returned by psycopg are timezone-aware.
+    All datetimes used for availability comparisons must therefore also
+    be timezone-aware.
+    """
+
+    return datetime.combine(
+        selected_date,
+        selected_time,
+    ).replace(tzinfo=tzinfo)
+
+
+def overlaps(
+    start_at: datetime,
+    end_at: datetime,
+    existing_start: datetime,
+    existing_end: datetime,
+) -> bool:
+    return (
+        start_at < existing_end
+        and end_at > existing_start
+    )
+
+
+def lock_doctor_for_booking(cur, doctor_id: int):
+    """Serialize appointment writes for one doctor within the current transaction.
+
+    Availability is intentionally checked before the INSERT, but that check alone
+    is subject to a race condition when two requests run concurrently. PostgreSQL
+    transaction-level advisory locking makes the final availability check and
+    appointment write serialize for a given doctor without requiring a schema
+    change. The lock is released automatically when the current transaction ends.
     """
     cur.execute(
-        """
-        SELECT timezone
-        FROM doctors
-        WHERE id = %s
-        """,
+        "SELECT pg_advisory_xact_lock(%s::bigint)",
         (doctor_id,),
     )
-    
-    row = cur.fetchone()
-    
-    if row is None:
-        logger.error(f"Doctor {doctor_id} not found when fetching timezone")
-        raise Exception(f"Doctor {doctor_id} not found")
-    
-    doctor_tz = row[0]
-    
-    # Validate timezone
-    if not validate_timezone(doctor_tz):
-        logger.error(f"Invalid timezone stored for doctor {doctor_id}: {doctor_tz}")
-        # Fallback to Asia/Kolkata
-        doctor_tz = "Asia/Kolkata"
-    
-    return doctor_tz
 
 
 # -------------------------------------------------------------------------
@@ -447,14 +444,42 @@ def get_available_slots(
 
     # ---------------------------------------------------------
     # Get doctor timezone
+    #
+    # The current database schema does not have a doctor timezone
+    # column, so we use the PostgreSQL session timezone.
+    #
+    # This is enough for the current MVP and, importantly, makes
+    # all datetime comparisons timezone-aware.
     # ---------------------------------------------------------
 
-    try:
-        doctor_tz = get_doctor_timezone(cur, doctor_id)
-    except Exception as e:
-        logger.error(f"Failed to get timezone for doctor {doctor_id}: {e}")
-        # Fallback to Asia/Kolkata
-        doctor_tz = "Asia/Kolkata"
+    cur.execute(
+        "SELECT current_setting('TIMEZONE')"
+    )
+
+    timezone_name = cur.fetchone()[0]
+
+    # PostgreSQL normally returns something like:
+    # Asia/Kolkata
+    #
+    # We cannot safely construct every IANA timezone ourselves
+    # without zoneinfo, so use the connection's current timezone
+    # offset for the requested date.
+
+    cur.execute(
+        """
+        SELECT
+            (%s::date::timestamp AT TIME ZONE current_setting('TIMEZONE'))
+        """,
+        (selected_date,),
+    )
+
+    timezone_midnight = cur.fetchone()[0]
+
+    if timezone_midnight.tzinfo is None:
+        # Defensive fallback.
+        tzinfo = timezone.utc
+    else:
+        tzinfo = timezone_midnight.tzinfo
 
     # ---------------------------------------------------------
     # Weekday
@@ -496,7 +521,7 @@ def get_available_slots(
     day_start = make_aware_datetime(
         selected_date,
         time.min,
-        doctor_tz,
+        tzinfo,
     )
 
     day_end = day_start + timedelta(days=1)
@@ -560,18 +585,19 @@ def get_available_slots(
     for schedule_start, schedule_end in schedules:
 
         # TIME values from PostgreSQL are naive.
-        # Convert them to aware datetimes using the business timezone.
+        # Convert them to aware datetimes using the same timezone
+        # as the database values.
 
         current_start = make_aware_datetime(
             selected_date,
             schedule_start,
-            doctor_tz,
+            tzinfo,
         )
 
         schedule_end_at = make_aware_datetime(
             selected_date,
             schedule_end,
-            doctor_tz,
+            tzinfo,
         )
 
         # Handle overnight schedules.
@@ -596,9 +622,18 @@ def get_available_slots(
 
             for block_start, block_end in blocks:
 
-                # Ensure timezone-aware
-                block_start = ensure_aware_datetime(block_start, doctor_tz)
-                block_end = ensure_aware_datetime(block_end, doctor_tz)
+                # Defensive normalization in case the DB driver
+                # ever returns a naive value.
+
+                if block_start.tzinfo is None:
+                    block_start = block_start.replace(
+                        tzinfo=tzinfo
+                    )
+
+                if block_end.tzinfo is None:
+                    block_end = block_end.replace(
+                        tzinfo=tzinfo
+                    )
 
                 if overlaps(
                     current_start,
@@ -616,15 +651,15 @@ def get_available_slots(
             if slot_available:
                 for appointment_start, appointment_end in appointments:
 
-                    # Ensure timezone-aware
-                    appointment_start = ensure_aware_datetime(
-                        appointment_start, 
-                        doctor_tz
-                    )
-                    appointment_end = ensure_aware_datetime(
-                        appointment_end, 
-                        doctor_tz
-                    )
+                    if appointment_start.tzinfo is None:
+                        appointment_start = appointment_start.replace(
+                            tzinfo=tzinfo
+                        )
+
+                    if appointment_end.tzinfo is None:
+                        appointment_end = appointment_end.replace(
+                            tzinfo=tzinfo
+                        )
 
                     if overlaps(
                         current_start,
@@ -3122,16 +3157,6 @@ def booking(request: BookingRequest):
                 )
 
                 # ---------------------------------------------------------
-                # Get doctor timezone for validation
-                # ---------------------------------------------------------
-
-                try:
-                    doctor_tz = get_doctor_timezone(cur, session["doctor_id"])
-                except Exception as e:
-                    logger.error(f"Failed to get timezone for rescheduling: {e}")
-                    doctor_tz = "Asia/Kolkata"
-
-                # ---------------------------------------------------------
                 # Re-check doctor blocks.
                 # ---------------------------------------------------------
 
@@ -3157,8 +3182,15 @@ def booking(request: BookingRequest):
 
                 for block_start, block_end in blocks:
 
-                    block_start = ensure_aware_datetime(block_start, doctor_tz)
-                    block_end = ensure_aware_datetime(block_end, doctor_tz)
+                    if block_start.tzinfo is None:
+                        block_start = block_start.replace(
+                            tzinfo=start_at.tzinfo
+                        )
+
+                    if block_end.tzinfo is None:
+                        block_end = block_end.replace(
+                            tzinfo=start_at.tzinfo
+                        )
 
                     if overlaps(
                         start_at,
@@ -3206,10 +3238,7 @@ def booking(request: BookingRequest):
                 # rescheduling request for the same doctor.
                 # ---------------------------------------------------------
 
-                cur.execute(
-                    "SELECT pg_advisory_xact_lock(%s::bigint)",
-                    (session["doctor_id"],),
-                )
+                lock_doctor_for_booking(cur, session["doctor_id"])
 
                 # ---------------------------------------------------------
                 # Re-check existing appointments.
@@ -3242,8 +3271,15 @@ def booking(request: BookingRequest):
 
                 for existing_start, existing_end in existing_appointments:
 
-                    existing_start = ensure_aware_datetime(existing_start, doctor_tz)
-                    existing_end = ensure_aware_datetime(existing_end, doctor_tz)
+                    if existing_start.tzinfo is None:
+                        existing_start = existing_start.replace(
+                            tzinfo=start_at.tzinfo
+                        )
+
+                    if existing_end.tzinfo is None:
+                        existing_end = existing_end.replace(
+                            tzinfo=start_at.tzinfo
+                        )
 
                     if overlaps(
                         start_at,
@@ -3689,16 +3725,6 @@ def booking(request: BookingRequest):
                 )
 
                 # ---------------------------------------------------------
-                # Get doctor timezone for validation
-                # ---------------------------------------------------------
-
-                try:
-                    doctor_tz = get_doctor_timezone(cur, session["doctor_id"])
-                except Exception as e:
-                    logger.error(f"Failed to get timezone for booking confirmation: {e}")
-                    doctor_tz = "Asia/Kolkata"
-
-                # ---------------------------------------------------------
                 # Re-check doctor blocks
                 # ---------------------------------------------------------
 
@@ -3724,8 +3750,15 @@ def booking(request: BookingRequest):
 
                 for block_start, block_end in blocks:
 
-                    block_start = ensure_aware_datetime(block_start, doctor_tz)
-                    block_end = ensure_aware_datetime(block_end, doctor_tz)
+                    if block_start.tzinfo is None:
+                        block_start = block_start.replace(
+                            tzinfo=start_at.tzinfo
+                        )
+
+                    if block_end.tzinfo is None:
+                        block_end = block_end.replace(
+                            tzinfo=start_at.tzinfo
+                        )
 
                     if overlaps(
                         start_at,
@@ -3772,10 +3805,7 @@ def booking(request: BookingRequest):
                 # transaction level.
                 # ---------------------------------------------------------
 
-                cur.execute(
-                    "SELECT pg_advisory_xact_lock(%s::bigint)",
-                    (session["doctor_id"],),
-                )
+                lock_doctor_for_booking(cur, session["doctor_id"])
 
                 # ---------------------------------------------------------
                 # Re-check existing appointments after acquiring the lock.
@@ -3803,8 +3833,15 @@ def booking(request: BookingRequest):
 
                 for existing_start, existing_end in existing_appointments:
 
-                    existing_start = ensure_aware_datetime(existing_start, doctor_tz)
-                    existing_end = ensure_aware_datetime(existing_end, doctor_tz)
+                    if existing_start.tzinfo is None:
+                        existing_start = existing_start.replace(
+                            tzinfo=start_at.tzinfo
+                        )
+
+                    if existing_end.tzinfo is None:
+                        existing_end = existing_end.replace(
+                            tzinfo=start_at.tzinfo
+                        )
 
                     if overlaps(
                         start_at,
