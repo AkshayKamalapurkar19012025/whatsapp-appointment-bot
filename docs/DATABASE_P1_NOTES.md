@@ -45,7 +45,12 @@ CREATE INDEX idx_doctor_blocks_doctor_time
     WHERE active = TRUE;
 ```
 
-## 4. Concurrency strategy consistency
+## 4. Concurrency strategy consistency -- CONFIRMED GAP, double-booking reproduced
+
+**Update: this is no longer a theoretical concern. It has been
+reproduced live and is captured as a permanent regression test**
+(`tests/test_concurrency.py::test_cross_path_concurrent_booking`,
+marked `xfail(strict=True)` until a fix is chosen and applied).
 
 Two different mechanisms currently protect against double-booking for
 what's conceptually the same operation:
@@ -58,18 +63,30 @@ what's conceptually the same operation:
 
 These are different locking primitives. A `SELECT ... FOR UPDATE` in one
 session does not block a concurrent `pg_advisory_xact_lock` in another --
-they don't see each other. If a WhatsApp booking and a direct
-`POST /api/appointments` call race for the same doctor/slot at the same
-instant, neither lock protects against the other; only the final overlap
-re-check (a plain `SELECT` before the `INSERT`) stands between them, which
-is exactly the race condition Test 1 in the spec calls out. This has
-**not been demonstrated to fail** in testing so far (both paths were
-tested independently, not against each other simultaneously), but it is
-not proven safe either, and should not be assumed safe just because each
-path is safe in isolation. Needs a decision: standardize on one
-mechanism (advisory lock is already proven in `booking.py`'s hot path)
-or add the constraint in #5 below as a database-enforced backstop that
-doesn't care which application-level lock (if any) was used.
+they don't see each other. When a WhatsApp booking confirmation and a
+direct `POST /api/appointments` call race for the same doctor/slot at
+the same instant, neither lock protects against the other; the final
+overlap re-check each path does (a plain `SELECT` before its `INSERT`)
+runs under READ COMMITTED, so neither transaction sees the other's
+not-yet-committed insert -- both re-checks report "no conflict," and
+both proceed to `INSERT`.
+
+**Empirical result:** a live run against a real server (20 attempts,
+each with fresh, fully isolated reference data so the two requests
+were provably targeting the identical `doctor_id` + `start_at` +
+`end_at`) produced a genuine double booking -- two different patients,
+identical doctor/start_at/end_at, both `status='BOOKED'` -- in **19 of
+20 attempts**. This is exactly the race condition the master spec's
+Test 1 calls out, confirmed exploitable across these two specific code
+paths.
+
+Needs an explicit decision (not applied here, per this project's rule
+that concurrency-protection changes require sign-off): standardize
+both paths on one mechanism (the advisory lock is already proven in
+`booking.py`'s hot path -- same-slot WhatsApp-vs-WhatsApp races were
+tested repeatedly this session with zero failures), or add the
+`EXCLUDE` constraint in #5 below as a database-enforced backstop that
+doesn't care which application-level lock (if any) was used, or both.
 
 ## 5. Possible PostgreSQL exclusion constraint
 

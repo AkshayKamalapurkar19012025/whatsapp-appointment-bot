@@ -156,19 +156,60 @@ started.
 
 ## 7. Run the tests
 
-There is currently **no automated pytest suite** in this repository (this
-is a known, tracked gap -- see the project's P1 backlog, not something
-this step is hiding). Running `pytest` today will report "no tests
-collected." What exists instead, and how to run it:
+### Automated suite (pytest)
 
-- **`scripts/concurrency_test.py`** -- a standalone script that drives the
-  running app over HTTP to verify double-booking protection: two patients
-  race to book the exact same doctor/slot, and it asserts exactly one
-  succeeds. Requires the app to be running (step 5) with some seeded
-  reference data (a department, a doctor with a schedule and an
-  appointment type assigned -- see the router endpoints under `/api/*`
-  to create these, or `app/api/booking.py`'s conversation flow itself for
-  the WhatsApp-style path).
+The suite runs against a dedicated test database -- never your dev
+database -- so provision one first, the same way you provisioned the
+dev one in step 1, just with a `_test`-suffixed name:
+
+```bash
+# Docker path: create a second database in the same container
+docker compose exec postgres createdb -U "$DB_USER" "${DB_NAME}_test"
+
+# Non-Docker path: same provisioning script, different DB_NAME
+DB_NAME="${DB_NAME}_test" DB_PASSWORD=<same password as .env> \
+    sudo -u postgres ./scripts/provision_local_db.sh
+```
+
+Then run the suite (it applies migrations to that test database itself
+on first run -- see `tests/conftest.py` -- and truncates all tables
+between tests, so it never needs the app to already be running):
+
+```bash
+pytest
+```
+
+What's covered:
+
+- **`tests/test_timezone_utils.py`** -- unit tests for
+  `app/utils/timezone.py` (validation, aware/naive conversion, overlap
+  math, per-doctor timezone lookup).
+- **`tests/test_booking_flow.py`** -- integration tests for the
+  registration, booking, cancellation, rescheduling, back-navigation,
+  restart, and invalid-input-handling flows, plus per-doctor timezone
+  behavior, all driven exactly like `app/api/booking.py`'s real callers
+  (`POST /api/booking` with a `whatsapp_number`/`message` pair).
+- **`tests/test_concurrency.py`** -- two double-booking protection
+  tests:
+  - `test_simultaneous_whatsapp_bookings_same_slot`: two patients race,
+    via the WhatsApp flow, to book the identical slot. Passes
+    consistently -- exactly one booking succeeds.
+  - `test_cross_path_concurrent_booking`: a WhatsApp booking
+    confirmation racing a direct `POST /api/appointments` for the
+    identical doctor/slot. **Marked `xfail(strict=True)`** -- this is a
+    confirmed, reproducible gap (double-booking occurs in the large
+    majority of attempts), not a flaky or hypothetical test. See
+    `docs/DATABASE_P1_NOTES.md` item 4 for the full finding and the
+    fix options awaiting a decision. `strict=True` means this test will
+    loudly fail (as an unexpected pass) the moment a fix actually
+    closes the gap -- that's the signal to remove the `xfail` marker.
+
+### Manual/standalone scripts
+
+- **`scripts/concurrency_test.py`** -- the original standalone version
+  of the same-path concurrency check, driving a *running* app over real
+  HTTP rather than an in-process TestClient. Requires the app already
+  running (step 5) with some seeded reference data.
 
   ```bash
   python scripts/concurrency_test.py
@@ -181,8 +222,3 @@ collected." What exists instead, and how to run it:
   ```bash
   python app/db/test_connection.py
   ```
-
-A real pytest suite (unit tests for timezone/slot-calculation logic,
-integration tests for the booking/cancel/reschedule flows, and a
-pytest-native version of the concurrency test) is planned but not yet
-built.

@@ -2,6 +2,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from functools import wraps
 import logging
 
+import psycopg
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -10,8 +11,8 @@ from app.api.patients import insert_patient
 from app.utils.timezone import (
     make_aware_datetime,
     ensure_aware_datetime,
-    validate_timezone,
     overlaps,
+    get_doctor_timezone,
 )
 
 
@@ -370,44 +371,8 @@ def parse_time(value: str):
     return None
 
 
-def get_doctor_timezone(cur, doctor_id: int) -> str:
-    """
-    Get the timezone for a doctor.
-    
-    Args:
-        cur: Database cursor
-        doctor_id: Doctor ID
-        
-    Returns:
-        IANA timezone name (e.g., 'Asia/Kolkata')
-        
-    Raises:
-        Exception if doctor not found
-    """
-    cur.execute(
-        """
-        SELECT timezone
-        FROM doctors
-        WHERE id = %s
-        """,
-        (doctor_id,),
-    )
-    
-    row = cur.fetchone()
-    
-    if row is None:
-        logger.error(f"Doctor {doctor_id} not found when fetching timezone")
-        raise Exception(f"Doctor {doctor_id} not found")
-    
-    doctor_tz = row[0]
-    
-    # Validate timezone
-    if not validate_timezone(doctor_tz):
-        logger.error(f"Invalid timezone stored for doctor {doctor_id}: {doctor_tz}")
-        # Fallback to Asia/Kolkata
-        doctor_tz = "Asia/Kolkata"
-    
-    return doctor_tz
+# get_doctor_timezone() now lives in app.utils.timezone -- imported above.
+# (previously duplicated here and in app/api/availability.py)
 
 
 # -------------------------------------------------------------------------
@@ -3319,43 +3284,88 @@ def booking(request: BookingRequest):
 
                 # ---------------------------------------------------------
                 # Create the new appointment.
+                #
+                # If the exclusion constraint rejects this INSERT (see
+                # migrations/0003_prevent_overlapping_bookings.sql --
+                # same backstop reasoning as the CONFIRM_BOOKING path
+                # above), the whole transaction rolls back, which also
+                # undoes the "cancel old appointment" UPDATE just above.
+                # That is the correct, spec-required behaviour: a failed
+                # reschedule must leave the original appointment intact,
+                # not lose it.
                 # ---------------------------------------------------------
 
-                cur.execute(
-                    """
-                    INSERT INTO appointments (
-                        doctor_id,
-                        patient_id,
-                        appointment_type_id,
-                        start_at,
-                        end_at,
-                        status
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO appointments (
+                            doctor_id,
+                            patient_id,
+                            appointment_type_id,
+                            start_at,
+                            end_at,
+                            status
+                        )
+                        VALUES (
+                            %s,
+                            %s,
+                            %s,
+                            %s,
+                            %s,
+                            'BOOKED'
+                        )
+                        RETURNING
+                            id,
+                            doctor_id,
+                            patient_id,
+                            appointment_type_id,
+                            start_at,
+                            end_at,
+                            status
+                        """,
+                        (
+                            session["doctor_id"],
+                            patient["id"],
+                            session["appointment_type_id"],
+                            start_at,
+                            end_at,
+                        ),
                     )
-                    VALUES (
-                        %s,
-                        %s,
-                        %s,
-                        %s,
-                        %s,
-                        'BOOKED'
+                except psycopg.errors.ExclusionViolation:
+                    conn.rollback()
+                    logger.warning(
+                        f"Exclusion constraint rejected overlapping reschedule "
+                        f"for doctor_id={session['doctor_id']} (advisory lock "
+                        f"should normally prevent reaching this point -- "
+                        f"backstop triggered); original appointment preserved"
                     )
-                    RETURNING
-                        id,
-                        doctor_id,
-                        patient_id,
-                        appointment_type_id,
-                        start_at,
-                        end_at,
-                        status
-                    """,
-                    (
+
+                    update_session(
+                        cur=cur,
+                        session_id=session["id"],
+                        step="RESCHEDULE_DATE",
+                        department_id=None,
+                        doctor_id=session["doctor_id"],
+                        appointment_type_id=session["appointment_type_id"],
+                        selected_date=None,
+                        selected_start_at=None,
+                        selected_appointment_id=session["selected_appointment_id"],
+                    )
+
+                    available_dates = get_available_dates(
+                        cur,
                         session["doctor_id"],
-                        patient["id"],
                         session["appointment_type_id"],
-                        start_at,
-                        end_at,
-                    ),
-                )
+                    )
+                    date_options = format_date_options(available_dates)
+
+                    return {
+                        "patient": patient,
+                        "next_step": "RESCHEDULE_DATE",
+                        "error": "That slot was just booked by someone else. Please choose another date or slot.",
+                        "date_options": date_options,
+                        "message": date_selection_message(date_options),
+                    }
 
                 row = cur.fetchone()
 
@@ -3843,44 +3853,93 @@ def booking(request: BookingRequest):
                     }
 
                 # ---------------------------------------------------------
-                # Create appointment
+                # Create appointment.
+                #
+                # Second line of defense below this INSERT: a
+                # database-level EXCLUDE constraint on (doctor_id, time
+                # range) for non-cancelled appointments (see
+                # migrations/0003_prevent_overlapping_bookings.sql). The
+                # advisory lock above should make it impossible for two
+                # concurrent requests to both reach this INSERT for an
+                # overlapping slot; the constraint is what guarantees
+                # that even if some future code path ever bypassed the
+                # lock. If it fires, the transaction is already aborted
+                # by Postgres -- roll back explicitly before issuing any
+                # further statements on this connection (including the
+                # session update below), matching the existing
+                # slot-taken response used earlier in this same
+                # function.
                 # ---------------------------------------------------------
 
-                cur.execute(
-                    """
-                    INSERT INTO appointments (
-                        doctor_id,
-                        patient_id,
-                        appointment_type_id,
-                        start_at,
-                        end_at,
-                        status
+                try:
+                    cur.execute(
+                        """
+                        INSERT INTO appointments (
+                            doctor_id,
+                            patient_id,
+                            appointment_type_id,
+                            start_at,
+                            end_at,
+                            status
+                        )
+                        VALUES (
+                            %s,
+                            %s,
+                            %s,
+                            %s,
+                            %s,
+                            'BOOKED'
+                        )
+                        RETURNING
+                            id,
+                            doctor_id,
+                            patient_id,
+                            appointment_type_id,
+                            start_at,
+                            end_at,
+                            status
+                        """,
+                        (
+                            session["doctor_id"],
+                            patient["id"],
+                            session["appointment_type_id"],
+                            start_at,
+                            end_at,
+                        ),
                     )
-                    VALUES (
-                        %s,
-                        %s,
-                        %s,
-                        %s,
-                        %s,
-                        'BOOKED'
+                except psycopg.errors.ExclusionViolation:
+                    conn.rollback()
+                    logger.warning(
+                        f"Exclusion constraint rejected overlapping booking for "
+                        f"doctor_id={session['doctor_id']} (advisory lock should "
+                        f"normally prevent reaching this point -- backstop triggered)"
                     )
-                    RETURNING
-                        id,
-                        doctor_id,
-                        patient_id,
-                        appointment_type_id,
-                        start_at,
-                        end_at,
-                        status
-                    """,
-                    (
+
+                    update_session(
+                        cur=cur,
+                        session_id=session["id"],
+                        step="SELECT_DATE",
+                        department_id=session["department_id"],
+                        doctor_id=session["doctor_id"],
+                        appointment_type_id=session["appointment_type_id"],
+                        selected_date=None,
+                        selected_start_at=None,
+                    )
+
+                    available_dates = get_available_dates(
+                        cur,
                         session["doctor_id"],
-                        patient["id"],
                         session["appointment_type_id"],
-                        start_at,
-                        end_at,
-                    ),
-                )
+                    )
+                    date_options = format_date_options(available_dates)
+
+                    return {
+                        "patient": patient,
+                        "next_step": "SELECT_DATE",
+                        "error": "That slot was just booked by someone else. Please choose another date or slot.",
+                        "date_options": date_options,
+                        "message": date_selection_message(date_options),
+                    }
 
                 row = cur.fetchone()
 

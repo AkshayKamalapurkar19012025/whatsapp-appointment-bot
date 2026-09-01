@@ -1,5 +1,4 @@
 from datetime import date, time, timedelta
-import logging
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -8,11 +7,9 @@ from app.db.connection import get_connection
 from app.utils.timezone import (
     make_aware_datetime,
     ensure_aware_datetime,
-    validate_timezone,
     overlaps,
+    get_doctor_timezone,
 )
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/availability",
@@ -24,22 +21,6 @@ class AvailabilityRequest(BaseModel):
     doctor_id: int
     appointment_type_id: int
     date: date
-
-
-def get_doctor_timezone(doctor_tz: str | None, doctor_id: int) -> str:
-    """
-    Validate a doctor's stored timezone, falling back to Asia/Kolkata.
-
-    Mirrors app/api/booking.py's get_doctor_timezone() so both the
-    WhatsApp booking flow and this REST endpoint compute availability
-    using the same doctor timezone, instead of this endpoint's previous
-    hardcoded Asia/Kolkata for every doctor.
-    """
-    if not validate_timezone(doctor_tz):
-        logger.error(f"Invalid timezone stored for doctor {doctor_id}: {doctor_tz}")
-        return "Asia/Kolkata"
-
-    return doctor_tz
 
 
 @router.post("")
@@ -56,7 +37,7 @@ def get_available_slots(request: AvailabilityRequest):
             # Check doctor
             cur.execute(
                 """
-                SELECT id, timezone
+                SELECT id
                 FROM doctors
                 WHERE id = %s
                   AND active = TRUE
@@ -72,7 +53,7 @@ def get_available_slots(request: AvailabilityRequest):
                     detail="Doctor not found",
                 )
 
-            doctor_tz = get_doctor_timezone(doctor_row[1], doctor_id)
+            doctor_tz = get_doctor_timezone(cur, doctor_id)
 
             # Get appointment type assigned to doctor
             cur.execute(
