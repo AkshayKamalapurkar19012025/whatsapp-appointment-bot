@@ -1,18 +1,23 @@
-from datetime import date, datetime, time, timedelta
-from zoneinfo import ZoneInfo
+from datetime import date, time, timedelta
+import logging
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.db.connection import get_connection
+from app.utils.timezone import (
+    make_aware_datetime,
+    ensure_aware_datetime,
+    validate_timezone,
+    overlaps,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/availability",
     tags=["Availability"],
 )
-
-
-APP_TIMEZONE = ZoneInfo("Asia/Kolkata")
 
 
 class AvailabilityRequest(BaseModel):
@@ -21,13 +26,20 @@ class AvailabilityRequest(BaseModel):
     date: date
 
 
-def overlaps(
-    start_at: datetime,
-    end_at: datetime,
-    existing_start: datetime,
-    existing_end: datetime,
-) -> bool:
-    return start_at < existing_end and end_at > existing_start
+def get_doctor_timezone(doctor_tz: str | None, doctor_id: int) -> str:
+    """
+    Validate a doctor's stored timezone, falling back to Asia/Kolkata.
+
+    Mirrors app/api/booking.py's get_doctor_timezone() so both the
+    WhatsApp booking flow and this REST endpoint compute availability
+    using the same doctor timezone, instead of this endpoint's previous
+    hardcoded Asia/Kolkata for every doctor.
+    """
+    if not validate_timezone(doctor_tz):
+        logger.error(f"Invalid timezone stored for doctor {doctor_id}: {doctor_tz}")
+        return "Asia/Kolkata"
+
+    return doctor_tz
 
 
 @router.post("")
@@ -44,7 +56,7 @@ def get_available_slots(request: AvailabilityRequest):
             # Check doctor
             cur.execute(
                 """
-                SELECT id
+                SELECT id, timezone
                 FROM doctors
                 WHERE id = %s
                   AND active = TRUE
@@ -52,11 +64,15 @@ def get_available_slots(request: AvailabilityRequest):
                 (doctor_id,),
             )
 
-            if cur.fetchone() is None:
+            doctor_row = cur.fetchone()
+
+            if doctor_row is None:
                 raise HTTPException(
                     status_code=404,
                     detail="Doctor not found",
                 )
+
+            doctor_tz = get_doctor_timezone(doctor_row[1], doctor_id)
 
             # Get appointment type assigned to doctor
             cur.execute(
@@ -118,11 +134,12 @@ def get_available_slots(request: AvailabilityRequest):
                     "slots": [],
                 }
 
-            # Create timezone-aware local day boundaries.
-            day_start = datetime.combine(
+            # Create timezone-aware local day boundaries, in the doctor's
+            # own timezone.
+            day_start = make_aware_datetime(
                 requested_date,
                 time.min,
-                tzinfo=APP_TIMEZONE,
+                doctor_tz,
             )
 
             day_end = day_start + timedelta(days=1)
@@ -176,16 +193,16 @@ def get_available_slots(request: AvailabilityRequest):
     for schedule_start, schedule_end in schedules:
 
         # Schedule times are local doctor times.
-        current_start = datetime.combine(
+        current_start = make_aware_datetime(
             requested_date,
             schedule_start,
-            tzinfo=APP_TIMEZONE,
+            doctor_tz,
         )
 
-        schedule_end_at = datetime.combine(
+        schedule_end_at = make_aware_datetime(
             requested_date,
             schedule_end,
-            tzinfo=APP_TIMEZONE,
+            doctor_tz,
         )
 
         while (
@@ -202,6 +219,9 @@ def get_available_slots(request: AvailabilityRequest):
             # Check doctor blocks.
             for block_start, block_end in blocks:
 
+                block_start = ensure_aware_datetime(block_start, doctor_tz)
+                block_end = ensure_aware_datetime(block_end, doctor_tz)
+
                 if overlaps(
                     current_start,
                     current_end,
@@ -215,6 +235,13 @@ def get_available_slots(request: AvailabilityRequest):
             if slot_available:
 
                 for appointment_start, appointment_end in appointments:
+
+                    appointment_start = ensure_aware_datetime(
+                        appointment_start, doctor_tz
+                    )
+                    appointment_end = ensure_aware_datetime(
+                        appointment_end, doctor_tz
+                    )
 
                     if overlaps(
                         current_start,
