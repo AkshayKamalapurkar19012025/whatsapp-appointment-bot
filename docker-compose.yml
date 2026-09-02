@@ -1,0 +1,43 @@
+# Local development PostgreSQL only -- the FastAPI app itself is not
+# containerized here (it still runs directly via the venv/uvicorn workflow
+# described in SETUP.md). This just gives every developer a reproducible,
+# disposable Postgres 16 instance instead of hand-run `psql` commands.
+#
+# Usage:
+#   1. cp .env.example .env
+#   2. Set DB_PASSWORD in .env (required -- no default is committed here)
+#   3. docker compose up -d
+#   4. Set DB_HOST=localhost (and DB_PORT if you changed it) in .env, since
+#      the container is only reachable over TCP, not the local unix socket
+#      the app's zero-config default assumes.
+#
+# Data persists in the named volume below across `docker compose down` /
+# `up`. It is only destroyed by an explicit `docker compose down -v`.
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: whatsapp_appointment_bot_postgres
+    restart: unless-stopped
+    environment:
+      # Same variable names and defaults as app/config.py, so the app and
+      # this container agree with no extra configuration beyond DB_PASSWORD.
+      POSTGRES_DB: ${DB_NAME:-appointment_bot}
+      POSTGRES_USER: ${DB_USER:-akshaykumar}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env before running docker compose up}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DB_USER:-akshaykumar} -d ${DB_NAME:-appointment_bot}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:

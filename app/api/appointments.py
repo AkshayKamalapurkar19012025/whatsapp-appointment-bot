@@ -1,10 +1,14 @@
 from datetime import datetime, timedelta
+import logging
 
+import psycopg
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.db.connection import get_connection
+from app.utils.timezone import overlaps
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/appointments",
@@ -17,15 +21,6 @@ class AppointmentCreate(BaseModel):
     patient_id: int
     appointment_type_id: int
     start_at: datetime
-
-
-def overlaps(
-    start_at: datetime,
-    end_at: datetime,
-    existing_start: datetime,
-    existing_end: datetime,
-) -> bool:
-    return start_at < existing_end and end_at > existing_start
 
 
 @router.get("")
@@ -94,7 +89,25 @@ def create_appointment(appointment: AppointmentCreate):
         with conn.cursor() as cur:
 
             # ---------------------------------------------------------
-            # 1. Check doctor
+            # 1. Check doctor.
+            #
+            # Deliberately a plain SELECT, not FOR UPDATE. It used to be
+            # FOR UPDATE (the theory being that locking the doctors row
+            # would serialize appointment creation for that doctor) --
+            # that was removed while adding the pg_advisory_xact_lock
+            # below, for two reasons: (a) it never actually serialized
+            # against the WhatsApp path anyway, since booking.py doesn't
+            # take that same lock (this is exactly the cross-path gap
+            # documented in docs/DATABASE_P1_NOTES.md item 4), and
+            # (b) worse, it actively caused a real, reproduced deadlock
+            # once both paths used pg_advisory_xact_lock: a transaction
+            # holding FOR UPDATE on the doctors row while waiting for the
+            # advisory lock, racing against a transaction holding the
+            # advisory lock while waiting to INSERT (which needs an
+            # implicit FOR KEY SHARE lock on that same doctors row via
+            # the appointments.doctor_id foreign key) -- a circular wait.
+            # Both paths must acquire locks in the same order; the
+            # advisory lock below is that one, shared order.
             # ---------------------------------------------------------
             cur.execute(
                 """
@@ -102,7 +115,6 @@ def create_appointment(appointment: AppointmentCreate):
                 FROM doctors
                 WHERE id = %s
                   AND active = TRUE
-                FOR UPDATE
                 """,
                 (doctor_id,),
             )
@@ -236,10 +248,39 @@ def create_appointment(appointment: AppointmentCreate):
                     )
 
             # ---------------------------------------------------------
-            # 6. Check existing appointments
+            # 6. Serialize booking attempts for this doctor.
             #
-            # Doctor row is locked above using FOR UPDATE.
-            # This serializes appointment creation for the same doctor.
+            # Standardized on the same primitive app/api/booking.py's
+            # WhatsApp flow uses: pg_advisory_xact_lock(doctor_id). This
+            # is a session/transaction-scoped Postgres advisory lock,
+            # released automatically on commit or rollback -- it is NOT
+            # the same lock as the "doctors ... FOR UPDATE" row lock
+            # taken in step 1 above (that lock only blocks other
+            # transactions that also do a FOR UPDATE read of the same
+            # doctors row; it does not block a transaction that only
+            # takes this advisory lock, or vice versa). Both booking
+            # paths must take the *same* lock, on the *same* key
+            # (doctor_id, cast to bigint for pg_advisory_xact_lock's
+            # signature), or a WhatsApp booking and a direct REST booking
+            # for the same doctor/slot can both pass their overlap check
+            # and both insert -- this was confirmed to happen in testing
+            # before this change (see docs/DATABASE_P1_NOTES.md item 4).
+            #
+            # Position matters: acquired after the doctor-block check
+            # above (matching app/api/booking.py's CONFIRM_BOOKING flow
+            # exactly) and before the final existing-appointments
+            # overlap re-check below, held until this transaction
+            # commits or rolls back (i.e. through the INSERT).
+            # ---------------------------------------------------------
+            cur.execute(
+                "SELECT pg_advisory_xact_lock(%s::bigint)",
+                (doctor_id,),
+            )
+
+            # ---------------------------------------------------------
+            # 7. Re-check existing appointments now that the lock for
+            # this doctor is held -- no other transaction can be
+            # concurrently inserting/re-checking for this doctor_id.
             # ---------------------------------------------------------
             cur.execute(
                 """
@@ -252,7 +293,6 @@ def create_appointment(appointment: AppointmentCreate):
                   AND end_at > %s
                   AND status <> 'CANCELLED'
                 ORDER BY start_at
-                FOR UPDATE
                 """,
                 (
                     doctor_id,
@@ -276,43 +316,65 @@ def create_appointment(appointment: AppointmentCreate):
                     )
 
             # ---------------------------------------------------------
-            # 7. Create appointment
+            # 8. Create appointment.
+            #
+            # A second line of defense sits below this INSERT: a
+            # database-level EXCLUDE constraint on (doctor_id, time
+            # range) for non-cancelled appointments (see
+            # migrations/0003_prevent_overlapping_bookings.sql). The
+            # advisory lock above should make it impossible for two
+            # concurrent requests to both reach this INSERT for an
+            # overlapping slot; the constraint is what guarantees that
+            # even if some future code path ever bypassed the lock.
+            # psycopg.errors.ExclusionViolation from this statement is
+            # handled below.
             # ---------------------------------------------------------
-            cur.execute(
-                """
-                INSERT INTO appointments (
-                    doctor_id,
-                    patient_id,
-                    appointment_type_id,
-                    start_at,
-                    end_at,
-                    status
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO appointments (
+                        doctor_id,
+                        patient_id,
+                        appointment_type_id,
+                        start_at,
+                        end_at,
+                        status
+                    )
+                    VALUES (
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        'BOOKED'
+                    )
+                    RETURNING
+                        id,
+                        doctor_id,
+                        patient_id,
+                        appointment_type_id,
+                        start_at,
+                        end_at,
+                        status
+                    """,
+                    (
+                        doctor_id,
+                        patient_id,
+                        appointment_type_id,
+                        start_at,
+                        end_at,
+                    ),
                 )
-                VALUES (
-                    %s,
-                    %s,
-                    %s,
-                    %s,
-                    %s,
-                    'BOOKED'
+            except psycopg.errors.ExclusionViolation:
+                logger.warning(
+                    f"Exclusion constraint rejected overlapping booking for "
+                    f"doctor_id={doctor_id} (advisory lock should normally "
+                    f"prevent reaching this point -- backstop triggered)"
                 )
-                RETURNING
-                    id,
-                    doctor_id,
-                    patient_id,
-                    appointment_type_id,
-                    start_at,
-                    end_at,
-                    status
-                """,
-                (
-                    doctor_id,
-                    patient_id,
-                    appointment_type_id,
-                    start_at,
-                    end_at,
-                ),
-            )
+                raise HTTPException(
+                    status_code=409,
+                    detail="Appointment overlaps with existing appointment",
+                )
 
             row = cur.fetchone()
 

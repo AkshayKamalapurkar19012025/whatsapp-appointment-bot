@@ -1,0 +1,14 @@
+# Web framework
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+
+# Data validation (already an implicit dependency via fastapi/pydantic models)
+pydantic==2.13.5
+
+# PostgreSQL driver + connection pool
+psycopg[binary]==3.3.5
+psycopg-pool==3.3.1
+
+# Loads DB_*/DATABASE_URL from a local .env file, if present, without
+# overriding real environment variables that are already set.
+python-dotenv==1.2.3

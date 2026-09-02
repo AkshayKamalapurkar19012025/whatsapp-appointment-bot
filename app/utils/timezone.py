@@ -181,3 +181,46 @@ def overlaps(
         start_at < existing_end
         and end_at > existing_start
     )
+
+
+def get_doctor_timezone(cur, doctor_id: int) -> str:
+    """
+    Get the timezone for a doctor.
+
+    The single canonical implementation -- previously duplicated
+    separately in app/api/booking.py and app/api/availability.py.
+
+    Args:
+        cur: Database cursor
+        doctor_id: Doctor ID
+
+    Returns:
+        IANA timezone name (e.g., 'Asia/Kolkata')
+
+    Raises:
+        Exception if doctor not found
+    """
+    cur.execute(
+        """
+        SELECT timezone
+        FROM doctors
+        WHERE id = %s
+        """,
+        (doctor_id,),
+    )
+
+    row = cur.fetchone()
+
+    if row is None:
+        logger.error(f"Doctor {doctor_id} not found when fetching timezone")
+        raise Exception(f"Doctor {doctor_id} not found")
+
+    doctor_tz = row[0]
+
+    # Validate timezone
+    if not validate_timezone(doctor_tz):
+        logger.error(f"Invalid timezone stored for doctor {doctor_id}: {doctor_tz}")
+        # Fallback to Asia/Kolkata
+        doctor_tz = "Asia/Kolkata"
+
+    return doctor_tz
