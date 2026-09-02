@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from app.db.connection import open_pool, close_pool
 from app.logging_config import configure_logging, new_request_id, request_id_var
 from app.api.health import router as health_router
+from app.api.appointment_types import router as appointment_types_router
 from app.api.departments import router as departments_router
 from app.api.doctors import router as doctors_router
 from app.api.doctor_schedule import router as doctor_schedule_router
@@ -74,6 +75,11 @@ async def request_id_middleware(request: Request, call_next):
 
 app.include_router(
     health_router,
+    prefix="/api",
+)
+
+app.include_router(
+    appointment_types_router,
     prefix="/api",
 )
 
