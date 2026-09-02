@@ -304,35 +304,43 @@ explicitly.
 
 ## 10. Open items requiring your decision before implementation
 
-1. **Frontend stack**: React+TS+Vite vs. Jinja2+HTMX (§6).
-2. **Session transport**: Bearer token header vs. cookie — depends on whether the frontend is
+**Decided (2026-09-02):**
+
+1. **Frontend stack**: **React + TypeScript + Vite** (§6). Rationale given: better fit for the
+   backend-enforced calendar/date rules and the admin dashboard.
+2. **Mock OTP delivery**: **dev-only lookup endpoint**, not echoed in the OTP-request response.
+   OTP stored hashed; a separate non-production-only endpoint lets a tester/frontend retrieve
+   the last code for a mobile number. Chosen to stay closer to how a real provider swap-in
+   would behave later.
+3. **STAFF role and recurring-schedule management**: **ADMIN only** may create/edit a doctor's
+   recurring weekly schedule (start/end date + weekly hours). STAFF retains full access to
+   day-to-day one-off blocks/breaks. Matches the ADMIN/RECEPTIONIST precedent from the original
+   WhatsApp build prompt.
+4. **`DELETE /api/appointments/{id}` ownership gap**: **fix now, in WEB P1** (before any web UI
+   points at the backend), not deferred to P4 or the P10 audit.
+
+**Still open:**
+
+5. **Session transport**: Bearer token header vs. cookie — depends on whether the frontend is
    served same-origin by FastAPI (e.g. via `StaticFiles`) or as a fully separate deployed app.
-3. **New dependencies**: password hashing needs a new library (`argon2-cffi` or
-   `passlib[bcrypt]`) — none exists today. Confirm you want a new dependency added (consistent
-   with your "database changes must be justified" rule extended to new packages).
-4. **STAFF role and recurring-schedule management**: can STAFF/RECEPTIONIST edit a doctor's
-   recurring weekly schedule, or is that ADMIN-only? (Table in §8 flags this as ambiguous.)
-5. **`doctor_schedule` date-range semantics**: does a *new* date-ranged schedule row coexist
+   Will confirm at the start of WEB P2 alongside the same-origin-vs-separate-deploy call.
+6. **New dependencies**: password hashing needs a new library (`argon2-cffi` or
+   `passlib[bcrypt]`) — none exists today. Will propose a specific one with justification when
+   WEB P2/P5 start rather than pre-deciding now.
+7. **`doctor_schedule` date-range semantics**: does a *new* date-ranged schedule row coexist
    with old open-ended rows for the same doctor/day (e.g. an override), or does creating one
-   require deactivating the open-ended row first? Affects both schema and admin UX.
-6. **Mock OTP delivery mechanism for the frontend**: a dev-only endpoint to fetch the last
-   code for a mobile number, vs. always echoing it in a non-production-only response field, vs.
-   something else. Needs a decision so it's mock-but-realistic without weakening the pattern
-   for a future real-provider swap.
-7. **Patient identity linkage to WhatsApp**: should a patient who registers on the web with
+   require deactivating the open-ended row first? Affects both schema and admin UX. Will
+   confirm at the start of WEB P7.
+8. **Patient identity linkage to WhatsApp**: should a patient who registers on the web with
    mobile number X be the *same* patient record as one who has an existing WhatsApp history
    under that number, or deliberately separate? (Affects whether "my appointments" on the web
-   shows WhatsApp-booked appointments too.)
-8. **Existing `DELETE /api/appointments/{id}` gap**: fix ownership-checking on the *existing*
-   endpoint too (closing a pre-existing security hole immediately), or leave the legacy REST
-   endpoint as-is and only enforce ownership on the new `/api/web/*` wrapper? Recommend fixing
-   the underlying endpoint since it's the actual point of enforcement no matter which endpoint
-   a UI calls.
+   shows WhatsApp-booked appointments too.) Will confirm at the start of WEB P2.
 9. **Same-origin vs. separate deploy** for the frontend(s) — affects CORS configuration and
-   session-transport decision (#2).
+   the session-transport decision (#5). Will confirm at the start of WEB P2/P3.
 10. **Booking window edge case**: "current month + next 3 calendar months" — does that mean
     exactly the last calendar day of month+3, or a rolling 90/120-day window? The spec says
-    calendar months, so I'll assume calendar-month boundaries unless corrected.
+    calendar months, so proceeding on calendar-month boundaries (e.g. booked in September:
+    September–December allowed, January rejected) unless corrected.
 
 ---
 
