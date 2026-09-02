@@ -117,6 +117,15 @@ export default function BookingFlow({
       setConfirmed(result)
       setStep('confirmation')
     } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        // Session expired or was revoked while mid-flow (e.g. the 24h
+        // TTL elapsed, or logged out in another tab). Without this, the
+        // user was stuck on the review screen forever: a generic error
+        // message with no path back to the login screen, since nothing
+        // in this component can otherwise get there.
+        onLoggedOut()
+        return
+      }
       setError(err instanceof ApiError ? err.message : 'Could not book the appointment')
     } finally {
       setBusy(false)

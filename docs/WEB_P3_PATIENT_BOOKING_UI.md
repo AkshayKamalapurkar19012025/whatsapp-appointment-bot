@@ -108,6 +108,49 @@ of `confirmed.start_at`. A regression guard was added to the browser
 check asserting the confirmation time equals the review-step time
 character-for-character — this exact bug could not silently return.
 
+## A second pass, specifically to find more before calling this done
+
+Finding one bug via browser testing was the signal to go back and look
+harder, not to stop at one. A deliberate second read of every frontend
+file (not a re-run of the same checks) found two more real, if smaller,
+defects — both genuine broken-state bugs, not style nits:
+
+1. **`BookingFlow.tsx`'s `confirmBooking()` had no recovery path from a
+   401.** If the session token expired (24h TTL, WEB P2) or was revoked
+   while a patient was mid-flow, the booking-creation call would fail
+   with 401, and the component just displayed a generic error and stayed
+   on the review screen — with no way back to the login screen from
+   inside `BookingFlow`. A patient in this state was stuck. **Fix:** a
+   401 specifically now calls `onLoggedOut()` (already available as a
+   prop, previously only wired to the explicit logout button), clearing
+   the stale token and returning to the login screen.
+
+2. **`App.tsx`'s `handleLoggedIn()` had no `.catch()`** on its `getMe()`
+   call — an unhandled promise rejection on the rare failure of that one
+   call, leaving the patient stuck on the login screen with no error
+   shown and no state change. **Fix:** added the same `.catch(() =>
+   clearToken())` pattern already used for the initial-session check.
+
+Both were verified with new browser scenarios, not just code inspection:
+wrong-OTP-then-correct-OTP recovery, an existing patient logging in a
+second time (no registration step, same name), and — for the exact bug
+above — corrupting the stored session token mid-booking-flow and
+confirming the app returns to the login screen instead of hanging on a
+dead error. All 5 new checks pass; all 15 original checks were re-run
+and still pass unchanged.
+
+**One thing noted, not fixed:** the calendar's initial month comes from
+the browser's own clock (`new Date()`), while booking-window enforcement
+is computed server-side from the backend's clock. For a patient whose
+browser is many hours off from the server's timezone, the *initial*
+calendar page shown could be off by one month at the exact boundary
+instant — cosmetic only, since the backend independently re-validates
+and would reject anything actually out of window regardless of what the
+frontend initially rendered. Recorded here rather than silently
+patched with more complexity for a marginal case; worth a look if this
+codebase later runs the server and expects patients in very different
+zones.
+
 ## TEST
 
 **Backend** (`tests/test_patient_booking_api.py`, 6 tests): calendar
@@ -121,8 +164,10 @@ owner; booking-window enforcement is reachable through this endpoint
 (409 for a date past the window).
 
 **Browser** (Playwright against a real Chromium, driving the actual dev
-server + backend — not a mock), 15 checks, all passing after the fix
-above:
+server + backend — not a mock), **20 checks across two passes, all
+passing**:
+
+First pass (15 checks) — the golden path:
 - Full golden path: mobile number → OTP (retrieved via the dev-lookup
   endpoint, the same way a tester would) → registration (new number) →
   department → doctor → appointment type → calendar → date → time slot →
@@ -132,13 +177,25 @@ above:
 - Time slots display as "10:00 AM – 10:30 AM", not a raw offset.
 - Review page shows patient name, doctor, and duration correctly.
 - Confirmation page shows the appointment type and the **same** time as
-  the review step (the regression guard for the bug above).
+  the review step (the regression guard for the timezone-display bug).
 - No raw timezone offset or zone name (`+05:30`, `Asia/Kolkata`) appears
   anywhere in the rendered page text — "do not expose doctor timezone",
   checked against the actual DOM, not just code review.
 - Logout returns to the login screen.
 - A 375×812 mobile viewport renders the login screen correctly (screenshot
   captured).
+
+Second pass (5 checks) — error/edge paths, added specifically to hunt for
+more bugs before treating the phase as done:
+- A wrong OTP shows an error and leaves the user able to retry (not
+  stuck or bounced elsewhere).
+- Retrying with the correct code after a wrong one succeeds.
+- An existing patient (same number used again) logs in directly with no
+  registration step, and sees the same name as before.
+- Corrupting the stored session token mid-booking-flow and clicking
+  "Confirm booking" returns to the login screen instead of hanging on a
+  dead error screen (the regression guard for bug #1 in the second-pass
+  section above).
 
 Screenshots captured during this verification (mobile login, the
 calendar month view showing unavailable/available styling, and the fixed

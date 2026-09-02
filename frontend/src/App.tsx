@@ -21,7 +21,9 @@ export default function App() {
   }, [])
 
   function handleLoggedIn() {
-    getMe().then(setPatient)
+    getMe()
+      .then(setPatient)
+      .catch(() => clearToken())
   }
 
   function handleLoggedOut() {
