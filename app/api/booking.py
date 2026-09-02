@@ -1,4 +1,4 @@
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from functools import wraps
 import logging
 
@@ -9,10 +9,13 @@ from pydantic import BaseModel
 from app.db.connection import get_connection
 from app.api.patients import insert_patient
 from app.utils.timezone import (
-    make_aware_datetime,
     ensure_aware_datetime,
     overlaps,
     get_doctor_timezone,
+)
+from app.services.availability_engine import (
+    get_appointment_type_for_doctor,
+    get_available_slots,
 )
 
 
@@ -141,41 +144,10 @@ def get_appointment_types_for_doctor(cur, doctor_id: int):
     ]
 
 
-def get_appointment_type_for_doctor(
-    cur,
-    doctor_id: int,
-    appointment_type_id: int,
-):
-    cur.execute(
-        """
-        SELECT
-            at.id,
-            at.name,
-            dat.duration_minutes
-        FROM doctor_appointment_types dat
-        JOIN appointment_types at
-            ON at.id = dat.appointment_type_id
-        WHERE dat.doctor_id = %s
-          AND dat.appointment_type_id = %s
-          AND dat.active = TRUE
-          AND at.active = TRUE
-        """,
-        (
-            doctor_id,
-            appointment_type_id,
-        ),
-    )
-
-    row = cur.fetchone()
-
-    if row is None:
-        return None
-
-    return {
-        "id": row[0],
-        "name": row[1],
-        "duration_minutes": row[2],
-    }
+# get_appointment_type_for_doctor() now lives in
+# app.services.availability_engine -- imported above (moved there in the
+# WEB P1 phase so app/api/availability.py and future web endpoints share
+# it instead of duplicating it).
 
 
 # -------------------------------------------------------------------------
@@ -379,238 +351,10 @@ def parse_time(value: str):
 # Availability
 # -------------------------------------------------------------------------
 
-def get_available_slots(
-    cur,
-    doctor_id: int,
-    appointment_type_id: int,
-    selected_date: date,
-):
-    """
-    Calculate available appointment slots.
-
-    Important:
-    - Schedule times come from TIME columns and are naive.
-    - Blocks and appointments come from TIMESTAMPTZ and are aware.
-    - We convert schedule times into timezone-aware datetimes before
-      comparing them with blocks/appointments.
-    """
-
-    # ---------------------------------------------------------
-    # Get appointment duration
-    # ---------------------------------------------------------
-
-    appointment_type = get_appointment_type_for_doctor(
-        cur,
-        doctor_id,
-        appointment_type_id,
-    )
-
-    if appointment_type is None:
-        return []
-
-    duration_minutes = appointment_type["duration_minutes"]
-
-    # ---------------------------------------------------------
-    # Get doctor timezone
-    # ---------------------------------------------------------
-
-    try:
-        doctor_tz = get_doctor_timezone(cur, doctor_id)
-    except Exception as e:
-        logger.error(f"Failed to get timezone for doctor {doctor_id}: {e}")
-        # Fallback to Asia/Kolkata
-        doctor_tz = "Asia/Kolkata"
-
-    # ---------------------------------------------------------
-    # Weekday
-    # Monday = 1 ... Sunday = 7
-    # ---------------------------------------------------------
-
-    day_of_week = selected_date.weekday() + 1
-
-    # ---------------------------------------------------------
-    # Doctor schedule
-    # ---------------------------------------------------------
-
-    cur.execute(
-        """
-        SELECT
-            start_time,
-            end_time
-        FROM doctor_schedule
-        WHERE doctor_id = %s
-          AND day_of_week = %s
-          AND active = TRUE
-        ORDER BY start_time
-        """,
-        (
-            doctor_id,
-            day_of_week,
-        ),
-    )
-
-    schedules = cur.fetchall()
-
-    if not schedules:
-        return []
-
-    # ---------------------------------------------------------
-    # Full requested day
-    # ---------------------------------------------------------
-
-    day_start = make_aware_datetime(
-        selected_date,
-        time.min,
-        doctor_tz,
-    )
-
-    day_end = day_start + timedelta(days=1)
-
-    # ---------------------------------------------------------
-    # Doctor blocks
-    # ---------------------------------------------------------
-
-    cur.execute(
-        """
-        SELECT
-            start_at,
-            end_at
-        FROM doctor_blocks
-        WHERE doctor_id = %s
-          AND active = TRUE
-          AND start_at < %s
-          AND end_at > %s
-        ORDER BY start_at
-        """,
-        (
-            doctor_id,
-            day_end,
-            day_start,
-        ),
-    )
-
-    blocks = cur.fetchall()
-
-    # ---------------------------------------------------------
-    # Existing appointments
-    # ---------------------------------------------------------
-
-    cur.execute(
-        """
-        SELECT
-            start_at,
-            end_at
-        FROM appointments
-        WHERE doctor_id = %s
-          AND start_at < %s
-          AND end_at > %s
-          AND status <> 'CANCELLED'
-        ORDER BY start_at
-        """,
-        (
-            doctor_id,
-            day_end,
-            day_start,
-        ),
-    )
-
-    appointments = cur.fetchall()
-
-    # ---------------------------------------------------------
-    # Calculate slots
-    # ---------------------------------------------------------
-
-    slots = []
-
-    for schedule_start, schedule_end in schedules:
-
-        # TIME values from PostgreSQL are naive.
-        # Convert them to aware datetimes using the business timezone.
-
-        current_start = make_aware_datetime(
-            selected_date,
-            schedule_start,
-            doctor_tz,
-        )
-
-        schedule_end_at = make_aware_datetime(
-            selected_date,
-            schedule_end,
-            doctor_tz,
-        )
-
-        # Handle overnight schedules.
-        if schedule_end_at <= current_start:
-            schedule_end_at += timedelta(days=1)
-
-        while (
-            current_start
-            + timedelta(minutes=duration_minutes)
-            <= schedule_end_at
-        ):
-            current_end = (
-                current_start
-                + timedelta(minutes=duration_minutes)
-            )
-
-            slot_available = True
-
-            # -------------------------------------------------
-            # Check blocks
-            # -------------------------------------------------
-
-            for block_start, block_end in blocks:
-
-                # Ensure timezone-aware
-                block_start = ensure_aware_datetime(block_start, doctor_tz)
-                block_end = ensure_aware_datetime(block_end, doctor_tz)
-
-                if overlaps(
-                    current_start,
-                    current_end,
-                    block_start,
-                    block_end,
-                ):
-                    slot_available = False
-                    break
-
-            # -------------------------------------------------
-            # Check appointments
-            # -------------------------------------------------
-
-            if slot_available:
-                for appointment_start, appointment_end in appointments:
-
-                    # Ensure timezone-aware
-                    appointment_start = ensure_aware_datetime(
-                        appointment_start, 
-                        doctor_tz
-                    )
-                    appointment_end = ensure_aware_datetime(
-                        appointment_end, 
-                        doctor_tz
-                    )
-
-                    if overlaps(
-                        current_start,
-                        current_end,
-                        appointment_start,
-                        appointment_end,
-                    ):
-                        slot_available = False
-                        break
-
-            if slot_available:
-                slots.append(
-                    {
-                        "start_at": current_start.isoformat(),
-                        "end_at": current_end.isoformat(),
-                    }
-                )
-
-            current_start = current_end
-
-    return slots
+# get_available_slots() now lives in app.services.availability_engine --
+# imported above (moved there in the WEB P1 phase, byte-identical, so
+# app/api/availability.py and future web endpoints share this exact
+# implementation instead of diverging copies).
 
 
 def get_available_dates(
