@@ -28,12 +28,6 @@ def seed_basic_doctor(
     than once in the same database state (e.g. a concurrency test
     looping over several attempts) needs distinct names each time, not
     just a distinct doctor.
-
-    Appointment types are inserted directly via SQL rather than through
-    POST /api/appointment-types, because that router is not currently
-    wired into app/main.py (a known, separately-tracked issue -- flagged
-    in the project's review, not something these tests should silently
-    route around via a fix).
     """
     department = client.post("/api/departments", json={"name": department_name}).json()
 
@@ -49,13 +43,9 @@ def seed_basic_doctor(
 
     client.post(f"/api/doctors/{doctor['id']}/departments/{department['id']}")
 
-    with db_connection.cursor() as cur:
-        cur.execute(
-            "INSERT INTO appointment_types (name) VALUES (%s) RETURNING id",
-            (appointment_type_name,),
-        )
-        appointment_type_id = cur.fetchone()[0]
-    db_connection.commit()
+    appointment_type_id = client.post(
+        "/api/appointment-types", json={"name": appointment_type_name}
+    ).json()["id"]
 
     client.post(
         f"/api/doctors/{doctor['id']}/appointment-types/{appointment_type_id}",
