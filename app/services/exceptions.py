@@ -13,45 +13,85 @@ implementation of the booking rules without duplicating them.
 """
 
 
-class AppointmentServiceError(Exception):
+class ServiceError(Exception):
     """Base class for every exception in this module."""
 
 
-class DoctorNotFound(AppointmentServiceError):
+class DoctorNotFound(ServiceError):
     pass
 
 
-class PatientNotFound(AppointmentServiceError):
+class PatientNotFound(ServiceError):
     pass
 
 
-class AppointmentTypeNotAssigned(AppointmentServiceError):
+class AppointmentTypeNotAssigned(ServiceError):
     pass
 
 
-class OutsideDoctorSchedule(AppointmentServiceError):
+class OutsideDoctorSchedule(ServiceError):
     pass
 
 
-class DoctorBlockConflict(AppointmentServiceError):
+class DoctorBlockConflict(ServiceError):
     pass
 
 
-class SlotOverlap(AppointmentServiceError):
+class SlotOverlap(ServiceError):
     pass
 
 
-class OutsideBookingWindow(AppointmentServiceError):
+class OutsideBookingWindow(ServiceError):
     pass
 
 
-class AppointmentNotFound(AppointmentServiceError):
+class AppointmentNotFound(ServiceError):
     pass
 
 
-class AlreadyCancelled(AppointmentServiceError):
+class AlreadyCancelled(ServiceError):
     pass
 
 
-class NotAppointmentOwner(AppointmentServiceError):
+class NotAppointmentOwner(ServiceError):
+    pass
+
+
+# ---------------------------------------------------------------------
+# Patient authentication (WEB P2) -- see app/services/patient_auth.py.
+# ---------------------------------------------------------------------
+
+class OtpRateLimited(ServiceError):
+    pass
+
+
+class OtpNotFound(ServiceError):
+    pass
+
+
+class OtpExpired(ServiceError):
+    pass
+
+
+class OtpAlreadyUsed(ServiceError):
+    pass
+
+
+class OtpLocked(ServiceError):
+    pass
+
+
+class OtpInvalid(ServiceError):
+    pass
+
+
+class RegistrationRequired(ServiceError):
+    """Not a failure -- the OTP was verified correctly, but no patient
+    exists for this number yet and no name was supplied to register one.
+    The OTP row is deliberately left unconsumed so the caller can retry
+    the same request with a name before it expires."""
+    pass
+
+
+class InvalidSession(ServiceError):
     pass

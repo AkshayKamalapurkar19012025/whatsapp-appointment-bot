@@ -51,3 +51,10 @@ DATABASE_URL = _build_default_database_url()
 # deployment; override via environment for larger-scale usage.
 DB_POOL_MIN_SIZE = int(os.environ.get("DB_POOL_MIN_SIZE", "1"))
 DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", "10"))
+
+# Defaults to "development" so local setups and tests work unchanged with
+# nothing set. A real deployment MUST set ENVIRONMENT=production -- this
+# gates dev-only endpoints such as the mock-OTP lookup endpoint
+# (app/api/patient_auth.py), which would otherwise let anyone read a
+# patient's current OTP code.
+ENVIRONMENT = os.environ.get("ENVIRONMENT", "development")

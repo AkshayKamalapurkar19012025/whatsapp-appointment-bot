@@ -37,6 +37,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # order here doesn't need to respect foreign keys.
 APP_TABLES = [
     "booking_sessions",
+    "mock_sms_outbox",
+    "patient_sessions",
+    "patient_otp_codes",
     "appointments",
     "doctor_appointment_types",
     "doctor_blocks",
