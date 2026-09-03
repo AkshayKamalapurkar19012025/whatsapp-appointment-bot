@@ -1,0 +1,262 @@
+import { useEffect, useState } from 'react'
+import {
+  ApiError,
+  cancelWebAppointment,
+  getMyAppointments,
+  getSlotsForDate,
+  logout,
+  rescheduleWebAppointment,
+} from './api'
+import type { MyAppointment, MyAppointmentsResponse, Slot } from './types'
+import Calendar from './Calendar'
+import { formatDate, formatTime } from './format'
+
+type Tab = 'upcoming' | 'history' | 'cancelled'
+type RescheduleStep = 'date' | 'slot' | 'review' | 'done'
+
+export default function MyAppointments({
+  patientName,
+  onLoggedOut,
+  onBookNew,
+}: {
+  patientName: string
+  onLoggedOut: () => void
+  onBookNew: () => void
+}) {
+  const [tab, setTab] = useState<Tab>('upcoming')
+  const [data, setData] = useState<MyAppointmentsResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  // Reschedule sub-flow state -- null means "not currently rescheduling".
+  const [rescheduling, setRescheduling] = useState<MyAppointment | null>(null)
+  const [rescheduleStep, setRescheduleStep] = useState<RescheduleStep>('date')
+  const [rescheduleSlots, setRescheduleSlots] = useState<Slot[]>([])
+  const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  function load() {
+    setLoading(true)
+    setError(null)
+    getMyAppointments()
+      .then(setData)
+      .catch((err) => {
+        // Same lesson as BookingFlow.confirmBooking (WEB P3 second-pass
+        // fix): an expired/invalid session here must return to login,
+        // not leave the patient stuck on a page that can never load.
+        if (err instanceof ApiError && err.status === 401) {
+          onLoggedOut()
+          return
+        }
+        setError(err instanceof ApiError ? err.message : 'Could not load your appointments')
+      })
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(load, [])
+
+  async function handleCancel(appointment: MyAppointment) {
+    if (!window.confirm(`Cancel your ${formatDate(appointment.start_at)} appointment with ${appointment.doctor_name}?`)) {
+      return
+    }
+    setError(null)
+    try {
+      await cancelWebAppointment(appointment.id)
+      load()
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        onLoggedOut()
+        return
+      }
+      setError(err instanceof ApiError ? err.message : 'Could not cancel the appointment')
+    }
+  }
+
+  function startReschedule(appointment: MyAppointment) {
+    setRescheduling(appointment)
+    setRescheduleStep('date')
+    setSelectedSlot(null)
+    setError(null)
+  }
+
+  function cancelRescheduleFlow() {
+    setRescheduling(null)
+    setRescheduleSlots([])
+    setSelectedSlot(null)
+  }
+
+  function chooseRescheduleDate(isoDate: string) {
+    if (!rescheduling) return
+    setError(null)
+    getSlotsForDate(rescheduling.doctor_id, rescheduling.appointment_type_id, isoDate)
+      .then((result) => {
+        setRescheduleSlots(result.slots)
+        setRescheduleStep('slot')
+      })
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load time slots'))
+  }
+
+  function chooseRescheduleSlot(slot: Slot) {
+    setSelectedSlot(slot)
+    setRescheduleStep('review')
+  }
+
+  async function confirmReschedule() {
+    if (!rescheduling || !selectedSlot) return
+    setBusy(true)
+    setError(null)
+    try {
+      await rescheduleWebAppointment(rescheduling.id, selectedSlot.start_at)
+      setRescheduleStep('done')
+      load()
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        onLoggedOut()
+        return
+      }
+      setError(err instanceof ApiError ? err.message : 'Could not reschedule the appointment')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleLogout() {
+    await logout().catch(() => undefined)
+    onLoggedOut()
+  }
+
+  const list: MyAppointment[] = data ? data[tab] : []
+
+  return (
+    <div className="card">
+      <div className="topbar">
+        <span>Hi, {patientName}</span>
+        <div>
+          <button type="button" className="link" onClick={onBookNew}>
+            Book an appointment
+          </button>
+          <button type="button" className="link" onClick={handleLogout}>
+            Log out
+          </button>
+        </div>
+      </div>
+
+      {error && <p className="error">{error}</p>}
+
+      {rescheduling ? (
+        <>
+          <h2>Reschedule with {rescheduling.doctor_name}</h2>
+          <p className="muted">
+            Currently: {formatDate(rescheduling.start_at)} at {formatTime(rescheduling.start_at)}
+          </p>
+
+          {rescheduleStep === 'date' && (
+            <>
+              <Calendar
+                doctorId={rescheduling.doctor_id}
+                appointmentTypeId={rescheduling.appointment_type_id}
+                onSelectDate={chooseRescheduleDate}
+              />
+              <button type="button" className="link" onClick={cancelRescheduleFlow}>
+                Cancel
+              </button>
+            </>
+          )}
+
+          {rescheduleStep === 'slot' && (
+            <>
+              <h3>Choose a new time</h3>
+              {rescheduleSlots.length === 0 && <p>No slots available on this date.</p>}
+              <ul className="option-list">
+                {rescheduleSlots.map((slot) => (
+                  <li key={slot.start_at}>
+                    <button type="button" onClick={() => chooseRescheduleSlot(slot)}>
+                      {formatTime(slot.start_at)} – {formatTime(slot.end_at)}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <button type="button" className="link" onClick={() => setRescheduleStep('date')}>
+                Back
+              </button>
+            </>
+          )}
+
+          {rescheduleStep === 'review' && selectedSlot && (
+            <>
+              <h3>Confirm new time</h3>
+              <dl className="summary">
+                <dt>New date</dt>
+                <dd>{formatDate(selectedSlot.start_at)}</dd>
+                <dt>New time</dt>
+                <dd>
+                  {formatTime(selectedSlot.start_at)} – {formatTime(selectedSlot.end_at)}
+                </dd>
+              </dl>
+              <button type="button" onClick={confirmReschedule} disabled={busy}>
+                {busy ? 'Rescheduling…' : 'Confirm reschedule'}
+              </button>
+              <button type="button" className="link" onClick={() => setRescheduleStep('slot')}>
+                Back
+              </button>
+            </>
+          )}
+
+          {rescheduleStep === 'done' && (
+            <>
+              <p>Your appointment has been rescheduled.</p>
+              <button type="button" onClick={cancelRescheduleFlow}>
+                Back to My Appointments
+              </button>
+            </>
+          )}
+        </>
+      ) : (
+        <>
+          <h2>My Appointments</h2>
+          <div className="tabs">
+            {(['upcoming', 'history', 'cancelled'] as Tab[]).map((t) => (
+              <button
+                key={t}
+                type="button"
+                className={t === tab ? 'tab active' : 'tab'}
+                onClick={() => setTab(t)}
+              >
+                {t[0].toUpperCase() + t.slice(1)}
+              </button>
+            ))}
+          </div>
+
+          {loading && <p>Loading…</p>}
+
+          {!loading && list.length === 0 && <p className="muted">Nothing here yet.</p>}
+
+          <ul className="appointment-list">
+            {list.map((appointment) => (
+              <li key={appointment.id} className="appointment-card">
+                <div>
+                  <strong>{appointment.doctor_name}</strong>
+                  <div className="muted">{appointment.appointment_type_name}</div>
+                  <div>
+                    {formatDate(appointment.start_at)} · {formatTime(appointment.start_at)} –{' '}
+                    {formatTime(appointment.end_at)}
+                  </div>
+                </div>
+                {tab === 'upcoming' && (
+                  <div className="appointment-actions">
+                    <button type="button" onClick={() => startReschedule(appointment)}>
+                      Reschedule
+                    </button>
+                    <button type="button" className="danger" onClick={() => handleCancel(appointment)}>
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  )
+}

@@ -40,13 +40,16 @@ both defaulting to today's exact behavior:
   genuinely closed before patient identity exists.
 """
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 
 import psycopg
 
-from app.utils.timezone import overlaps
-from app.services.availability_engine import is_within_booking_window
+from app.utils.timezone import overlaps, convert_to_timezone, validate_timezone
+from app.services.availability_engine import (
+    get_appointment_type_for_doctor,
+    is_within_booking_window,
+)
 from app.services.exceptions import (
     DoctorNotFound,
     PatientNotFound,
@@ -410,4 +413,298 @@ def cancel_appointment_service(
     return {
         "id": row[0],
         "status": row[1],
+    }
+
+
+def reschedule_appointment_service(
+    cur,
+    appointment_id: int,
+    *,
+    patient_id: int,
+    new_start_at,
+    enforce_booking_window: bool = False,
+):
+    """
+    Reschedule keeps the original appointment's doctor and appointment
+    type -- only the date/time changes. This is a faithful move of
+    app/api/booking.py's RESCHEDULE_FINAL_CONFIRM logic (verified against
+    the running WhatsApp flow line-by-line while writing this, not
+    written from memory of what reschedule "should" do), extracted here
+    for WEB P4 so the web reschedule endpoint shares the exact same rules
+    instead of a second, hand-written copy that could silently drift.
+    booking.py's own reschedule handler is refactored to call this same
+    function (see its own comment at the call site) -- so there is now
+    exactly one implementation of these rules, not two kept in sync by
+    hand.
+
+    patient_id is required and baked directly into the ownership check
+    (WHERE id = %s AND patient_id = %s), deliberately matching
+    booking.py's own pattern: a wrong-owner lookup raises the same
+    AppointmentNotFound as a genuinely nonexistent id, so neither this
+    function's caller nor an attacker probing ids can distinguish "not
+    yours" from "doesn't exist" (unlike cancel_appointment_service's
+    optional requesting_patient_id, which predates any authenticated
+    caller and had a pre-existing unauthenticated REST endpoint to stay
+    compatible with -- reschedule has no such history, so it can be
+    stricter from the start).
+
+    One known omission, inherited unchanged from booking.py rather than
+    silently "fixed": this does not re-check doctors.active. Neither does
+    the original WhatsApp flow -- the doctor_id comes from the existing
+    appointment being rescheduled, not a fresh lookup, in both places.
+    Flagged in the WEB P4 report as a finding, not fixed here, per "do
+    not create Web-specific business rules" (fixing it would make Web
+    and WhatsApp reschedule diverge, the opposite of this phase's goal).
+    """
+    cur.execute(
+        """
+        SELECT id, doctor_id, patient_id, appointment_type_id, start_at, end_at, status
+        FROM appointments
+        WHERE id = %s
+          AND patient_id = %s
+        FOR UPDATE
+        """,
+        (appointment_id, patient_id),
+    )
+
+    original = cur.fetchone()
+
+    if original is None:
+        raise AppointmentNotFound()
+
+    doctor_id = original[1]
+    appointment_type_id = original[3]
+    status = original[6]
+
+    if status != "BOOKED":
+        raise AlreadyCancelled()
+
+    appointment_type = get_appointment_type_for_doctor(cur, doctor_id, appointment_type_id)
+
+    if appointment_type is None:
+        raise AppointmentTypeNotAssigned()
+
+    duration_minutes = appointment_type["duration_minutes"]
+
+    new_start_at = new_start_at.replace(second=0, microsecond=0)
+
+    if enforce_booking_window and not is_within_booking_window(new_start_at.date()):
+        raise OutsideBookingWindow()
+
+    new_end_at = new_start_at + timedelta(minutes=duration_minutes)
+
+    # ---------------------------------------------------------
+    # Re-check doctor blocks for the new slot.
+    # ---------------------------------------------------------
+    cur.execute(
+        """
+        SELECT start_at, end_at
+        FROM doctor_blocks
+        WHERE doctor_id = %s
+          AND active = TRUE
+          AND start_at < %s
+          AND end_at > %s
+        """,
+        (doctor_id, new_end_at, new_start_at),
+    )
+
+    for block_start, block_end in cur.fetchall():
+        if overlaps(new_start_at, new_end_at, block_start, block_end):
+            raise DoctorBlockConflict()
+
+    # ---------------------------------------------------------
+    # Serialize against this doctor -- same primitive, same position
+    # (after the block check, before the final overlap re-check) as
+    # create_appointment_service and booking.py's own CONFIRM_BOOKING.
+    # ---------------------------------------------------------
+    cur.execute(
+        "SELECT pg_advisory_xact_lock(%s::bigint)",
+        (doctor_id,),
+    )
+
+    # ---------------------------------------------------------
+    # Re-check existing appointments for the new slot, excluding the
+    # appointment being rescheduled (it's about to be cancelled, but
+    # hasn't been yet, and would otherwise "overlap with itself").
+    # ---------------------------------------------------------
+    cur.execute(
+        """
+        SELECT start_at, end_at
+        FROM appointments
+        WHERE doctor_id = %s
+          AND start_at < %s
+          AND end_at > %s
+          AND status <> 'CANCELLED'
+          AND id <> %s
+        """,
+        (doctor_id, new_end_at, new_start_at, appointment_id),
+    )
+
+    for existing_start, existing_end in cur.fetchall():
+        if overlaps(new_start_at, new_end_at, existing_start, existing_end):
+            raise SlotOverlap()
+
+    # ---------------------------------------------------------
+    # Cancel the old appointment, then create the new one, in the same
+    # transaction. If the INSERT below fails (including via the
+    # EXCLUDE-constraint backstop), the whole transaction rolls back on
+    # the way out of this function -- undoing this UPDATE too, so a
+    # failed reschedule always leaves the original appointment intact.
+    # ---------------------------------------------------------
+    cur.execute(
+        """
+        UPDATE appointments
+        SET status = 'CANCELLED',
+            updated_at = NOW()
+        WHERE id = %s
+          AND patient_id = %s
+          AND status = 'BOOKED'
+        RETURNING id
+        """,
+        (appointment_id, patient_id),
+    )
+
+    if cur.fetchone() is None:
+        # Lost a race between the FOR UPDATE read above and here --
+        # shouldn't happen given the row lock, kept as a defensive
+        # mirror of booking.py's own equivalent check.
+        raise AlreadyCancelled()
+
+    try:
+        cur.execute(
+            """
+            INSERT INTO appointments (
+                doctor_id,
+                patient_id,
+                appointment_type_id,
+                start_at,
+                end_at,
+                status
+            )
+            VALUES (%s, %s, %s, %s, %s, 'BOOKED')
+            RETURNING
+                id,
+                doctor_id,
+                patient_id,
+                appointment_type_id,
+                start_at,
+                end_at,
+                status
+            """,
+            (doctor_id, patient_id, appointment_type_id, new_start_at, new_end_at),
+        )
+    except psycopg.errors.ExclusionViolation:
+        # Unlike create_appointment_service's equivalent catch, this one
+        # must explicitly roll back before raising: a caught Postgres
+        # error leaves the transaction aborted until a ROLLBACK is
+        # issued, and reschedule's caller (booking.py's
+        # RESCHEDULE_FINAL_CONFIRM handler) needs to keep using this
+        # same cursor afterward (to look up fresh available dates and
+        # update the session) -- it can't just let the exception
+        # propagate all the way out the way appointments.py's REST
+        # handler does. The rollback also undoes the "cancel old
+        # appointment" UPDATE above, in the same statement: a failed
+        # reschedule must leave the original appointment intact, not
+        # lose it.
+        cur.connection.rollback()
+        logger.warning(
+            f"Exclusion constraint rejected overlapping reschedule for "
+            f"doctor_id={doctor_id} (advisory lock should normally "
+            f"prevent reaching this point -- backstop triggered); "
+            f"original appointment preserved via transaction rollback"
+        )
+        raise SlotOverlap()
+
+    row = cur.fetchone()
+
+    return {
+        "id": row[0],
+        "doctor_id": row[1],
+        "patient_id": row[2],
+        "appointment_type_id": row[3],
+        "start_at": row[4].isoformat(),
+        "end_at": row[5].isoformat(),
+        "status": row[6],
+        "duration_minutes": duration_minutes,
+        "appointment_type_name": appointment_type["name"],
+    }
+
+
+def list_patient_appointments_service(cur, patient_id: int):
+    """
+    For WEB P4's "My Appointments" page: a patient's appointments split
+    into upcoming / history / cancelled. The split uses exactly the
+    status/start_at semantics app/api/booking.py's own
+    get_upcoming_booked_appointments() already relies on for its
+    "upcoming" filter (status = 'BOOKED' AND start_at > now) -- no new
+    business rule invented for the web. CANCELLED appointments go to
+    "cancelled" regardless of their date; a BOOKED appointment in the
+    past (no separate COMPLETED status exists anywhere in this schema)
+    is "history".
+
+    Same fix as get_upcoming_booked_appointments (see that function's
+    docstring for the full story): start_at/end_at are converted to the
+    doctor's own timezone before returning, since a value read from a
+    stored TIMESTAMPTZ column always comes back UTC-normalized from
+    psycopg otherwise, regardless of what offset it was inserted with.
+    """
+    cur.execute(
+        """
+        SELECT
+            a.id,
+            a.doctor_id,
+            d.name,
+            d.timezone,
+            a.appointment_type_id,
+            at.name,
+            a.start_at,
+            a.end_at,
+            a.status
+        FROM appointments a
+        JOIN doctors d
+            ON d.id = a.doctor_id
+        JOIN appointment_types at
+            ON at.id = a.appointment_type_id
+        WHERE a.patient_id = %s
+        """,
+        (patient_id,),
+    )
+
+    now = datetime.now(timezone.utc)
+    upcoming = []
+    history = []
+    cancelled = []
+
+    for row in cur.fetchall():
+        doctor_tz = row[3]
+
+        if not validate_timezone(doctor_tz):
+            doctor_tz = "Asia/Kolkata"
+
+        entry = {
+            "id": row[0],
+            "doctor_id": row[1],
+            "doctor_name": row[2],
+            "appointment_type_id": row[4],
+            "appointment_type_name": row[5],
+            "start_at": convert_to_timezone(row[6], doctor_tz).isoformat(),
+            "end_at": convert_to_timezone(row[7], doctor_tz).isoformat(),
+            "status": row[8],
+        }
+
+        if row[8] == "CANCELLED":
+            cancelled.append((row[6], entry))
+        elif row[6] > now:
+            upcoming.append((row[6], entry))
+        else:
+            history.append((row[6], entry))
+
+    upcoming.sort(key=lambda pair: pair[0])
+    history.sort(key=lambda pair: pair[0], reverse=True)
+    cancelled.sort(key=lambda pair: pair[0], reverse=True)
+
+    return {
+        "upcoming": [entry for _, entry in upcoming],
+        "history": [entry for _, entry in history],
+        "cancelled": [entry for _, entry in cancelled],
     }

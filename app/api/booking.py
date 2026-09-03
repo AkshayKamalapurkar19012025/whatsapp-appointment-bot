@@ -12,10 +12,20 @@ from app.utils.timezone import (
     ensure_aware_datetime,
     overlaps,
     get_doctor_timezone,
+    convert_to_timezone,
+    validate_timezone,
 )
 from app.services.availability_engine import (
     get_appointment_type_for_doctor,
     get_available_slots,
+)
+from app.services.appointment_services import reschedule_appointment_service
+from app.services.exceptions import (
+    AppointmentNotFound,
+    AlreadyCancelled,
+    AppointmentTypeNotAssigned,
+    DoctorBlockConflict,
+    SlotOverlap,
 )
 
 
@@ -450,12 +460,29 @@ def slot_selection_message(slot_options):
 
 
 def get_upcoming_booked_appointments(cur, patient_id: int):
+    """
+    Bug fix (WEB P4): this used to return a.start_at/a.end_at exactly as
+    psycopg deserializes them from the TIMESTAMPTZ columns -- which is
+    always normalized to the database session's own timezone (UTC in
+    this app), never the offset the row was originally inserted with.
+    Confirmed live: an appointment booked for 2:00 PM in a doctor's
+    Asia/Kolkata (+05:30) timezone was coming back as 8:30 AM here,
+    which cancellation_details_message()/reschedule_selection_message()
+    then displayed verbatim to WhatsApp users trying to cancel or
+    reschedule -- a real, pre-existing production bug, not something
+    introduced by this phase. (Booking/slot-selection was never affected:
+    those times are computed fresh via make_aware_datetime, never read
+    back from a stored row.) Fixed by converting to the doctor's own
+    timezone here, the single place both the WhatsApp flow and WEB P4's
+    new appointment-listing endpoint get this data from.
+    """
     cur.execute(
         """
         SELECT
             a.id,
             a.doctor_id,
             d.name,
+            d.timezone,
             a.appointment_type_id,
             at.name,
             a.start_at,
@@ -475,18 +502,27 @@ def get_upcoming_booked_appointments(cur, patient_id: int):
 
     rows = cur.fetchall()
 
-    return [
-    {
-        "id": row[0],
-        "doctor_id": row[1],
-        "doctor_name": row[2],
-        "appointment_type_id": row[3],
-        "appointment_type_name": row[4],
-        "start_at": row[5],
-        "end_at": row[6],
-    }
-    for row in rows
-]
+    results = []
+
+    for row in rows:
+        doctor_tz = row[3]
+
+        if not validate_timezone(doctor_tz):
+            doctor_tz = "Asia/Kolkata"
+
+        results.append(
+            {
+                "id": row[0],
+                "doctor_id": row[1],
+                "doctor_name": row[2],
+                "appointment_type_id": row[4],
+                "appointment_type_name": row[5],
+                "start_at": convert_to_timezone(row[6], doctor_tz),
+                "end_at": convert_to_timezone(row[7], doctor_tz),
+            }
+        )
+
+    return results
 
 
 def cancellation_details_message(appointment):
@@ -2739,79 +2775,27 @@ def booking(request: BookingRequest):
                     }
 
                 # ---------------------------------------------------------
-                # Validate the original appointment.
+                # Reschedule via app.services.appointment_services'
+                # reschedule_appointment_service -- the same function the
+                # web reschedule endpoint (WEB P4) calls, instead of a
+                # second, hand-maintained copy of these rules that could
+                # silently drift from this one. Each typed exception
+                # below is translated back into the exact conversational
+                # response this handler always returned (verified against
+                # the pre-refactor code line by line), with one
+                # deliberate, minor consolidation: the original code had
+                # two slightly different "not reschedulable" messages
+                # depending on exactly when in the flow that was detected
+                # -- an initial status check, and a redundant re-check
+                # right before the cancel UPDATE that the initial check's
+                # FOR UPDATE row lock makes practically unreachable. Both
+                # now map to AlreadyCancelled and the same message; the
+                # unreachable second wording is not preserved.
                 # ---------------------------------------------------------
 
-                cur.execute(
-                    """
-                    SELECT
-                        id,
-                        doctor_id,
-                        patient_id,
-                        appointment_type_id,
-                        start_at,
-                        end_at,
-                        status
-                    FROM appointments
-                    WHERE id = %s
-                      AND patient_id = %s
-                    FOR UPDATE
-                    """,
-                    (
-                        session["selected_appointment_id"],
-                        patient["id"],
-                    ),
-                )
+                new_start_at = session["selected_start_at"]
 
-                original_appointment = cur.fetchone()
-
-                if original_appointment is None:
-                    clear_session(cur, whatsapp_number)
-
-                    return {
-                        "patient": patient,
-                        "next_step": "SELECT_DEPARTMENT",
-                        "error": "That appointment could not be found.",
-                        "departments": get_departments(cur),
-                    }
-
-                if original_appointment[6] != "BOOKED":
-                    clear_session(cur, whatsapp_number)
-
-                    return {
-                        "patient": patient,
-                        "next_step": "SELECT_DEPARTMENT",
-                        "error": "That appointment is no longer available to reschedule.",
-                        "departments": get_departments(cur),
-                    }
-
-                # ---------------------------------------------------------
-                # Validate the new appointment type.
-                # ---------------------------------------------------------
-
-                appointment_type = get_appointment_type_for_doctor(
-                    cur,
-                    session["doctor_id"],
-                    session["appointment_type_id"],
-                )
-
-                if appointment_type is None:
-                    clear_session(cur, whatsapp_number)
-
-                    return {
-                        "patient": patient,
-                        "next_step": "SELECT_DEPARTMENT",
-                        "error": "The selected appointment type is no longer available.",
-                        "departments": get_departments(cur),
-                    }
-
-                duration_minutes = appointment_type[
-                    "duration_minutes"
-                ]
-
-                start_at = session["selected_start_at"]
-
-                if start_at is None:
+                if new_start_at is None:
                     clear_session(cur, whatsapp_number)
 
                     return {
@@ -2821,269 +2805,12 @@ def booking(request: BookingRequest):
                         "departments": get_departments(cur),
                     }
 
-                if start_at.tzinfo is None:
-                    start_at = start_at.replace(
+                if new_start_at.tzinfo is None:
+                    new_start_at = new_start_at.replace(
                         tzinfo=timezone.utc
                     )
 
-                end_at = start_at + timedelta(
-                    minutes=duration_minutes
-                )
-
-                # ---------------------------------------------------------
-                # Get doctor timezone for validation
-                # ---------------------------------------------------------
-
-                try:
-                    doctor_tz = get_doctor_timezone(cur, session["doctor_id"])
-                except Exception as e:
-                    logger.error(f"Failed to get timezone for rescheduling: {e}")
-                    doctor_tz = "Asia/Kolkata"
-
-                # ---------------------------------------------------------
-                # Re-check doctor blocks.
-                # ---------------------------------------------------------
-
-                cur.execute(
-                    """
-                    SELECT start_at, end_at
-                    FROM doctor_blocks
-                    WHERE doctor_id = %s
-                      AND active = TRUE
-                      AND start_at < %s
-                      AND end_at > %s
-                    """,
-                    (
-                        session["doctor_id"],
-                        end_at,
-                        start_at,
-                    ),
-                )
-
-                blocks = cur.fetchall()
-
-                blocked = False
-
-                for block_start, block_end in blocks:
-
-                    block_start = ensure_aware_datetime(block_start, doctor_tz)
-                    block_end = ensure_aware_datetime(block_end, doctor_tz)
-
-                    if overlaps(
-                        start_at,
-                        end_at,
-                        block_start,
-                        block_end,
-                    ):
-                        blocked = True
-                        break
-
-                if blocked:
-                    update_session(
-                        cur=cur,
-                        session_id=session["id"],
-                        step="RESCHEDULE_DATE",
-                        department_id=None,
-                        doctor_id=session["doctor_id"],
-                        appointment_type_id=session["appointment_type_id"],
-                        selected_date=None,
-                        selected_start_at=None,
-                        selected_appointment_id=session[
-                            "selected_appointment_id"
-                        ],
-                    )
-
-                    available_dates = get_available_dates(
-                        cur,
-                        session["doctor_id"],
-                        session["appointment_type_id"],
-                    )
-
-                    date_options = format_date_options(available_dates)
-
-                    return {
-                        "patient": patient,
-                        "next_step": "RESCHEDULE_DATE",
-                        "error": "That slot is no longer available because the doctor is unavailable. Please choose another date.",
-                        "date_options": date_options,
-                        "message": date_selection_message(date_options),
-                    }
-
-                # ---------------------------------------------------------
-                # Serialize appointment changes for this doctor.
-                # This keeps rescheduling from racing with another booking or
-                # rescheduling request for the same doctor.
-                # ---------------------------------------------------------
-
-                cur.execute(
-                    "SELECT pg_advisory_xact_lock(%s::bigint)",
-                    (session["doctor_id"],),
-                )
-
-                # ---------------------------------------------------------
-                # Re-check existing appointments.
-                #
-                # Exclude the original appointment because it is the
-                # appointment being rescheduled.
-                # ---------------------------------------------------------
-
-                cur.execute(
-                    """
-                    SELECT start_at, end_at
-                    FROM appointments
-                    WHERE doctor_id = %s
-                      AND start_at < %s
-                      AND end_at > %s
-                      AND status <> 'CANCELLED'
-                      AND id <> %s
-                    """,
-                    (
-                        session["doctor_id"],
-                        end_at,
-                        start_at,
-                        session["selected_appointment_id"],
-                    ),
-                )
-
-                existing_appointments = cur.fetchall()
-
-                occupied = False
-
-                for existing_start, existing_end in existing_appointments:
-
-                    existing_start = ensure_aware_datetime(existing_start, doctor_tz)
-                    existing_end = ensure_aware_datetime(existing_end, doctor_tz)
-
-                    if overlaps(
-                        start_at,
-                        end_at,
-                        existing_start,
-                        existing_end,
-                    ):
-                        occupied = True
-                        break
-
-                if occupied:
-                    update_session(
-                        cur=cur,
-                        session_id=session["id"],
-                        step="RESCHEDULE_DATE",
-                        department_id=None,
-                        doctor_id=session["doctor_id"],
-                        appointment_type_id=session["appointment_type_id"],
-                        selected_date=None,
-                        selected_start_at=None,
-                        selected_appointment_id=session[
-                            "selected_appointment_id"
-                        ],
-                    )
-
-                    available_dates = get_available_dates(
-                        cur,
-                        session["doctor_id"],
-                        session["appointment_type_id"],
-                    )
-
-                    date_options = format_date_options(available_dates)
-
-                    return {
-                        "patient": patient,
-                        "next_step": "RESCHEDULE_DATE",
-                        "error": "That slot was just booked by someone else. Please choose another date or slot.",
-                        "date_options": date_options,
-                        "message": date_selection_message(date_options),
-                    }
-
-                # ---------------------------------------------------------
-                # Cancel the old appointment.
-                # ---------------------------------------------------------
-
-                cur.execute(
-                    """
-                    UPDATE appointments
-                    SET status = 'CANCELLED',
-                        updated_at = NOW()
-                    WHERE id = %s
-                      AND patient_id = %s
-                      AND status = 'BOOKED'
-                    RETURNING id
-                    """,
-                    (
-                        session["selected_appointment_id"],
-                        patient["id"],
-                    ),
-                )
-
-                cancelled = cur.fetchone()
-
-                if cancelled is None:
-                    clear_session(cur, whatsapp_number)
-
-                    return {
-                        "patient": patient,
-                        "next_step": "SELECT_DEPARTMENT",
-                        "error": "That appointment was already cancelled or is no longer available.",
-                        "departments": get_departments(cur),
-                    }
-
-                # ---------------------------------------------------------
-                # Create the new appointment.
-                #
-                # If the exclusion constraint rejects this INSERT (see
-                # migrations/0003_prevent_overlapping_bookings.sql --
-                # same backstop reasoning as the CONFIRM_BOOKING path
-                # above), the whole transaction rolls back, which also
-                # undoes the "cancel old appointment" UPDATE just above.
-                # That is the correct, spec-required behaviour: a failed
-                # reschedule must leave the original appointment intact,
-                # not lose it.
-                # ---------------------------------------------------------
-
-                try:
-                    cur.execute(
-                        """
-                        INSERT INTO appointments (
-                            doctor_id,
-                            patient_id,
-                            appointment_type_id,
-                            start_at,
-                            end_at,
-                            status
-                        )
-                        VALUES (
-                            %s,
-                            %s,
-                            %s,
-                            %s,
-                            %s,
-                            'BOOKED'
-                        )
-                        RETURNING
-                            id,
-                            doctor_id,
-                            patient_id,
-                            appointment_type_id,
-                            start_at,
-                            end_at,
-                            status
-                        """,
-                        (
-                            session["doctor_id"],
-                            patient["id"],
-                            session["appointment_type_id"],
-                            start_at,
-                            end_at,
-                        ),
-                    )
-                except psycopg.errors.ExclusionViolation:
-                    conn.rollback()
-                    logger.warning(
-                        f"Exclusion constraint rejected overlapping reschedule "
-                        f"for doctor_id={session['doctor_id']} (advisory lock "
-                        f"should normally prevent reaching this point -- "
-                        f"backstop triggered); original appointment preserved"
-                    )
-
+                def _back_to_reschedule_date(error_message):
                     update_session(
                         cur=cur,
                         session_id=session["id"],
@@ -3106,12 +2833,53 @@ def booking(request: BookingRequest):
                     return {
                         "patient": patient,
                         "next_step": "RESCHEDULE_DATE",
-                        "error": "That slot was just booked by someone else. Please choose another date or slot.",
+                        "error": error_message,
                         "date_options": date_options,
                         "message": date_selection_message(date_options),
                     }
 
-                row = cur.fetchone()
+                try:
+                    result = reschedule_appointment_service(
+                        cur,
+                        session["selected_appointment_id"],
+                        patient_id=patient["id"],
+                        new_start_at=new_start_at,
+                    )
+                except AppointmentNotFound:
+                    clear_session(cur, whatsapp_number)
+
+                    return {
+                        "patient": patient,
+                        "next_step": "SELECT_DEPARTMENT",
+                        "error": "That appointment could not be found.",
+                        "departments": get_departments(cur),
+                    }
+                except AlreadyCancelled:
+                    clear_session(cur, whatsapp_number)
+
+                    return {
+                        "patient": patient,
+                        "next_step": "SELECT_DEPARTMENT",
+                        "error": "That appointment is no longer available to reschedule.",
+                        "departments": get_departments(cur),
+                    }
+                except AppointmentTypeNotAssigned:
+                    clear_session(cur, whatsapp_number)
+
+                    return {
+                        "patient": patient,
+                        "next_step": "SELECT_DEPARTMENT",
+                        "error": "The selected appointment type is no longer available.",
+                        "departments": get_departments(cur),
+                    }
+                except DoctorBlockConflict:
+                    return _back_to_reschedule_date(
+                        "That slot is no longer available because the doctor is unavailable. Please choose another date."
+                    )
+                except SlotOverlap:
+                    return _back_to_reschedule_date(
+                        "That slot was just booked by someone else. Please choose another date or slot."
+                    )
 
                 update_session(
                     cur=cur,
@@ -3128,13 +2896,13 @@ def booking(request: BookingRequest):
                 return {
                     "patient": patient,
                     "appointment": {
-                        "id": row[0],
-                        "doctor_id": row[1],
-                        "patient_id": row[2],
-                        "appointment_type_id": row[3],
-                        "start_at": row[4].isoformat(),
-                        "end_at": row[5].isoformat(),
-                        "status": row[6],
+                        "id": result["id"],
+                        "doctor_id": result["doctor_id"],
+                        "patient_id": result["patient_id"],
+                        "appointment_type_id": result["appointment_type_id"],
+                        "start_at": result["start_at"],
+                        "end_at": result["end_at"],
+                        "status": result["status"],
                     },
                     "next_step": "RESCHEDULED",
                     "message": "Your appointment has been rescheduled successfully.\n\n" + main_menu_message(),

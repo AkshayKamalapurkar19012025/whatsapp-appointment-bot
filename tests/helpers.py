@@ -79,6 +79,24 @@ def register_patient(client: TestClient, whatsapp_number: str, name: str) -> dic
     return response.json()["patient"]
 
 
+def register_and_login_web_patient(client: TestClient, whatsapp_number: str, name: str) -> str:
+    """Drive the web OTP login flow (request -> dev-lookup -> verify with
+    name, since this is always a brand-new number in test isolation) and
+    return the resulting Bearer session token."""
+    client.post("/api/auth/patient/otp/request", json={"whatsapp_number": whatsapp_number})
+    lookup = client.get(
+        "/api/auth/patient/otp/_dev_lookup",
+        params={"whatsapp_number": whatsapp_number},
+    )
+    code = lookup.json()["otp_code"]
+
+    verified = client.post(
+        "/api/auth/patient/otp/verify",
+        json={"whatsapp_number": whatsapp_number, "otp": code, "name": name},
+    )
+    return verified.json()["session_token"]
+
+
 def book_first_available_slot(
     client: TestClient,
     whatsapp_number: str,
