@@ -3,6 +3,8 @@
 from fastapi.testclient import TestClient
 import psycopg
 
+from app.services.staff_management import create_staff_account
+
 
 def seed_basic_doctor(
     client: TestClient,
@@ -67,6 +69,24 @@ def seed_basic_doctor(
         "doctor_id": doctor["id"],
         "appointment_type_id": appointment_type_id,
     }
+
+
+def create_staff_for_test(
+    db_connection: psycopg.Connection,
+    *,
+    username: str,
+    password: str,
+    role: str = "STAFF",
+) -> dict:
+    """Seed a staff/admin account directly (there's no self-service staff
+    signup -- see app/services/staff_management.py's module docstring),
+    using the exact same service function the real ADMIN-only creation
+    endpoint calls, so a test account is created identically to a real
+    one."""
+    with db_connection.cursor() as cur:
+        account = create_staff_account(cur, username, password, role)
+    db_connection.commit()
+    return account
 
 
 def register_patient(client: TestClient, whatsapp_number: str, name: str) -> dict:

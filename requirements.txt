@@ -12,3 +12,9 @@ psycopg-pool==3.3.1
 # Loads DB_*/DATABASE_URL from a local .env file, if present, without
 # overriding real environment variables that are already set.
 python-dotenv==1.2.3
+
+# Password hashing for staff/admin accounts (WEB P5). Argon2id is the
+# current OWASP-recommended default for new applications; argon2-cffi is
+# the actively maintained Python binding (unlike passlib, which is in
+# maintenance mode).
+argon2-cffi==23.1.0

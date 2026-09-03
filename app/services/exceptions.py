@@ -95,3 +95,34 @@ class RegistrationRequired(ServiceError):
 
 class InvalidSession(ServiceError):
     pass
+
+
+# ---------------------------------------------------------------------
+# Staff/admin authentication (WEB P5) -- see app/services/staff_auth.py.
+# ---------------------------------------------------------------------
+
+class InvalidCredentials(ServiceError):
+    """Unknown username OR a wrong password for a known username --
+    deliberately the same exception for both, so a failed login never
+    discloses whether a given username exists."""
+    pass
+
+
+class StaffAccountLocked(ServiceError):
+    pass
+
+
+class StaffAccountInactive(ServiceError):
+    """Correct username and password, but the account has been
+    deactivated. Deliberately distinct from InvalidCredentials -- see
+    app/services/staff_auth.py's login() docstring for why this one is
+    allowed to be distinguishable."""
+    pass
+
+
+class UsernameAlreadyExists(ServiceError):
+    pass
+
+
+class StaffNotFound(ServiceError):
+    pass
