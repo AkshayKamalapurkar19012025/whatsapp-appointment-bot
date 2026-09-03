@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
-from datetime import time
+from datetime import date, time
 
 from app.api.staff_auth import require_role
 from app.db.connection import get_connection
@@ -15,6 +15,10 @@ class DoctorScheduleCreate(BaseModel):
     day_of_week: int = Field(ge=1, le=7)
     start_time: time
     end_time: time
+    # WEB P7: NULL (the default) means open-ended on that side, so
+    # omitting both keeps a row's pre-P7 "applies forever" meaning.
+    start_date: date | None = None
+    end_date: date | None = None
 
     @field_validator("end_time")
     @classmethod
@@ -26,6 +30,16 @@ class DoctorScheduleCreate(BaseModel):
 
         return value
 
+    @field_validator("end_date")
+    @classmethod
+    def validate_date_range(cls, value: date | None, info):
+        start_date = info.data.get("start_date")
+
+        if value is not None and start_date is not None and value < start_date:
+            raise ValueError("End date must be on or after start date")
+
+        return value
+
 
 def schedule_overlaps(
     cur,
@@ -33,46 +47,49 @@ def schedule_overlaps(
     day_of_week: int,
     start_time: time,
     end_time: time,
+    schedule_start_date: date | None = None,
+    schedule_end_date: date | None = None,
     exclude_schedule_id: int | None = None,
 ):
-    if exclude_schedule_id is None:
-        cur.execute(
-            """
-            SELECT id
-            FROM doctor_schedule
-            WHERE doctor_id = %s
-              AND day_of_week = %s
-              AND active = TRUE
-              AND start_time < %s
-              AND end_time > %s
-            """,
-            (
-                doctor_id,
-                day_of_week,
-                end_time,
-                start_time,
-            ),
-        )
-    else:
-        cur.execute(
-            """
-            SELECT id
-            FROM doctor_schedule
-            WHERE doctor_id = %s
-              AND day_of_week = %s
-              AND active = TRUE
-              AND id <> %s
-              AND start_time < %s
-              AND end_time > %s
-            """,
-            (
-                doctor_id,
-                day_of_week,
-                exclude_schedule_id,
-                end_time,
-                start_time,
-            ),
-        )
+    """
+    True if an existing active schedule row for this doctor/day
+    conflicts with the given time+date range.
+
+    Two rows conflict only when BOTH their time ranges and their date
+    ranges overlap (WEB P7 -- see migrations/0006's header for the
+    resolved date-range semantics). A NULL start_date/end_date is
+    unbounded on that side, so the interval-overlap test below (each
+    side's "IS NULL OR ..." clause) treats it as -infinity/+infinity --
+    exactly matching every pre-P7 row's "applies forever" behavior,
+    which is why the plain time-only overlap check (no date columns
+    involved yet) still worked correctly before this migration.
+    """
+    cur.execute(
+        """
+        SELECT id
+        FROM doctor_schedule
+        WHERE doctor_id = %s
+          AND day_of_week = %s
+          AND active = TRUE
+          AND (%s::bigint IS NULL OR id <> %s)
+          AND start_time < %s
+          AND end_time > %s
+          AND (start_date IS NULL OR %s::date IS NULL OR start_date <= %s)
+          AND (end_date IS NULL OR %s::date IS NULL OR end_date >= %s)
+        """,
+        (
+            doctor_id,
+            day_of_week,
+            exclude_schedule_id,
+            exclude_schedule_id,
+            end_time,
+            start_time,
+            schedule_end_date,
+            schedule_end_date,
+            schedule_start_date,
+            schedule_start_date,
+        ),
+    )
 
     return cur.fetchone() is not None
 
@@ -107,7 +124,9 @@ def get_doctor_schedule(doctor_id: int):
                     day_of_week,
                     start_time,
                     end_time,
-                    active
+                    active,
+                    start_date,
+                    end_date
                 FROM doctor_schedule
                 WHERE doctor_id = %s
                   AND active = TRUE
@@ -125,6 +144,8 @@ def get_doctor_schedule(doctor_id: int):
             "start_time": row[2].strftime("%H:%M"),
             "end_time": row[3].strftime("%H:%M"),
             "active": row[4],
+            "start_date": row[5].isoformat() if row[5] else None,
+            "end_date": row[6].isoformat() if row[6] else None,
         }
         for row in rows
     ]
@@ -163,6 +184,8 @@ def create_doctor_schedule(
                 schedule.day_of_week,
                 schedule.start_time,
                 schedule.end_time,
+                schedule.start_date,
+                schedule.end_date,
             ):
                 raise HTTPException(
                     status_code=409,
@@ -175,21 +198,27 @@ def create_doctor_schedule(
                     doctor_id,
                     day_of_week,
                     start_time,
-                    end_time
+                    end_time,
+                    start_date,
+                    end_date
                 )
-                VALUES (%s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 RETURNING
                     id,
                     day_of_week,
                     start_time,
                     end_time,
-                    active
+                    active,
+                    start_date,
+                    end_date
                 """,
                 (
                     doctor_id,
                     schedule.day_of_week,
                     schedule.start_time,
                     schedule.end_time,
+                    schedule.start_date,
+                    schedule.end_date,
                 ),
             )
 
@@ -202,6 +231,8 @@ def create_doctor_schedule(
         "start_time": row[2].strftime("%H:%M"),
         "end_time": row[3].strftime("%H:%M"),
         "active": row[4],
+        "start_date": row[5].isoformat() if row[5] else None,
+        "end_date": row[6].isoformat() if row[6] else None,
     }
 
 
@@ -258,6 +289,8 @@ def update_doctor_schedule(
                 schedule.day_of_week,
                 schedule.start_time,
                 schedule.end_time,
+                schedule.start_date,
+                schedule.end_date,
                 exclude_schedule_id=schedule_id,
             ):
                 raise HTTPException(
@@ -270,7 +303,9 @@ def update_doctor_schedule(
                 UPDATE doctor_schedule
                 SET day_of_week = %s,
                     start_time = %s,
-                    end_time = %s
+                    end_time = %s,
+                    start_date = %s,
+                    end_date = %s
                 WHERE id = %s
                   AND doctor_id = %s
                   AND active = TRUE
@@ -279,12 +314,16 @@ def update_doctor_schedule(
                     day_of_week,
                     start_time,
                     end_time,
-                    active
+                    active,
+                    start_date,
+                    end_date
                 """,
                 (
                     schedule.day_of_week,
                     schedule.start_time,
                     schedule.end_time,
+                    schedule.start_date,
+                    schedule.end_date,
                     schedule_id,
                     doctor_id,
                 ),
@@ -299,6 +338,8 @@ def update_doctor_schedule(
         "start_time": row[2].strftime("%H:%M"),
         "end_time": row[3].strftime("%H:%M"),
         "active": row[4],
+        "start_date": row[5].isoformat() if row[5] else None,
+        "end_date": row[6].isoformat() if row[6] else None,
     }
 
 
