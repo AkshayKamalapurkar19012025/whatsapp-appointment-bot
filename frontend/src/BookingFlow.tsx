@@ -37,9 +37,11 @@ type Step =
 export default function BookingFlow({
   patientName,
   onLoggedOut,
+  onViewAppointments,
 }: {
   patientName: string
   onLoggedOut: () => void
+  onViewAppointments: () => void
 }) {
   const [step, setStep] = useState<Step>('department')
   const [error, setError] = useState<string | null>(null)
@@ -152,9 +154,14 @@ export default function BookingFlow({
     <div className="card">
       <div className="topbar">
         <span>Hi, {patientName}</span>
-        <button type="button" className="link" onClick={handleLogout}>
-          Log out
-        </button>
+        <div>
+          <button type="button" className="link" onClick={onViewAppointments}>
+            My appointments
+          </button>
+          <button type="button" className="link" onClick={handleLogout}>
+            Log out
+          </button>
+        </div>
       </div>
 
       {error && <p className="error">{error}</p>}
@@ -299,6 +306,9 @@ export default function BookingFlow({
           </p>
           <button type="button" onClick={startOver}>
             Book another appointment
+          </button>
+          <button type="button" className="link" onClick={onViewAppointments}>
+            View my appointments
           </button>
         </div>
       )}

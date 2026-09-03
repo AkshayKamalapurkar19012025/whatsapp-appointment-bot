@@ -123,6 +123,86 @@ button.link {
   margin: 0;
 }
 
+.topbar > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tabs .tab {
+  background: none;
+  border: none;
+  padding: 8px 12px;
+  color: var(--color-muted);
+  font-weight: 600;
+  border-bottom: 2px solid transparent;
+}
+
+.tabs .tab.active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+.appointment-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.appointment-card {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.appointment-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.appointment-actions button {
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-card);
+  color: var(--color-primary);
+}
+
+.appointment-actions button.danger {
+  color: var(--color-error);
+}
+
+@media (max-width: 420px) {
+  .appointment-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .appointment-actions {
+    flex-direction: row;
+    width: 100%;
+  }
+  .appointment-actions button {
+    flex: 1;
+  }
+}
+
 .option-list {
   list-style: none;
   margin: 0 0 8px;

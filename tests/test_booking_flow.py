@@ -75,6 +75,53 @@ def test_booking_uses_doctor_specific_timezone(client, db_connection):
     assert ny_time.hour == 9
 
 
+def test_cancel_and_reschedule_selection_show_doctor_local_time(client, db_connection):
+    """
+    Regression test for a real bug found while building WEB P4: an
+    appointment's start_at, read back from the database (as opposed to
+    freshly computed during slot selection), used to come back
+    UTC-normalized regardless of the doctor's actual timezone --
+    get_upcoming_booked_appointments() returned it as-is, and
+    cancellation_details_message()/reschedule_selection_message() then
+    displayed that wrong time verbatim. Confirmed live before the fix: a
+    2:00 PM Asia/Kolkata (+05:30) booking displayed as "8:30 AM" in both
+    messages. Uses America/New_York (a large, unambiguous offset from
+    UTC, same choice as test_booking_uses_doctor_specific_timezone above)
+    so a regression can't hide behind IST's own 5:30 offset coincidence.
+    """
+    seed_basic_doctor(client, db_connection, timezone="America/New_York")
+    number = "+919000000199"
+    register_patient(client, number, "TZ Display Patient")
+
+    booked = book_first_available_slot(client, number, date_option="5")
+    assert booked["next_step"] == "BOOKED"
+
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    booked_dt = datetime.fromisoformat(booked["appointment"]["start_at"])
+    ny_time = booked_dt.astimezone(ZoneInfo("America/New_York"))
+    expected_label = ny_time.strftime("%I:%M %p").lstrip("0")
+
+    send(client, number, "main menu")
+    # Single upcoming appointment -> both flows skip straight to their
+    # confirm/selection screen (see the len(appointments) == 1 shortcuts).
+    cancel_confirm = send(client, number, "3")
+    assert cancel_confirm["next_step"] == "CANCEL_CONFIRM"
+    assert expected_label in cancel_confirm["message"], (
+        f"expected {expected_label!r} (doctor-local time) in cancellation "
+        f"message, got: {cancel_confirm['message']!r}"
+    )
+
+    send(client, number, "main menu")
+    reschedule_select = send(client, number, "2")
+    assert reschedule_select["next_step"] in ("RESCHEDULE_SELECT", "RESCHEDULE_CONFIRM")
+    assert expected_label in reschedule_select["message"], (
+        f"expected {expected_label!r} (doctor-local time) in reschedule "
+        f"selection message, got: {reschedule_select['message']!r}"
+    )
+
+
 def test_cancel_flow_marks_appointment_cancelled(client, db_connection):
     seed_basic_doctor(client, db_connection)
     number = "+919000000105"

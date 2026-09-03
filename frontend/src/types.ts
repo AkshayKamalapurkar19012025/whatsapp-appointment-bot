@@ -49,3 +49,26 @@ export interface BookedAppointment {
   duration_minutes: number
   appointment_type_name: string
 }
+
+// Note: start_at/end_at here are already correct in the doctor's own
+// local time (app/services/appointment_services.py's
+// list_patient_appointments_service converts them before returning --
+// unlike BookedAppointment's fields above, which come straight off a
+// create/reschedule INSERT ... RETURNING and are UTC-labeled; see
+// format.ts and the WEB P3/P4 reports for why that distinction matters).
+export interface MyAppointment {
+  id: number
+  doctor_id: number
+  doctor_name: string
+  appointment_type_id: number
+  appointment_type_name: string
+  start_at: string
+  end_at: string
+  status: string
+}
+
+export interface MyAppointmentsResponse {
+  upcoming: MyAppointment[]
+  history: MyAppointment[]
+  cancelled: MyAppointment[]
+}

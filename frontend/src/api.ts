@@ -4,6 +4,7 @@ import type {
   CalendarMonth,
   Department,
   Doctor,
+  MyAppointmentsResponse,
   Patient,
 } from './types'
 
@@ -162,5 +163,31 @@ export function createWebAppointment(
       appointment_type_id: appointmentTypeId,
       start_at: startAt,
     },
+  })
+}
+
+// -- My Appointments (WEB P4) ---------------------------------------------
+
+export function getMyAppointments(): Promise<MyAppointmentsResponse> {
+  return request('/web/appointments/me', { auth: true })
+}
+
+export function cancelWebAppointment(
+  appointmentId: number,
+): Promise<{ id: number; status: string; message: string }> {
+  return request(`/web/appointments/${appointmentId}`, {
+    method: 'DELETE',
+    auth: true,
+  })
+}
+
+export function rescheduleWebAppointment(
+  appointmentId: number,
+  newStartAt: string,
+): Promise<BookedAppointment> {
+  return request(`/web/appointments/${appointmentId}/reschedule`, {
+    method: 'POST',
+    auth: true,
+    body: { new_start_at: newStartAt },
   })
 }

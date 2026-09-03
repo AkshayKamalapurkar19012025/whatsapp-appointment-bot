@@ -13,22 +13,7 @@ from datetime import date, timedelta
 
 from app.services.availability_engine import booking_window
 
-from tests.helpers import seed_basic_doctor
-
-
-def _register_and_login(client, whatsapp_number: str, name: str) -> str:
-    client.post("/api/auth/patient/otp/request", json={"whatsapp_number": whatsapp_number})
-    lookup = client.get(
-        "/api/auth/patient/otp/_dev_lookup",
-        params={"whatsapp_number": whatsapp_number},
-    )
-    code = lookup.json()["otp_code"]
-
-    verified = client.post(
-        "/api/auth/patient/otp/verify",
-        json={"whatsapp_number": whatsapp_number, "otp": code, "name": name},
-    )
-    return verified.json()["session_token"]
+from tests.helpers import seed_basic_doctor, register_and_login_web_patient as _register_and_login
 
 
 def test_calendar_returns_per_day_availability_matching_schedule(client, db_connection):
