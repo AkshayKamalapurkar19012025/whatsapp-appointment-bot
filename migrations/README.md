@@ -30,6 +30,23 @@ docstring for exactly how it runs (locking, transactions, exit codes).
   `docs/DATABASE_P1_NOTES.md` for what's planned and why it wasn't done
   here.
 
+## A database that already has these tables, from before migration history existed
+
+`scripts/migrate.py` assumes a database is either empty or was built
+entirely by running these files in order -- it has no concept of "this
+table already exists with equivalent structure, treat it as already
+applied." Pointing it at a database whose tables predate this migration
+chain fails: 0001's `CREATE TABLE` statements hit `duplicate_table`.
+
+If you're in that situation (`schema_migrations` is empty, but the
+tables already exist with real data in them), don't run
+`scripts/migrate.py` directly. See `scripts/reconcile_pre_0001_baseline.
+sql` -- a one-time, read-and-review-first script that closes the one
+verified real gap between such a database and what 0001 guarantees, then
+records 0001 as applied so `scripts/migrate.py` can take over normally
+from 0002 onward. It does not drop, recreate, or modify any existing
+row.
+
 ## What this does *not* handle
 
 - **Provisioning** the Postgres role/database themselves. That's a
