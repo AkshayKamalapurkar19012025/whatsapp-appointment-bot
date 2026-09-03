@@ -62,7 +62,7 @@ def test_cors_middleware_allows_listed_origin_rejects_others():
         CORSMiddleware,
         allow_origins=["https://allowed.example.com"],
         allow_credentials=False,
-        allow_methods=["GET", "POST", "PUT", "DELETE"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Authorization", "Content-Type"],
     )
 
@@ -76,6 +76,33 @@ def test_cors_middleware_allows_listed_origin_rejects_others():
 
         denied = probe_client.get("/ping", headers={"Origin": "https://evil.example.com"})
         assert "access-control-allow-origin" not in {k.lower() for k in denied.headers.keys()}
+
+
+def test_cors_allows_every_http_method_the_api_actually_uses(client):
+    # A real regression: allow_methods in app/main.py's CORSMiddleware
+    # once omitted PATCH, even though PATCH /api/auth/staff/accounts/
+    # {id}/active (activate/deactivate a staff account) is a real,
+    # frontend-used endpoint -- StaffAccountsPanel.tsx's Deactivate/
+    # Reactivate button. A cross-origin frontend deployment would have
+    # had its browser block that request at the CORS preflight stage,
+    # silently breaking the only account-activation control in the
+    # admin UI, with nothing else in this suite ever sending a real
+    # preflight against the actual app to catch it (the sibling test
+    # above only checks a hand-copied method list on a throwaway probe
+    # app, not app/main.py's real one). Drives an actual CORS preflight
+    # (OPTIONS + Access-Control-Request-Method) against the real app for
+    # every HTTP method any route in this API uses, per RFC -- what a
+    # browser sends before the real cross-origin request.
+    for method in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+        response = client.options(
+            "/api/auth/staff/accounts/1/active",
+            headers={
+                "Origin": "https://not-allowlisted.example.com",
+                "Access-Control-Request-Method": method,
+            },
+        )
+        allowed = response.headers.get("access-control-allow-methods", "")
+        assert method in allowed, f"{method} missing from Access-Control-Allow-Methods: {allowed!r}"
 
 
 def test_allowed_origins_env_var_parses_comma_separated_list(monkeypatch):

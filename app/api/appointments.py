@@ -295,6 +295,11 @@ def reschedule_appointment(
                     status_code=409,
                     detail="The selected appointment type is no longer available",
                 )
+            except svc_exc.OutsideDoctorSchedule:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Requested time is outside the doctor's working hours",
+                )
             except svc_exc.DoctorBlockConflict:
                 raise HTTPException(
                     status_code=409,
