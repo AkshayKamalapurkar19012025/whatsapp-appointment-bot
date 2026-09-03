@@ -3,7 +3,9 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import ALLOWED_ORIGINS
 from app.db.connection import open_pool, close_pool
 from app.logging_config import configure_logging, new_request_id, request_id_var
 from app.api.health import router as health_router
@@ -41,6 +43,25 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+# WEB P10 (security pass): only lets a browser-based frontend on an
+# explicitly allowlisted origin (app.config.ALLOWED_ORIGINS) call this
+# API cross-origin. Every request here is Bearer-token authenticated,
+# never cookie-based, so allow_credentials stays False -- there is no
+# ambient browser credential (a cookie) this API could leak cross-site,
+# only whatever Authorization header the calling page's own JavaScript
+# already chose to attach. With ALLOWED_ORIGINS unset (the default), this
+# denies every cross-origin browser request, which matches every
+# deployment shape used so far: FastAPI serving the frontend same-origin,
+# or frontend/vite.config.ts's dev-time proxy -- neither is ever
+# "cross-origin" from the browser's point of view.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 
 @app.middleware("http")

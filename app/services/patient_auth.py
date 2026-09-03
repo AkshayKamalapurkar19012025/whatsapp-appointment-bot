@@ -28,6 +28,14 @@ Security notes:
     here, not hash uniqueness, and anyone with DB read access to see a
     hash could see the row's other context regardless of salting.
   - Codes and tokens are generated with `secrets`, not `random`.
+  - Sessions expire on two independent clocks (WEB P10): an absolute cap
+    (SESSION_TTL_HOURS from login) and a shorter idle cap
+    (SESSION_IDLE_TIMEOUT_MINUTES since the last authenticated request) --
+    whichever is stricter wins. Set longer than staff's own idle cap
+    (app/services/staff_auth.py) since a booking session can legitimately
+    sit idle mid-flow (reviewing dates, stepping away) and a patient
+    session's blast radius if stolen is that patient's own data, not the
+    admin surface a staff session reaches.
   - Nothing in this module calls into app.logging_config's loggers with
     a raw OTP code or session token -- "no OTP logging" (a phase
     requirement) means the application log, not the mock_sms_outbox
@@ -62,6 +70,7 @@ OTP_MAX_VERIFY_ATTEMPTS = 5
 OTP_REQUEST_RATE_LIMIT_MAX = 3
 OTP_REQUEST_RATE_LIMIT_WINDOW_MINUTES = 10
 SESSION_TTL_HOURS = 24
+SESSION_IDLE_TIMEOUT_MINUTES = 120
 
 
 def _now():
@@ -239,12 +248,19 @@ def verify_otp(cur, whatsapp_number: str, code: str, name: str | None = None):
 
 def get_patient_by_session_token(cur, token: str):
     """Resolve a bearer session token to its patient. Raises
-    InvalidSession if the token is unknown, revoked, or expired."""
+    InvalidSession if the token is unknown, revoked, or expired (absolute
+    SESSION_TTL_HOURS cap or WEB P10's SESSION_IDLE_TIMEOUT_MINUTES idle
+    cap -- whichever is stricter for this session).
+
+    A valid lookup also advances last_seen_at to now, so idle time is
+    measured from the most recent authenticated request, not from
+    login."""
     token_hash = _hash_token(token)
 
     cur.execute(
         """
-        SELECT s.patient_id, s.expires_at, s.revoked_at, p.name, p.whatsapp_number
+        SELECT s.patient_id, s.expires_at, s.revoked_at, s.last_seen_at,
+               p.name, p.whatsapp_number
         FROM patient_sessions s
         JOIN patients p ON p.id = s.patient_id
         WHERE s.token_hash = %s
@@ -256,10 +272,18 @@ def get_patient_by_session_token(cur, token: str):
     if row is None:
         raise InvalidSession()
 
-    patient_id, expires_at, revoked_at, name, whatsapp_number = row
+    patient_id, expires_at, revoked_at, last_seen_at, name, whatsapp_number = row
 
-    if revoked_at is not None or _now() > expires_at:
+    now = _now()
+    idle_cutoff = now - timedelta(minutes=SESSION_IDLE_TIMEOUT_MINUTES)
+
+    if revoked_at is not None or now > expires_at or last_seen_at < idle_cutoff:
         raise InvalidSession()
+
+    cur.execute(
+        "UPDATE patient_sessions SET last_seen_at = %s WHERE token_hash = %s",
+        (now, token_hash),
+    )
 
     return {
         "id": patient_id,
