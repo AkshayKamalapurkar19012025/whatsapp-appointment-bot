@@ -58,3 +58,20 @@ DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", "10"))
 # (app/api/patient_auth.py), which would otherwise let anyone read a
 # patient's current OTP code.
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "development")
+
+# WEB P10 (security pass): cross-origin allowlist for the browser
+# frontend(s), used by app/main.py's CORSMiddleware. Empty by default --
+# a deployment where FastAPI serves the frontend same-origin (or a local
+# dev setup using frontend/vite.config.ts's dev-time proxy) needs no
+# entries here at all, since the browser never sees a cross-origin
+# request either way. A separately-deployed frontend (its own domain/
+# port) MUST set this explicitly, e.g.
+# ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com --
+# there is no wildcard fallback, since "allow any origin" would let any
+# website's JavaScript call this API using a stolen bearer token from
+# its own storage, not just the intended frontend(s).
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]

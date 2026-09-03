@@ -29,6 +29,12 @@ Security notes:
     checks live in get_staff_by_session_token -- an account disabled
     mid-session is locked out on its very next request, not just at its
     next login.
+  - Sessions expire on two independent clocks (WEB P10): an absolute cap
+    (SESSION_TTL_HOURS from login) and a shorter idle cap
+    (SESSION_IDLE_TIMEOUT_MINUTES since the last authenticated request) --
+    whichever is stricter wins. Before P10 only the absolute cap existed,
+    so a stolen-but-unused token stayed valid for the full 24 hours
+    regardless of activity.
   - Nothing in this module calls into app.logging_config's loggers with
     a raw password, password hash, or session token.
 """
@@ -48,6 +54,7 @@ from app.services.exceptions import (
 )
 
 SESSION_TTL_HOURS = 24
+SESSION_IDLE_TIMEOUT_MINUTES = 30
 MAX_FAILED_LOGIN_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
 
@@ -176,15 +183,21 @@ def login(cur, username: str, password: str) -> dict:
 
 def get_staff_by_session_token(cur, token: str) -> dict:
     """Resolve a bearer session token to its staff account. Raises
-    InvalidSession if the token is unknown, revoked, expired, or the
-    account has since been deactivated -- the live `active` check means
-    deactivating an account invalidates every one of its existing
-    sessions immediately, not just future logins."""
+    InvalidSession if the token is unknown, revoked, expired (absolute
+    SESSION_TTL_HOURS cap or WEB P10's SESSION_IDLE_TIMEOUT_MINUTES idle
+    cap -- whichever is stricter for this session), or the account has
+    since been deactivated -- the live `active` check means deactivating
+    an account invalidates every one of its existing sessions
+    immediately, not just future logins.
+
+    A valid lookup also advances last_seen_at to now, so idle time is
+    measured from the most recent authenticated request, not from
+    login."""
     token_hash = _hash_token(token)
 
     cur.execute(
         """
-        SELECT s.staff_id, s.expires_at, s.revoked_at,
+        SELECT s.staff_id, s.expires_at, s.revoked_at, s.last_seen_at,
                st.username, st.role, st.active
         FROM staff_sessions s
         JOIN staff st ON st.id = s.staff_id
@@ -197,10 +210,18 @@ def get_staff_by_session_token(cur, token: str) -> dict:
     if row is None:
         raise InvalidSession()
 
-    staff_id, expires_at, revoked_at, username, role, active = row
+    staff_id, expires_at, revoked_at, last_seen_at, username, role, active = row
 
-    if revoked_at is not None or _now() > expires_at or not active:
+    now = _now()
+    idle_cutoff = now - timedelta(minutes=SESSION_IDLE_TIMEOUT_MINUTES)
+
+    if revoked_at is not None or now > expires_at or not active or last_seen_at < idle_cutoff:
         raise InvalidSession()
+
+    cur.execute(
+        "UPDATE staff_sessions SET last_seen_at = %s WHERE token_hash = %s",
+        (now, token_hash),
+    )
 
     return {"id": staff_id, "username": username, "role": role}
 
