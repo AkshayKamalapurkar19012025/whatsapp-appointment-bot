@@ -55,7 +55,7 @@ export default function StaffAccountsPanel() {
       <h2>Staff Accounts</h2>
       {error && <p className="error">{error}</p>}
 
-      <form className="inline-form" onSubmit={handleCreate}>
+      <form className="inline-form wrap" onSubmit={handleCreate}>
         <input
           placeholder="Username"
           value={username}
@@ -74,37 +74,50 @@ export default function StaffAccountsPanel() {
           <option value="STAFF">STAFF</option>
           <option value="ADMIN">ADMIN</option>
         </select>
-        <button type="submit" disabled={busy}>
+        <button type="submit" style={{ width: 'auto' }} disabled={busy}>
           {busy ? 'Creating…' : 'Add account'}
         </button>
       </form>
 
-      {loading && <p>Loading…</p>}
+      {loading && (
+        <div className="state-block">
+          <span className="spinner" aria-hidden="true" />
+          Loading staff accounts…
+        </div>
+      )}
 
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th>Username</th>
-            <th>Role</th>
-            <th>Status</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {accounts.map((a) => (
-            <tr key={a.id}>
-              <td>{a.username}</td>
-              <td>{a.role}</td>
-              <td>{a.active ? 'Active' : 'Deactivated'}</td>
-              <td>
-                <button type="button" className="link" onClick={() => handleToggleActive(a)}>
-                  {a.active ? 'Deactivate' : 'Reactivate'}
-                </button>
-              </td>
+      {!loading && (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Role</th>
+              <th>Status</th>
+              <th />
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {accounts.map((a) => (
+              <tr key={a.id}>
+                <td>{a.username}</td>
+                <td>
+                  <span className={`pill role-${a.role.toLowerCase()}`}>{a.role}</span>
+                </td>
+                <td>
+                  <span className={`pill ${a.active ? 'status-booked' : 'status-cancelled'}`}>
+                    {a.active ? 'Active' : 'Deactivated'}
+                  </span>
+                </td>
+                <td>
+                  <button type="button" className="link" onClick={() => handleToggleActive(a)}>
+                    {a.active ? 'Deactivate' : 'Reactivate'}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </section>
   )
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ApiError, createPatientAdmin, listPatients } from '../api'
 import type { Patient } from '../types'
+import PhoneInput from '../PhoneInput'
 
 export default function PatientsPanel() {
   const [patients, setPatients] = useState<Patient[]>([])
@@ -45,43 +46,53 @@ export default function PatientsPanel() {
       </p>
       {error && <p className="error">{error}</p>}
 
-      <form className="inline-form" onSubmit={handleCreate}>
-        <input
-          placeholder="Name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          required
-        />
-        <input
-          placeholder="+91 98765 43210"
-          value={whatsappNumber}
-          onChange={(e) => setWhatsappNumber(e.target.value)}
-          required
-        />
-        <button type="submit" disabled={busy}>
+      <form className="inline-form wrap" onSubmit={handleCreate}>
+        <label className="inline-label">
+          Name
+          <input placeholder="Full name" value={name} onChange={(e) => setName(e.target.value)} required />
+        </label>
+        <label className="inline-label">
+          Mobile number
+          <PhoneInput value={whatsappNumber} onChange={setWhatsappNumber} />
+        </label>
+        <button type="submit" style={{ width: 'auto' }} disabled={busy}>
           {busy ? 'Creating…' : 'Add patient'}
         </button>
       </form>
 
-      {loading && <p>Loading…</p>}
-      {!loading && patients.length === 0 && <p className="muted">No patients yet.</p>}
+      {loading && (
+        <div className="state-block">
+          <span className="spinner" aria-hidden="true" />
+          Loading patients…
+        </div>
+      )}
+      {!loading && patients.length === 0 && (
+        <div className="state-block empty">
+          <span className="state-icon" aria-hidden="true">
+            🧑‍⚕️
+          </span>
+          No patients yet.
+        </div>
+      )}
 
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>WhatsApp number</th>
-          </tr>
-        </thead>
-        <tbody>
-          {patients.map((p) => (
-            <tr key={p.id}>
-              <td>{p.name}</td>
-              <td>{p.whatsapp_number}</td>
+      {!loading && patients.length > 0 && (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>WhatsApp number</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {patients.map((p) => (
+              <tr key={p.id}>
+                <td>{p.name}</td>
+                <td>{p.whatsapp_number}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </section>
   )
 }

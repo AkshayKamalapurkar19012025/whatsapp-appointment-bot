@@ -24,9 +24,46 @@ import type {
   DoctorBlockEntry,
   DoctorScheduleEntry,
 } from '../types'
-import { formatDate, formatTime } from '../format'
+import { formatDate, formatTime, formatTimeOfDay } from '../format'
 
 const DAY_NAMES = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+// Duration options offered when assigning an appointment type to a
+// doctor. 0 is deliberately excluded even though it would otherwise be
+// the natural first step in a 0-60 range: both the API
+// (app/api/doctor_appointment_types.py's Field(gt=0, le=480)) and the DB
+// itself (doctor_appointment_types' chk_doctor_appointment_types_duration
+// CHECK (duration_minutes > 0)) already reject it, so offering it here
+// would just be a guaranteed-to-fail click.
+const DURATION_OPTIONS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60]
+
+function toMinutesSinceMidnight(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number)
+  return h * 60 + m
+}
+
+function toHHMM(minutes: number): string {
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
+// Illustrative only -- a straight stride from start to end at the given
+// duration, with no doctor-block/existing-appointment exclusion (that's
+// what the real /api/availability engine does once a patient/staff
+// member is booking against a specific date). This exists purely so
+// Start -> End -> Duration -> Generated Slots is visible while setting
+// up the recurring schedule, before any date-specific booking exists.
+function previewSlots(startTime: string, endTime: string, durationMinutes: number): string[] {
+  const start = toMinutesSinceMidnight(startTime)
+  const end = toMinutesSinceMidnight(endTime)
+  if (!(end > start) || durationMinutes <= 0) return []
+  const slots: string[] = []
+  for (let t = start; t + durationMinutes <= end; t += durationMinutes) {
+    slots.push(`${formatTimeOfDay(toHHMM(t))} – ${formatTimeOfDay(toHHMM(t + durationMinutes))}`)
+  }
+  return slots
+}
 
 export default function DoctorDetail({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean }) {
   return (
@@ -127,6 +164,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
   const [endTime, setEndTime] = useState('17:00')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
+  const [previewDuration, setPreviewDuration] = useState(30)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -189,7 +227,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
             <tr key={e.id}>
               <td>{DAY_NAMES[e.day_of_week]}</td>
               <td>
-                {e.start_time} – {e.end_time}
+                {formatTimeOfDay(e.start_time)} – {formatTimeOfDay(e.end_time)}
               </td>
               <td>
                 {e.start_date || e.end_date
@@ -237,6 +275,37 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
           <button type="submit" disabled={busy}>
             {busy ? 'Adding…' : 'Add schedule'}
           </button>
+
+          <div className="schedule-preview">
+            <strong>{formatTimeOfDay(startTime)}</strong>
+            <span className="arrow">→</span>
+            <strong>{formatTimeOfDay(endTime)}</strong>
+            <span className="arrow">÷</span>
+            <select
+              aria-label="Preview appointment length"
+              value={previewDuration}
+              onChange={(e) => setPreviewDuration(Number(e.target.value))}
+              style={{ width: 'auto', marginBottom: 0 }}
+            >
+              {[15, 20, 30, 45, 60].map((d) => (
+                <option key={d} value={d}>
+                  {d} min appt
+                </option>
+              ))}
+            </select>
+            <span className="arrow">=</span>
+            <span className="muted">generated slots preview</span>
+            <div className="schedule-preview-slots">
+              {previewSlots(startTime, endTime, previewDuration).map((s) => (
+                <span key={s} className="slot-chip-static">
+                  {s}
+                </span>
+              ))}
+              {previewSlots(startTime, endTime, previewDuration).length === 0 && (
+                <span className="muted">End time must be after start time to preview slots.</span>
+              )}
+            </div>
+          </div>
         </form>
       )}
     </div>
@@ -337,7 +406,7 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
   const [assigned, setAssigned] = useState<AppointmentType[]>([])
   const [catalog, setCatalog] = useState<AppointmentTypeSummary[]>([])
   const [selected, setSelected] = useState('')
-  const [duration, setDuration] = useState('30')
+  const [duration, setDuration] = useState(30)
   const [error, setError] = useState<string | null>(null)
 
   function load() {
@@ -360,9 +429,9 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
     if (!selected) return
     setError(null)
     try {
-      await assignAppointmentTypeToDoctor(doctor.id, Number(selected), Number(duration))
+      await assignAppointmentTypeToDoctor(doctor.id, Number(selected), duration)
       setSelected('')
-      setDuration('30')
+      setDuration(30)
       load()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not assign appointment type')
@@ -399,7 +468,7 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
       </ul>
 
       {isAdmin && unassigned.length > 0 && (
-        <form className="inline-form" onSubmit={handleAssign}>
+        <form className="inline-form wrap" onSubmit={handleAssign}>
           <select value={selected} onChange={(e) => setSelected(e.target.value)} required>
             <option value="">Add appointment type…</option>
             {unassigned.map((c) => (
@@ -408,16 +477,25 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
               </option>
             ))}
           </select>
-          <input
-            type="number"
-            min={1}
-            max={480}
-            value={duration}
-            onChange={(e) => setDuration(e.target.value)}
-            aria-label="Duration in minutes"
-          />
-          <span className="muted">min</span>
-          <button type="submit">Assign</button>
+          <button type="submit" style={{ width: 'auto' }}>
+            Assign
+          </button>
+
+          <div style={{ width: '100%' }}>
+            <span className="field-label">Consultation duration</span>
+            <div className="duration-stepper" role="group" aria-label="Consultation duration in minutes">
+              {DURATION_OPTIONS.map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  className={d === duration ? 'selected' : ''}
+                  onClick={() => setDuration(d)}
+                >
+                  {d} min
+                </button>
+              ))}
+            </div>
+          </div>
         </form>
       )}
     </div>

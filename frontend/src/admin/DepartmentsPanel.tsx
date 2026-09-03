@@ -47,29 +47,43 @@ export default function DepartmentsPanel({ isAdmin }: { isAdmin: boolean }) {
             onChange={(e) => setName(e.target.value)}
             required
           />
-          <button type="submit" disabled={busy}>
+          <button type="submit" style={{ width: 'auto' }} disabled={busy}>
             {busy ? 'Creating…' : 'Add department'}
           </button>
         </form>
       )}
 
-      {loading && <p>Loading…</p>}
-      {!loading && departments.length === 0 && <p className="muted">No departments yet.</p>}
+      {loading && (
+        <div className="state-block">
+          <span className="spinner" aria-hidden="true" />
+          Loading departments…
+        </div>
+      )}
+      {!loading && departments.length === 0 && (
+        <div className="state-block empty">
+          <span className="state-icon" aria-hidden="true">
+            🏥
+          </span>
+          No departments yet.
+        </div>
+      )}
 
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th>Name</th>
-          </tr>
-        </thead>
-        <tbody>
-          {departments.map((d) => (
-            <tr key={d.id}>
-              <td>{d.name}</td>
+      {!loading && departments.length > 0 && (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Name</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {departments.map((d) => (
+              <tr key={d.id}>
+                <td>{d.name}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </section>
   )
 }

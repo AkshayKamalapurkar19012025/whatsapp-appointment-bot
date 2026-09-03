@@ -39,7 +39,10 @@ export default function App() {
   if (checkingSession) {
     return (
       <div className="page">
-        <p>Loading…</p>
+        <div className="state-block">
+          <span className="spinner" aria-hidden="true" />
+          Loading…
+        </div>
       </div>
     )
   }
