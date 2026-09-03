@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 import psycopg
 
+from app.api.staff_auth import require_role
 from app.db.connection import get_connection
 
 router = APIRouter(
@@ -51,6 +52,7 @@ def get_appointment_types():
 @router.post("")
 def create_appointment_type(
     appointment_type: AppointmentTypeCreate,
+    admin: dict = Depends(require_role("ADMIN")),
 ):
     try:
         with get_connection() as conn:

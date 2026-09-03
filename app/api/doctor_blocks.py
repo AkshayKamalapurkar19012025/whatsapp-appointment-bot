@@ -1,8 +1,9 @@
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from app.api.staff_auth import get_current_staff
 from app.db.connection import get_connection
 
 router = APIRouter(
@@ -94,6 +95,7 @@ def get_doctor_blocks(doctor_id: int):
 def create_doctor_block(
     doctor_id: int,
     block: DoctorBlockCreate,
+    staff: dict = Depends(get_current_staff),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -157,6 +159,7 @@ def update_doctor_block(
     doctor_id: int,
     block_id: int,
     block: DoctorBlockCreate,
+    staff: dict = Depends(get_current_staff),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -239,6 +242,7 @@ def update_doctor_block(
 def delete_doctor_block(
     doctor_id: int,
     block_id: int,
+    staff: dict = Depends(get_current_staff),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:

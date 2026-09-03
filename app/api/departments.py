@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 import psycopg
 
+from app.api.staff_auth import require_role
 from app.db.connection import get_connection
 
 router = APIRouter(prefix="/departments", tags=["Departments"])
@@ -46,7 +47,10 @@ def get_departments():
 
 
 @router.post("")
-def create_department(department: DepartmentCreate):
+def create_department(
+    department: DepartmentCreate,
+    admin: dict = Depends(require_role("ADMIN")),
+):
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:

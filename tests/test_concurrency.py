@@ -36,7 +36,7 @@ constraint backstop independently still works.
 import threading
 
 from tests.conftest import APP_TABLES
-from tests.helpers import seed_basic_doctor, register_patient
+from tests.helpers import create_admin_and_get_headers, seed_basic_doctor, register_patient
 
 
 def send_booking(client, whatsapp_number, message):
@@ -118,14 +118,17 @@ def test_simultaneous_rest_bookings_same_slot(client, db_connection):
     doctor/slot. Exactly one must succeed with 200, the other must fail
     with 409 and the standard overlap-conflict message."""
     seeded = seed_basic_doctor(client, db_connection)
+    staff_headers = create_admin_and_get_headers(db_connection)
 
     patient_a = client.post(
         "/api/patients",
         json={"name": "REST Racer A", "whatsapp_number": "+919650000001"},
+        headers=staff_headers,
     ).json()
     patient_b = client.post(
         "/api/patients",
         json={"name": "REST Racer B", "whatsapp_number": "+919650000002"},
+        headers=staff_headers,
     ).json()
 
     # A fixed, known-available slot: the doctor's schedule (seed_basic_doctor)
@@ -203,6 +206,7 @@ def test_cross_path_concurrent_booking(client, db_connection):
         _truncate_all(db_connection)
 
         seeded = seed_basic_doctor(client, db_connection, doctor_name=f"Dr. Race {attempt}")
+        staff_headers = create_admin_and_get_headers(db_connection)
 
         whatsapp_number = f"+91970000{attempt:04d}"
         register_patient(client, whatsapp_number, f"WhatsApp Racer {attempt}")
@@ -210,6 +214,7 @@ def test_cross_path_concurrent_booking(client, db_connection):
         rest_patient = client.post(
             "/api/patients",
             json={"name": f"REST Racer {attempt}", "whatsapp_number": f"+91971000{attempt:04d}"},
+            headers=staff_headers,
         ).json()
 
         # Drive the WhatsApp path to CONFIRM_BOOKING, and read back the
@@ -349,9 +354,11 @@ def test_concurrent_reschedule_vs_fresh_booking_same_target_slot(client, db_conn
     target_start_at = target_step["start_at"]
 
     # Patient B: a fresh REST booking for the exact same doctor/slot Y.
+    staff_headers = create_admin_and_get_headers(db_connection)
     patient_b = client.post(
         "/api/patients",
         json={"name": "Fresh Booking Racer B", "whatsapp_number": "+919660000002"},
+        headers=staff_headers,
     ).json()
 
     results = {}

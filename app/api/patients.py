@@ -1,6 +1,7 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from app.api.staff_auth import get_current_staff
 from app.db.connection import get_connection
 
 router = APIRouter(
@@ -64,7 +65,7 @@ class PatientCreate(BaseModel):
 
 
 @router.get("")
-def get_patients():
+def get_patients(staff: dict = Depends(get_current_staff)):
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -88,7 +89,10 @@ def get_patients():
 
 
 @router.post("")
-def create_patient(patient: PatientCreate):
+def create_patient(
+    patient: PatientCreate,
+    staff: dict = Depends(get_current_staff),
+):
     with get_connection() as conn:
         with conn.cursor() as cur:
 
