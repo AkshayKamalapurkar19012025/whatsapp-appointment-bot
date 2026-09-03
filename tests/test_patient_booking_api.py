@@ -13,7 +13,11 @@ from datetime import date, timedelta
 
 from app.services.availability_engine import booking_window
 
-from tests.helpers import seed_basic_doctor, register_and_login_web_patient as _register_and_login
+from tests.helpers import (
+    create_admin_and_get_headers,
+    seed_basic_doctor,
+    register_and_login_web_patient as _register_and_login,
+)
 
 
 def test_calendar_returns_per_day_availability_matching_schedule(client, db_connection):
@@ -136,6 +140,7 @@ def test_booking_ignores_client_supplied_patient_id(client, db_connection):
     other = client.post(
         "/api/patients",
         json={"name": "Someone Else", "whatsapp_number": "+919830000099"},
+        headers=create_admin_and_get_headers(db_connection),
     )
     other_patient_id = other.json()["id"]
 

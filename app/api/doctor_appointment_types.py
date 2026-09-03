@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 import psycopg
 
+from app.api.staff_auth import require_role
 from app.db.connection import get_connection
 
 router = APIRouter(
@@ -54,6 +55,7 @@ def assign_appointment_type_to_doctor(
     doctor_id: int,
     appointment_type_id: int,
     appointment_type: DoctorAppointmentTypeCreate,
+    admin: dict = Depends(require_role("ADMIN")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -137,6 +139,7 @@ def update_appointment_type_duration(
     doctor_id: int,
     appointment_type_id: int,
     appointment_type: DoctorAppointmentTypeCreate,
+    admin: dict = Depends(require_role("ADMIN")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -217,6 +220,7 @@ def update_appointment_type_duration(
 def remove_appointment_type_from_doctor(
     doctor_id: int,
     appointment_type_id: int,
+    admin: dict = Depends(require_role("ADMIN")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:

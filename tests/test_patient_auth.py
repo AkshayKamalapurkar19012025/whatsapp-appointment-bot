@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 from app import config
 from app.services.patient_auth import OTP_REQUEST_RATE_LIMIT_MAX, OTP_MAX_VERIFY_ATTEMPTS
+from tests.helpers import create_admin_and_get_headers
 
 
 def _request_and_fetch_code(client, whatsapp_number: str) -> str:
@@ -87,9 +88,11 @@ def test_verify_without_name_for_new_number_requires_registration(client, db_con
 
 def test_existing_patient_logs_in_without_duplicate(client, db_connection):
     number = "+919820000003"
+    staff_headers = create_admin_and_get_headers(db_connection)
     created = client.post(
         "/api/patients",
         json={"name": "Pre-existing Patient", "whatsapp_number": number},
+        headers=staff_headers,
     )
     assert created.status_code == 200
 

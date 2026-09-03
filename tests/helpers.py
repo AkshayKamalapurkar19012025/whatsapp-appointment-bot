@@ -1,9 +1,60 @@
 """Shared test data helpers -- not test files themselves."""
 
+import secrets
+
 from fastapi.testclient import TestClient
 import psycopg
 
+from app.services.staff_auth import login as _staff_login
 from app.services.staff_management import create_staff_account
+
+
+def create_staff_for_test(
+    db_connection: psycopg.Connection,
+    *,
+    username: str,
+    password: str,
+    role: str = "STAFF",
+) -> dict:
+    """Seed a staff/admin account directly (there's no self-service staff
+    signup -- see app/services/staff_management.py's module docstring),
+    using the exact same service function the real ADMIN-only creation
+    endpoint calls, so a test account is created identically to a real
+    one."""
+    with db_connection.cursor() as cur:
+        account = create_staff_account(cur, username, password, role)
+    db_connection.commit()
+    return account
+
+
+def create_staff_and_get_headers(db_connection: psycopg.Connection, role: str = "STAFF") -> dict:
+    """Create a fresh, uniquely-named staff/admin account and return
+    {"Authorization": "Bearer <token>"} for it -- for tests that need to
+    call one of WEB P6's RBAC-gated endpoints as setup (not as the thing
+    under test). A fresh account per call, not a shared fixture, so
+    multiple calls within the same test (e.g. seed_basic_doctor called
+    twice) never collide on username uniqueness. Calls
+    app.services.staff_auth.login directly rather than going through the
+    HTTP /api/auth/staff/login endpoint -- this is test setup, not a
+    test of login itself, so skipping the round trip keeps the many
+    tests that call this (via seed_basic_doctor) fast."""
+    username = f"seed-{role.lower()}-{secrets.token_hex(4)}"
+    password = "seed-staff-password"  # noqa: S105 -- test-only, never a real credential
+    create_staff_for_test(db_connection, username=username, password=password, role=role)
+
+    with db_connection.cursor() as cur:
+        result = _staff_login(cur, username, password)
+    db_connection.commit()
+
+    return {"Authorization": f"Bearer {result['session_token']}"}
+
+
+def create_admin_and_get_headers(db_connection: psycopg.Connection) -> dict:
+    """ADMIN-specific convenience wrapper around
+    create_staff_and_get_headers -- the common case, used throughout the
+    existing test suite for endpoints that were already ADMIN-gated
+    before RBAC had a STAFF-vs-ADMIN distinction worth testing."""
+    return create_staff_and_get_headers(db_connection, role="ADMIN")
 
 
 def seed_basic_doctor(
@@ -30,10 +81,19 @@ def seed_basic_doctor(
     than once in the same database state (e.g. a concurrency test
     looping over several attempts) needs distinct names each time, not
     just a distinct doctor.
-    """
-    department = client.post("/api/departments", json={"name": department_name}).json()
 
-    doctor = client.post("/api/doctors", json={"name": doctor_name}).json()
+    Authenticates as a freshly-created ADMIN internally (WEB P6 gated
+    these write endpoints) -- every caller of this helper across the
+    existing test suite gets that for free, rather than needing its own
+    admin-login boilerplate.
+    """
+    admin_headers = create_admin_and_get_headers(db_connection)
+
+    department = client.post(
+        "/api/departments", json={"name": department_name}, headers=admin_headers
+    ).json()
+
+    doctor = client.post("/api/doctors", json={"name": doctor_name}, headers=admin_headers).json()
 
     if timezone != "Asia/Kolkata":
         with db_connection.cursor() as cur:
@@ -43,15 +103,18 @@ def seed_basic_doctor(
             )
         db_connection.commit()
 
-    client.post(f"/api/doctors/{doctor['id']}/departments/{department['id']}")
+    client.post(
+        f"/api/doctors/{doctor['id']}/departments/{department['id']}", headers=admin_headers
+    )
 
     appointment_type_id = client.post(
-        "/api/appointment-types", json={"name": appointment_type_name}
+        "/api/appointment-types", json={"name": appointment_type_name}, headers=admin_headers
     ).json()["id"]
 
     client.post(
         f"/api/doctors/{doctor['id']}/appointment-types/{appointment_type_id}",
         json={"duration_minutes": duration_minutes},
+        headers=admin_headers,
     )
 
     for day in schedule_days:
@@ -62,6 +125,7 @@ def seed_basic_doctor(
                 "start_time": start_time,
                 "end_time": end_time,
             },
+            headers=admin_headers,
         )
 
     return {
@@ -69,24 +133,6 @@ def seed_basic_doctor(
         "doctor_id": doctor["id"],
         "appointment_type_id": appointment_type_id,
     }
-
-
-def create_staff_for_test(
-    db_connection: psycopg.Connection,
-    *,
-    username: str,
-    password: str,
-    role: str = "STAFF",
-) -> dict:
-    """Seed a staff/admin account directly (there's no self-service staff
-    signup -- see app/services/staff_management.py's module docstring),
-    using the exact same service function the real ADMIN-only creation
-    endpoint calls, so a test account is created identically to a real
-    one."""
-    with db_connection.cursor() as cur:
-        account = create_staff_account(cur, username, password, role)
-    db_connection.commit()
-    return account
 
 
 def register_patient(client: TestClient, whatsapp_number: str, name: str) -> dict:
