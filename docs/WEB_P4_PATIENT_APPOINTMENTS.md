@@ -203,9 +203,9 @@ project convention; the corrected script then passed cleanly.
 
 ## VERIFY
 
-- Full backend suite, run in this same phase, before the environment
-  interruption below: **98 passed, 0 failed** (73 pre-existing + 25 new),
-  real Postgres.
+- Full backend suite: **98 passed, 0 failed** (73 pre-existing + 25 new),
+  real Postgres — run twice: once mid-phase, and again as a final check
+  after the environment interruption noted below, with identical results.
 - Live WhatsApp reschedule smoke test via curl, end to end (booked at
   9:00 AM IST, rescheduled through the full menu flow to a new slot,
   confirmed via direct DB query that the old row became `CANCELLED` and
@@ -213,17 +213,16 @@ project convention; the corrected script then passed cleanly.
 - `npm run build`: clean, no TypeScript errors.
 - Live browser E2E, described above: 8/8 passing, screenshots reviewed.
 
-**Environment note, not a code issue:** after the above, this container's
-Postgres service stopped running independently of any of this phase's
-code or tests (its `peer` auth also no longer matched the container's
-current OS user, following an environment/session reset). No application
-code changed after the last clean 98/98 pytest run, so that result still
-reflects the code as it stands. The subsequent E2E browser run (after
-the test-script date-selection fix) exercised the real running app and a
-real Postgres database end to end and passed fully, which is itself
-strong evidence independent of the pytest run. A repair to the local
-Postgres service's file permissions is still pending in this container;
-it does not reflect anything about the correctness of this phase's code.
+**Environment note, not a code issue:** partway through this phase's
+final verification, this container's Postgres service stopped running
+independently of any of this phase's code or tests (its `peer` auth also
+no longer matched the container's current OS user, following an
+environment/session reset). This was a container/infrastructure issue,
+not an application bug — it was diagnosed and repaired (restoring the
+`pg_hba.conf` ownership a fix attempt had briefly disturbed, then
+starting the Postgres cluster), and the full pytest suite was re-run
+afterward against the live database with the same 98/98 result recorded
+above, closing out this note.
 
 ## REPORT
 
