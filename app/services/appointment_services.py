@@ -182,6 +182,8 @@ def create_appointment_service(
           AND active = TRUE
           AND start_time <= %s
           AND end_time >= %s
+          AND (start_date IS NULL OR start_date <= %s)
+          AND (end_date IS NULL OR end_date >= %s)
         LIMIT 1
         """,
         (
@@ -189,6 +191,8 @@ def create_appointment_service(
             day_of_week,
             start_time,
             end_time,
+            start_at.date(),
+            start_at.date(),
         ),
     )
 

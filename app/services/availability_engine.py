@@ -144,11 +144,15 @@ def get_available_slots(
         WHERE doctor_id = %s
           AND day_of_week = %s
           AND active = TRUE
+          AND (start_date IS NULL OR start_date <= %s)
+          AND (end_date IS NULL OR end_date >= %s)
         ORDER BY start_time
         """,
         (
             doctor_id,
             day_of_week,
+            selected_date,
+            selected_date,
         ),
     )
 
