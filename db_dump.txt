@@ -1,0 +1,298 @@
+############################################
+# schema_migrations
+############################################
+ version | applied_at 
+---------+------------
+(0 rows)
+
+
+############################################
+# Extensions
+############################################
+ extname | extversion 
+---------+------------
+ plpgsql | 1.0
+(1 row)
+
+
+############################################
+# Table list
+############################################
+                    List of relations
+ Schema |           Name           | Type  |    Owner    
+--------+--------------------------+-------+-------------
+ public | appointment_types        | table | akshaykumar
+ public | appointments             | table | akshaykumar
+ public | booking_sessions         | table | akshaykumar
+ public | departments              | table | akshaykumar
+ public | doctor_appointment_types | table | akshaykumar
+ public | doctor_blocks            | table | akshaykumar
+ public | doctor_departments       | table | akshaykumar
+ public | doctor_schedule          | table | akshaykumar
+ public | doctors                  | table | akshaykumar
+ public | patients                 | table | akshaykumar
+ public | schema_migrations        | table | akshaykumar
+(11 rows)
+
+
+############################################
+# Full schema detail for every table (columns, types, defaults,
+# nullability, PK/FK/UNIQUE/CHECK constraints, indexes)
+############################################
+
+---- appointment_types ----
+                                                                  Table "public.appointment_types"
+   Column   |           Type           | Collation | Nullable |                    Default                    | Storage  | Compression | Stats target | Description 
+------------+--------------------------+-----------+----------+-----------------------------------------------+----------+-------------+--------------+-------------
+ id         | bigint                   |           | not null | nextval('appointment_types_id_seq'::regclass) | plain    |             |              | 
+ name       | character varying(100)   |           | not null |                                               | extended |             |              | 
+ active     | boolean                  |           | not null | true                                          | plain    |             |              | 
+ created_at | timestamp with time zone |           | not null | now()                                         | plain    |             |              | 
+Indexes:
+    "appointment_types_pkey" PRIMARY KEY, btree (id)
+    "appointment_types_name_key" UNIQUE CONSTRAINT, btree (name)
+Referenced by:
+    TABLE "appointments" CONSTRAINT "fk_appointments_type" FOREIGN KEY (appointment_type_id) REFERENCES appointment_types(id)
+    TABLE "booking_sessions" CONSTRAINT "fk_booking_session_appointment_type" FOREIGN KEY (appointment_type_id) REFERENCES appointment_types(id)
+    TABLE "doctor_appointment_types" CONSTRAINT "fk_doctor_appointment_types_type" FOREIGN KEY (appointment_type_id) REFERENCES appointment_types(id)
+Access method: heap
+
+
+---- appointments ----
+                                                                      Table "public.appointments"
+       Column        |           Type           | Collation | Nullable |                 Default                  | Storage | Compression | Stats target | Description 
+---------------------+--------------------------+-----------+----------+------------------------------------------+---------+-------------+--------------+-------------
+ id                  | bigint                   |           | not null | nextval('appointments_id_seq'::regclass) | plain   |             |              | 
+ doctor_id           | bigint                   |           | not null |                                          | plain   |             |              | 
+ patient_id          | bigint                   |           | not null |                                          | plain   |             |              | 
+ appointment_type_id | bigint                   |           | not null |                                          | plain   |             |              | 
+ start_at            | timestamp with time zone |           | not null |                                          | plain   |             |              | 
+ end_at              | timestamp with time zone |           | not null |                                          | plain   |             |              | 
+ status              | appointment_status       |           | not null | 'BOOKED'::appointment_status             | plain   |             |              | 
+ created_at          | timestamp with time zone |           | not null | now()                                    | plain   |             |              | 
+ updated_at          | timestamp with time zone |           | not null | now()                                    | plain   |             |              | 
+Indexes:
+    "appointments_pkey" PRIMARY KEY, btree (id)
+Check constraints:
+    "chk_appointments_time" CHECK (start_at < end_at)
+Foreign-key constraints:
+    "fk_appointments_doctor" FOREIGN KEY (doctor_id) REFERENCES doctors(id)
+    "fk_appointments_patient" FOREIGN KEY (patient_id) REFERENCES patients(id)
+    "fk_appointments_type" FOREIGN KEY (appointment_type_id) REFERENCES appointment_types(id)
+Referenced by:
+    TABLE "booking_sessions" CONSTRAINT "booking_sessions_selected_appointment_id_fkey" FOREIGN KEY (selected_appointment_id) REFERENCES appointments(id)
+Access method: heap
+
+
+---- booking_sessions ----
+                                                                        Table "public.booking_sessions"
+         Column          |           Type           | Collation | Nullable |                   Default                    | Storage  | Compression | Stats target | Description 
+-------------------------+--------------------------+-----------+----------+----------------------------------------------+----------+-------------+--------------+-------------
+ id                      | bigint                   |           | not null | nextval('booking_sessions_id_seq'::regclass) | plain    |             |              | 
+ patient_id              | bigint                   |           |          |                                              | plain    |             |              | 
+ whatsapp_number         | character varying(30)    |           | not null |                                              | extended |             |              | 
+ step                    | character varying(50)    |           | not null |                                              | extended |             |              | 
+ department_id           | bigint                   |           |          |                                              | plain    |             |              | 
+ doctor_id               | bigint                   |           |          |                                              | plain    |             |              | 
+ appointment_type_id     | bigint                   |           |          |                                              | plain    |             |              | 
+ selected_date           | date                     |           |          |                                              | plain    |             |              | 
+ selected_start_at       | timestamp with time zone |           |          |                                              | plain    |             |              | 
+ created_at              | timestamp with time zone |           | not null | now()                                        | plain    |             |              | 
+ updated_at              | timestamp with time zone |           | not null | now()                                        | plain    |             |              | 
+ selected_appointment_id | bigint                   |           |          |                                              | plain    |             |              | 
+Indexes:
+    "booking_sessions_pkey" PRIMARY KEY, btree (id)
+    "booking_sessions_whatsapp_number_key" UNIQUE CONSTRAINT, btree (whatsapp_number)
+Foreign-key constraints:
+    "booking_sessions_selected_appointment_id_fkey" FOREIGN KEY (selected_appointment_id) REFERENCES appointments(id)
+    "fk_booking_session_appointment_type" FOREIGN KEY (appointment_type_id) REFERENCES appointment_types(id)
+    "fk_booking_session_department" FOREIGN KEY (department_id) REFERENCES departments(id)
+    "fk_booking_session_doctor" FOREIGN KEY (doctor_id) REFERENCES doctors(id)
+    "fk_booking_session_patient" FOREIGN KEY (patient_id) REFERENCES patients(id)
+Access method: heap
+
+
+---- departments ----
+                                                                  Table "public.departments"
+   Column   |           Type           | Collation | Nullable |                 Default                 | Storage  | Compression | Stats target | Description 
+------------+--------------------------+-----------+----------+-----------------------------------------+----------+-------------+--------------+-------------
+ id         | bigint                   |           | not null | nextval('departments_id_seq'::regclass) | plain    |             |              | 
+ name       | character varying(100)   |           | not null |                                         | extended |             |              | 
+ active     | boolean                  |           | not null | true                                    | plain    |             |              | 
+ created_at | timestamp with time zone |           | not null | now()                                   | plain    |             |              | 
+Indexes:
+    "departments_pkey" PRIMARY KEY, btree (id)
+    "departments_name_key" UNIQUE CONSTRAINT, btree (name)
+Referenced by:
+    TABLE "booking_sessions" CONSTRAINT "fk_booking_session_department" FOREIGN KEY (department_id) REFERENCES departments(id)
+    TABLE "doctor_departments" CONSTRAINT "fk_doctor_departments_department" FOREIGN KEY (department_id) REFERENCES departments(id)
+Access method: heap
+
+
+---- doctor_appointment_types ----
+                                       Table "public.doctor_appointment_types"
+       Column        |  Type   | Collation | Nullable | Default | Storage | Compression | Stats target | Description 
+---------------------+---------+-----------+----------+---------+---------+-------------+--------------+-------------
+ doctor_id           | bigint  |           | not null |         | plain   |             |              | 
+ appointment_type_id | bigint  |           | not null |         | plain   |             |              | 
+ duration_minutes    | integer |           | not null |         | plain   |             |              | 
+ active              | boolean |           | not null | true    | plain   |             |              | 
+Indexes:
+    "doctor_appointment_types_pkey" PRIMARY KEY, btree (doctor_id, appointment_type_id)
+Check constraints:
+    "chk_doctor_appointment_types_duration" CHECK (duration_minutes > 0)
+Foreign-key constraints:
+    "fk_doctor_appointment_types_doctor" FOREIGN KEY (doctor_id) REFERENCES doctors(id)
+    "fk_doctor_appointment_types_type" FOREIGN KEY (appointment_type_id) REFERENCES appointment_types(id)
+Access method: heap
+
+
+---- doctor_blocks ----
+                                                                  Table "public.doctor_blocks"
+   Column   |           Type           | Collation | Nullable |                  Default                  | Storage  | Compression | Stats target | Description 
+------------+--------------------------+-----------+----------+-------------------------------------------+----------+-------------+--------------+-------------
+ id         | bigint                   |           | not null | nextval('doctor_blocks_id_seq'::regclass) | plain    |             |              | 
+ doctor_id  | bigint                   |           | not null |                                           | plain    |             |              | 
+ start_at   | timestamp with time zone |           | not null |                                           | plain    |             |              | 
+ end_at     | timestamp with time zone |           | not null |                                           | plain    |             |              | 
+ reason     | character varying(255)   |           |          |                                           | extended |             |              | 
+ active     | boolean                  |           | not null | true                                      | plain    |             |              | 
+ created_at | timestamp with time zone |           | not null | now()                                     | plain    |             |              | 
+Indexes:
+    "doctor_blocks_pkey" PRIMARY KEY, btree (id)
+Check constraints:
+    "chk_doctor_blocks_time" CHECK (start_at < end_at)
+Foreign-key constraints:
+    "fk_doctor_blocks_doctor" FOREIGN KEY (doctor_id) REFERENCES doctors(id)
+Access method: heap
+
+
+---- doctor_departments ----
+                                      Table "public.doctor_departments"
+    Column     |  Type  | Collation | Nullable | Default | Storage | Compression | Stats target | Description 
+---------------+--------+-----------+----------+---------+---------+-------------+--------------+-------------
+ doctor_id     | bigint |           | not null |         | plain   |             |              | 
+ department_id | bigint |           | not null |         | plain   |             |              | 
+Indexes:
+    "doctor_departments_pkey" PRIMARY KEY, btree (doctor_id, department_id)
+Foreign-key constraints:
+    "fk_doctor_departments_department" FOREIGN KEY (department_id) REFERENCES departments(id)
+    "fk_doctor_departments_doctor" FOREIGN KEY (doctor_id) REFERENCES doctors(id)
+Access method: heap
+
+
+---- doctor_schedule ----
+                                                                  Table "public.doctor_schedule"
+   Column    |           Type           | Collation | Nullable |                   Default                   | Storage | Compression | Stats target | Description 
+-------------+--------------------------+-----------+----------+---------------------------------------------+---------+-------------+--------------+-------------
+ id          | bigint                   |           | not null | nextval('doctor_schedule_id_seq'::regclass) | plain   |             |              | 
+ doctor_id   | bigint                   |           | not null |                                             | plain   |             |              | 
+ day_of_week | smallint                 |           | not null |                                             | plain   |             |              | 
+ start_time  | time without time zone   |           | not null |                                             | plain   |             |              | 
+ end_time    | time without time zone   |           | not null |                                             | plain   |             |              | 
+ active      | boolean                  |           | not null | true                                        | plain   |             |              | 
+ created_at  | timestamp with time zone |           | not null | now()                                       | plain   |             |              | 
+Indexes:
+    "doctor_schedule_pkey" PRIMARY KEY, btree (id)
+Check constraints:
+    "chk_doctor_schedule_day" CHECK (day_of_week >= 1 AND day_of_week <= 7)
+    "chk_doctor_schedule_time" CHECK (start_time < end_time)
+Foreign-key constraints:
+    "fk_doctor_schedule_doctor" FOREIGN KEY (doctor_id) REFERENCES doctors(id)
+Access method: heap
+
+
+---- doctors ----
+                                                                  Table "public.doctors"
+   Column   |           Type           | Collation | Nullable |               Default               | Storage  | Compression | Stats target | Description 
+------------+--------------------------+-----------+----------+-------------------------------------+----------+-------------+--------------+-------------
+ id         | bigint                   |           | not null | nextval('doctors_id_seq'::regclass) | plain    |             |              | 
+ name       | character varying(150)   |           | not null |                                     | extended |             |              | 
+ active     | boolean                  |           | not null | true                                | plain    |             |              | 
+ created_at | timestamp with time zone |           | not null | now()                               | plain    |             |              | 
+ timezone   | character varying(50)    |           | not null | 'Asia/Kolkata'::character varying   | extended |             |              | 
+Indexes:
+    "doctors_pkey" PRIMARY KEY, btree (id)
+    "doctors_name_key" UNIQUE CONSTRAINT, btree (name)
+Referenced by:
+    TABLE "appointments" CONSTRAINT "fk_appointments_doctor" FOREIGN KEY (doctor_id) REFERENCES doctors(id)
+    TABLE "booking_sessions" CONSTRAINT "fk_booking_session_doctor" FOREIGN KEY (doctor_id) REFERENCES doctors(id)
+    TABLE "doctor_appointment_types" CONSTRAINT "fk_doctor_appointment_types_doctor" FOREIGN KEY (doctor_id) REFERENCES doctors(id)
+    TABLE "doctor_blocks" CONSTRAINT "fk_doctor_blocks_doctor" FOREIGN KEY (doctor_id) REFERENCES doctors(id)
+    TABLE "doctor_departments" CONSTRAINT "fk_doctor_departments_doctor" FOREIGN KEY (doctor_id) REFERENCES doctors(id)
+    TABLE "doctor_schedule" CONSTRAINT "fk_doctor_schedule_doctor" FOREIGN KEY (doctor_id) REFERENCES doctors(id)
+Access method: heap
+
+
+---- patients ----
+                                                                    Table "public.patients"
+     Column      |           Type           | Collation | Nullable |               Default                | Storage  | Compression | Stats target | Description 
+-----------------+--------------------------+-----------+----------+--------------------------------------+----------+-------------+--------------+-------------
+ id              | bigint                   |           | not null | nextval('patients_id_seq'::regclass) | plain    |             |              | 
+ name            | character varying(150)   |           | not null |                                      | extended |             |              | 
+ whatsapp_number | character varying(30)    |           | not null |                                      | extended |             |              | 
+ created_at      | timestamp with time zone |           | not null | now()                                | plain    |             |              | 
+ updated_at      | timestamp with time zone |           | not null | now()                                | plain    |             |              | 
+Indexes:
+    "patients_pkey" PRIMARY KEY, btree (id)
+    "patients_whatsapp_number_key" UNIQUE CONSTRAINT, btree (whatsapp_number)
+Referenced by:
+    TABLE "appointments" CONSTRAINT "fk_appointments_patient" FOREIGN KEY (patient_id) REFERENCES patients(id)
+    TABLE "booking_sessions" CONSTRAINT "fk_booking_session_patient" FOREIGN KEY (patient_id) REFERENCES patients(id)
+Access method: heap
+
+
+---- schema_migrations ----
+                                               Table "public.schema_migrations"
+   Column   |           Type           | Collation | Nullable | Default | Storage  | Compression | Stats target | Description 
+------------+--------------------------+-----------+----------+---------+----------+-------------+--------------+-------------
+ version    | text                     |           | not null |         | extended |             |              | 
+ applied_at | timestamp with time zone |           | not null | now()   | plain    |             |              | 
+Indexes:
+    "schema_migrations_pkey" PRIMARY KEY, btree (version)
+Access method: heap
+
+
+############################################
+# Row counts (existing business/auth data)
+############################################
+appointment_types              2
+appointments                   18
+booking_sessions               9
+departments                    5
+doctor_appointment_types       6
+doctor_blocks                  2
+doctor_departments             7
+doctor_schedule                7
+doctors                        3
+patients                       9
+schema_migrations              0
+
+############################################
+# Any overlapping non-cancelled appointments per doctor
+# (sanity check before any exclusion-constraint-related change)
+############################################
+ doctor_id | id | start_at | end_at | id | start_at | end_at 
+-----------+----+----------+--------+----+----------+--------
+(0 rows)
+
+
+############################################
+# appointment_status enum values, if it exists as a type
+############################################
+      typname       | enumlabel | enumsortorder 
+--------------------+-----------+---------------
+ appointment_status | BOOKED    |             1
+ appointment_status | CANCELLED |             2
+ appointment_status | COMPLETED |             3
+(3 rows)
+
+
+############################################
+# PostgreSQL version
+############################################
+                                                            version                                                            
+-------------------------------------------------------------------------------------------------------------------------------
+ PostgreSQL 16.15 (Homebrew) on aarch64-apple-darwin23.6.0, compiled by Apple clang version 16.0.0 (clang-1600.0.26.6), 64-bit
+(1 row)
+
