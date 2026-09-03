@@ -8,6 +8,7 @@ from app.db.connection import open_pool, close_pool
 from app.logging_config import configure_logging, new_request_id, request_id_var
 from app.api.health import router as health_router
 from app.api.patient_auth import router as patient_auth_router
+from app.api.staff_auth import router as staff_auth_router
 from app.api.patient_booking import router as patient_booking_router
 from app.api.appointment_types import router as appointment_types_router
 from app.api.departments import router as departments_router
@@ -82,6 +83,11 @@ app.include_router(
 
 app.include_router(
     patient_auth_router,
+    prefix="/api",
+)
+
+app.include_router(
+    staff_auth_router,
     prefix="/api",
 )
 

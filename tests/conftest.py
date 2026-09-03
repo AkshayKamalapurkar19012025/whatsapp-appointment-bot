@@ -40,6 +40,8 @@ APP_TABLES = [
     "mock_sms_outbox",
     "patient_sessions",
     "patient_otp_codes",
+    "staff_sessions",
+    "staff",
     "appointments",
     "doctor_appointment_types",
     "doctor_blocks",
