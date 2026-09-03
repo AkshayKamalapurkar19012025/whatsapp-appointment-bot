@@ -72,3 +72,83 @@ export interface MyAppointmentsResponse {
   history: MyAppointment[]
   cancelled: MyAppointment[]
 }
+
+// -- WEB P11: admin/staff types --------------------------------------------
+
+export interface Staff {
+  id: number
+  username: string
+  role: 'ADMIN' | 'STAFF'
+}
+
+export interface StaffAccount {
+  id: number
+  username: string
+  role: 'ADMIN' | 'STAFF'
+  active: boolean
+}
+
+// The plain appointment-type catalog shape (app/api/appointment_types.py) --
+// no duration_minutes, since duration is set per doctor assignment (see
+// AppointmentType above, which IS that per-assignment shape and already
+// carries duration_minutes). Two interfaces, not one made-up-optional
+// field, because a catalog entry and an assignment are different things
+// with different fields, not the same thing missing data.
+export interface AppointmentTypeSummary {
+  id: number
+  name: string
+  active: boolean
+}
+
+export interface DoctorScheduleEntry {
+  id: number
+  day_of_week: number
+  start_time: string
+  end_time: string
+  active: boolean
+  start_date: string | null
+  end_date: string | null
+}
+
+// start_at/end_at here are raw DB values (UTC-labeled on read-back, per
+// app/api/doctor_blocks.py -- unlike appointments.py's admin listing,
+// this endpoint was never given the WEB P9 doctor-local-time display
+// fix, since it's outside that phase's own scope). The admin UI's block
+// form only ever creates/shows blocks in Asia/Kolkata terms, since that's
+// the only timezone any doctor in this system can currently have (no API
+// exposes or sets doctors.timezone -- see the WEB P11 report).
+export interface DoctorBlockEntry {
+  id: number
+  start_at: string
+  end_at: string
+  reason: string
+  active: boolean
+}
+
+// app/api/appointments.py's admin listing (WEB P9) -- start_at/end_at
+// ARE already doctor-local here, unlike DoctorBlockEntry above.
+export interface AdminAppointment {
+  id: number
+  doctor_id: number
+  doctor_name: string
+  patient_id: number
+  patient_name: string
+  whatsapp_number: string
+  appointment_type_id: number
+  appointment_type_name: string
+  start_at: string
+  end_at: string
+  status: string
+}
+
+export interface AdminAppointmentActionResult {
+  id: number
+  doctor_id: number
+  patient_id: number
+  appointment_type_id: number
+  start_at: string
+  end_at: string
+  status: string
+  duration_minutes: number
+  appointment_type_name: string
+}
