@@ -155,6 +155,7 @@ def test_simultaneous_rest_bookings_same_slot(client, db_connection):
                 "appointment_type_id": seeded["appointment_type_id"],
                 "start_at": start_at,
             },
+            headers=staff_headers,
         )
         results[key] = {"status_code": response.status_code, "body": response.json()}
 
@@ -249,6 +250,7 @@ def test_cross_path_concurrent_booking(client, db_connection):
                     "appointment_type_id": seeded["appointment_type_id"],
                     "start_at": target_start_at,
                 },
+                headers=staff_headers,
             )
             results["rest"] = {
                 "status_code": response.status_code,
@@ -380,6 +382,7 @@ def test_concurrent_reschedule_vs_fresh_booking_same_target_slot(client, db_conn
                 "appointment_type_id": seeded["appointment_type_id"],
                 "start_at": target_start_at,
             },
+            headers=staff_headers,
         )
         results["fresh"] = {"status_code": response.status_code, "body": response.json()}
 

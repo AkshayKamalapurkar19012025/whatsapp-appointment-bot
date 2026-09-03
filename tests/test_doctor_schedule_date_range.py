@@ -178,6 +178,7 @@ def test_booking_creation_respects_date_range(client, db_connection):
             "appointment_type_id": appointment_type["id"],
             "start_at": f"{in_range_date.isoformat()}T09:00:00+05:30",
         },
+        headers=admin_headers,
     )
     assert in_range_booking.status_code == 200
 
@@ -189,6 +190,7 @@ def test_booking_creation_respects_date_range(client, db_connection):
             "appointment_type_id": appointment_type["id"],
             "start_at": f"{out_of_range_date.isoformat()}T09:00:00+05:30",
         },
+        headers=admin_headers,
     )
     assert out_of_range_booking.status_code == 409
     assert (
