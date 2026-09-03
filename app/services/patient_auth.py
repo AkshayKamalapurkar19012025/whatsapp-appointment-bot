@@ -55,6 +55,7 @@ from app.services.exceptions import (
     RegistrationRequired,
     InvalidSession,
 )
+from app.services.notifications import KIND_OTP, send_mock_notification
 
 OTP_TTL_MINUTES = 5
 OTP_MAX_VERIFY_ATTEMPTS = 5
@@ -119,12 +120,8 @@ def request_otp(cur, whatsapp_number: str) -> None:
         f"It expires in {OTP_TTL_MINUTES} minutes."
     )
 
-    cur.execute(
-        """
-        INSERT INTO mock_sms_outbox (whatsapp_number, otp_code, message_body)
-        VALUES (%s, %s, %s)
-        """,
-        (whatsapp_number, code, message_body),
+    send_mock_notification(
+        cur, whatsapp_number, KIND_OTP, message_body, otp_code=code
     )
 
 

@@ -163,10 +163,18 @@ def otp_dev_lookup(whatsapp_number: str):
     """
     Dev/test-only: returns the most recent mock "SMS" sent to a number,
     including its OTP code in the clear. This is the mock provider's
-    outbox (migrations/0004), not the hashed verification record -- see
-    app/services/patient_auth.py's module docstring. Disabled whenever
-    ENVIRONMENT=production; returns 404 rather than 403 so its existence
-    isn't revealed in a production deployment either.
+    outbox (migrations/0004, generalized in WEB P8 to hold other kinds
+    of notification too -- see app/services/notifications.py), not the
+    hashed verification record -- see app/services/patient_auth.py's
+    module docstring. Disabled whenever ENVIRONMENT=production; returns
+    404 rather than 403 so its existence isn't revealed in a production
+    deployment either.
+
+    Filters on kind='OTP' explicitly (added in WEB P8) -- without it,
+    this would return whatever mock_sms_outbox row for this number is
+    newest regardless of kind, which silently breaks the moment a
+    patient's first action after OTP login is a web booking/cancel/
+    reschedule (now also written to this same table).
     """
     if config.ENVIRONMENT == "production":
         raise HTTPException(status_code=404, detail="Not found")
@@ -178,6 +186,7 @@ def otp_dev_lookup(whatsapp_number: str):
                 SELECT otp_code, message_body, created_at
                 FROM mock_sms_outbox
                 WHERE whatsapp_number = %s
+                  AND kind = 'OTP'
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,

@@ -301,8 +301,7 @@ export default function BookingFlow({
             <dd>{confirmed.duration_minutes} minutes</dd>
           </dl>
           <p className="muted">
-            A confirmation SMS will be sent to your registered number. (Mock SMS delivery is
-            implemented in a later phase -- WEB P8.)
+            A confirmation SMS has been sent to your registered number.
           </p>
           <button type="button" onClick={startOver}>
             Book another appointment

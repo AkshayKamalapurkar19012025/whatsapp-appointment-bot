@@ -1,5 +1,5 @@
 """
-Patient-facing web booking API (WEB P3 + P4).
+Patient-facing web booking API (WEB P3 + P4 + P8).
 
 Every endpoint here is a thin wrapper reusing WEB P1/P2's already-built,
 already-tested pieces rather than a third implementation of booking
@@ -42,6 +42,16 @@ existing GET /api/departments, GET /api/departments/{id}/doctors, and
 GET /api/doctors/{id}/appointment-types endpoints directly -- they are
 already public, already tested, and not patient-specific, so this file
 does not duplicate them under a new prefix.
+
+WEB P8: booking creation, cancellation, and reschedule each now also
+"send" a mock confirmation notification (app/services/notifications.py)
+to the patient's WhatsApp number -- closing the gap the WEB P3
+confirmation screen's own placeholder text used to flag ("Mock SMS
+delivery is implemented in a later phase"). WhatsApp-originated actions
+are deliberately not wired to this -- see notifications.py's module
+docstring for why. GET /web/notifications/_dev_lookup is this phase's
+sibling to /api/auth/patient/otp/_dev_lookup, for retrieving a mock
+notification's content in dev/test.
 """
 
 from datetime import date, datetime
@@ -50,6 +60,7 @@ import calendar as calendar_module
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app import config
 from app.api.patient_auth import get_current_patient
 from app.db.connection import get_connection
 from app.services import exceptions as svc_exc
@@ -64,11 +75,33 @@ from app.services.availability_engine import (
     is_within_booking_window,
     list_available_dates_in_range,
 )
+from app.services.notifications import (
+    KIND_BOOKING_CONFIRMATION,
+    KIND_CANCELLATION,
+    KIND_RESCHEDULE,
+    send_mock_notification,
+)
+from app.utils.timezone import convert_to_timezone, validate_timezone
 
 router = APIRouter(
     prefix="/web",
     tags=["Patient Web Booking"],
 )
+
+
+def _format_date_time(dt: datetime) -> tuple[str, str]:
+    """Same date/time label style as app/api/booking.py's WhatsApp
+    messages ("Sat, 04 Dec 2027" / "9:00 AM") -- one consistent voice
+    across both channels' notifications."""
+    date_label = dt.strftime("%a, %d %b %Y")
+    time_label = dt.strftime("%I:%M %p").lstrip("0")
+    return date_label, time_label
+
+
+def _get_doctor_name(cur, doctor_id: int) -> str:
+    cur.execute("SELECT name FROM doctors WHERE id = %s", (doctor_id,))
+    row = cur.fetchone()
+    return row[0] if row else "your doctor"
 
 
 class WebAppointmentCreate(BaseModel):
@@ -175,6 +208,25 @@ def create_web_appointment(
                     detail="Appointment overlaps with existing appointment",
                 )
 
+            # WEB P8: mock confirmation notification. Uses body.start_at
+            # (the doctor-local instant the client actually requested)
+            # rather than result["start_at"] (round-tripped through
+            # Postgres and UTC-normalized on read-back -- the same
+            # characteristic documented at BookingFlow.tsx's confirmation
+            # screen since WEB P3) so the message shows the right
+            # wall-clock time.
+            doctor_name = _get_doctor_name(cur, body.doctor_id)
+            date_label, time_label = _format_date_time(body.start_at)
+            send_mock_notification(
+                cur,
+                patient["whatsapp_number"],
+                KIND_BOOKING_CONFIRMATION,
+                (
+                    f"Your appointment with {doctor_name} on {date_label} at "
+                    f"{time_label} has been confirmed."
+                ),
+            )
+
     return result
 
 
@@ -202,6 +254,39 @@ def cancel_web_appointment(
                 raise HTTPException(status_code=404, detail="Appointment not found")
             except svc_exc.AlreadyCancelled:
                 raise HTTPException(status_code=409, detail="Appointment is already cancelled")
+
+            # WEB P8: mock cancellation notification. cancel_appointment_
+            # service's own return doesn't carry display fields (doctor
+            # name, appointment time), so those are read back here
+            # separately -- and, like get_upcoming_booked_appointments
+            # and list_patient_appointments_service before it, start_at
+            # needs an explicit convert_to_timezone() since a value read
+            # back from Postgres is UTC-normalized, not the doctor's
+            # local time.
+            cur.execute(
+                """
+                SELECT d.name, d.timezone, a.start_at
+                FROM appointments a
+                JOIN doctors d ON d.id = a.doctor_id
+                WHERE a.id = %s
+                """,
+                (appointment_id,),
+            )
+            doctor_name, doctor_tz, start_at = cur.fetchone()
+            if not validate_timezone(doctor_tz):
+                doctor_tz = "Asia/Kolkata"
+            date_label, time_label = _format_date_time(
+                convert_to_timezone(start_at, doctor_tz)
+            )
+            send_mock_notification(
+                cur,
+                patient["whatsapp_number"],
+                KIND_CANCELLATION,
+                (
+                    f"Your appointment with {doctor_name} on {date_label} at "
+                    f"{time_label} has been cancelled."
+                ),
+            )
 
     return {
         "id": result["id"],
@@ -254,4 +339,73 @@ def reschedule_web_appointment(
                     detail="That slot was just booked by someone else",
                 )
 
+            # WEB P8: mock reschedule notification. Uses body.new_start_at
+            # (client-supplied, doctor-local) rather than
+            # result["start_at"] for the same UTC-round-trip reason as
+            # the booking-confirmation notification above.
+            doctor_name = _get_doctor_name(cur, result["doctor_id"])
+            date_label, time_label = _format_date_time(body.new_start_at)
+            send_mock_notification(
+                cur,
+                patient["whatsapp_number"],
+                KIND_RESCHEDULE,
+                (
+                    f"Your appointment with {doctor_name} has been rescheduled to "
+                    f"{date_label} at {time_label}."
+                ),
+            )
+
     return result
+
+
+@router.get("/notifications/_dev_lookup")
+def notifications_dev_lookup(whatsapp_number: str, kind: str | None = None):
+    """
+    Dev/test-only: returns the most recent mock notification sent to a
+    number, of the given kind if specified (KIND_BOOKING_CONFIRMATION /
+    KIND_CANCELLATION / KIND_RESCHEDULE, or 'OTP' -- though the sibling
+    /auth/patient/otp/_dev_lookup endpoint is the intended way to
+    retrieve those). Same mock-provider outbox as that endpoint (see
+    app/services/notifications.py); disabled the same way whenever
+    ENVIRONMENT=production, for the same reason (its existence shouldn't
+    be revealed in a production deployment).
+    """
+    if config.ENVIRONMENT == "production":
+        raise HTTPException(status_code=404, detail="Not found")
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            if kind is None:
+                cur.execute(
+                    """
+                    SELECT kind, message_body, created_at
+                    FROM mock_sms_outbox
+                    WHERE whatsapp_number = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (whatsapp_number,),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT kind, message_body, created_at
+                    FROM mock_sms_outbox
+                    WHERE whatsapp_number = %s
+                      AND kind = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (whatsapp_number, kind),
+                )
+            row = cur.fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="No mock notification found for this number")
+
+    return {
+        "whatsapp_number": whatsapp_number,
+        "kind": row[0],
+        "message": row[1],
+        "sent_at": row[2].isoformat(),
+    }
