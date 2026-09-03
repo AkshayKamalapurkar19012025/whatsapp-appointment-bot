@@ -196,6 +196,28 @@ def test_list_shows_doctor_local_time_not_utc(client, db_connection):
     assert row["start_at"].startswith(f"{booking_date.isoformat()}T09:00:00")
 
 
+def test_reschedule_rejects_time_outside_doctor_schedule(client, db_connection):
+    # This router's own wiring for the OutsideDoctorSchedule -> 409
+    # mapping (a new except clause added alongside this file's other
+    # exception mappings) -- not a re-test of the underlying rule
+    # itself, which tests/test_reschedule_service.py already covers.
+    admin_headers, seeded, patient, created = _seed_and_book(
+        client, db_connection, "Dr. P9 Reschedule Schedule"
+    )
+
+    saturday = date.today() + timedelta(days=2)
+    while saturday.isoweekday() != 6:
+        saturday += timedelta(days=1)
+
+    response = client.post(
+        f"/api/appointments/{created['id']}/reschedule",
+        json={"new_start_at": f"{saturday.isoformat()}T10:00:00+05:30"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 409
+    assert "working hours" in response.json()["detail"]
+
+
 def test_reschedule_nonexistent_appointment_returns_404(client, db_connection):
     admin_headers = create_admin_and_get_headers(db_connection)
     response = client.post(

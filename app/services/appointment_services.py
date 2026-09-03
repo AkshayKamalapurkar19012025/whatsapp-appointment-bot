@@ -498,6 +498,70 @@ def reschedule_appointment_service(
     new_end_at = new_start_at + timedelta(minutes=duration_minutes)
 
     # ---------------------------------------------------------
+    # Re-check doctor's schedule for the new slot -- the same check
+    # create_appointment_service's own step 4 makes (and, like that
+    # step, unconditional: not gated behind enforce_booking_window,
+    # since a doctor's working hours are a different rule from the
+    # patient-facing calendar-month booking window; staff/admin
+    # reschedule bypasses the latter but never the former). Previously
+    # missing here entirely -- a known, documented gap (WEB P7 and WEB
+    # P10 reports both flagged it) that let a reschedule land outside
+    # every defined doctor_schedule row, something a fresh booking has
+    # never been able to do.
+    #
+    # doctor_schedule.day_of_week/start_time/end_time are defined in
+    # the doctor's own local time -- unlike create_appointment_service's
+    # step 4, new_start_at here cannot be assumed to already carry the
+    # doctor-local offset: app/api/booking.py's WhatsApp reschedule flow
+    # passes session["selected_start_at"], read back from the
+    # booking_sessions TIMESTAMPTZ column, which (like every TIMESTAMPTZ
+    # read-back in this codebase -- see app/utils/timezone.py's module
+    # docstring) comes back UTC-labeled: the correct instant, but the
+    # wrong wall-clock digits for a day-of-week/time-of-day comparison.
+    # Explicitly convert to the doctor's own timezone first, the same
+    # fix pattern used throughout this project for this exact bug class
+    # (e.g. list_patient_appointments_service just above).
+    # ---------------------------------------------------------
+    cur.execute("SELECT timezone FROM doctors WHERE id = %s", (doctor_id,))
+    doctor_tz_row = cur.fetchone()
+    doctor_tz = doctor_tz_row[0] if doctor_tz_row else None
+    if not doctor_tz or not validate_timezone(doctor_tz):
+        doctor_tz = "Asia/Kolkata"
+
+    new_start_at_local = convert_to_timezone(new_start_at, doctor_tz)
+    new_end_at_local = convert_to_timezone(new_end_at, doctor_tz)
+
+    day_of_week = new_start_at_local.weekday() + 1
+    new_time = new_start_at_local.time()
+    new_end_time = new_end_at_local.time()
+
+    cur.execute(
+        """
+        SELECT id
+        FROM doctor_schedule
+        WHERE doctor_id = %s
+          AND day_of_week = %s
+          AND active = TRUE
+          AND start_time <= %s
+          AND end_time >= %s
+          AND (start_date IS NULL OR start_date <= %s)
+          AND (end_date IS NULL OR end_date >= %s)
+        LIMIT 1
+        """,
+        (
+            doctor_id,
+            day_of_week,
+            new_time,
+            new_end_time,
+            new_start_at_local.date(),
+            new_start_at_local.date(),
+        ),
+    )
+
+    if cur.fetchone() is None:
+        raise OutsideDoctorSchedule()
+
+    # ---------------------------------------------------------
     # Re-check doctor blocks for the new slot.
     # ---------------------------------------------------------
     cur.execute(

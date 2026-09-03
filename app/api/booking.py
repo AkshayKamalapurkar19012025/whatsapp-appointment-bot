@@ -25,6 +25,7 @@ from app.services.exceptions import (
     AlreadyCancelled,
     AppointmentTypeNotAssigned,
     DoctorBlockConflict,
+    OutsideDoctorSchedule,
     SlotOverlap,
 )
 
@@ -2872,6 +2873,10 @@ def booking(request: BookingRequest):
                         "error": "The selected appointment type is no longer available.",
                         "departments": get_departments(cur),
                     }
+                except OutsideDoctorSchedule:
+                    return _back_to_reschedule_date(
+                        "That time is outside the doctor's working hours. Please choose another date or slot."
+                    )
                 except DoctorBlockConflict:
                     return _back_to_reschedule_date(
                         "That slot is no longer available because the doctor is unavailable. Please choose another date."

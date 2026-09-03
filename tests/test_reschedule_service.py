@@ -171,6 +171,39 @@ def test_reschedule_rejects_already_cancelled_appointment(client, db_connection)
     db_connection.rollback()
 
 
+def test_reschedule_rejects_time_outside_doctor_schedule(client, db_connection):
+    # seed_basic_doctor's default schedule is Monday-Friday only
+    # (schedule_days=(1, 2, 3, 4, 5)) -- Saturday has no doctor_schedule
+    # row at all. Before this fix, reschedule_appointment_service never
+    # checked doctor_schedule (unlike create_appointment_service's own
+    # step 4), so this reschedule would have silently succeeded and
+    # landed the appointment outside every defined working day.
+    seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Reschedule Schedule")
+
+    with db_connection.cursor() as cur:
+        patient_id = _insert_synthetic_patient(cur, "I10")
+        original = _book(cur, seeded, patient_id, 9)
+    db_connection.commit()
+
+    saturday = date.today() + timedelta(days=2)
+    while saturday.isoweekday() != 6:
+        saturday += timedelta(days=1)
+
+    with db_connection.cursor() as cur:
+        with pytest.raises(svc_exc.OutsideDoctorSchedule):
+            reschedule_appointment_service(
+                cur,
+                original["id"],
+                patient_id=patient_id,
+                new_start_at=_at(saturday, 10),
+            )
+    db_connection.rollback()
+
+    with db_connection.cursor() as cur:
+        cur.execute("SELECT status FROM appointments WHERE id = %s", (original["id"],))
+        assert cur.fetchone()[0] == "BOOKED", "a rejected reschedule must preserve the original appointment"
+
+
 def test_reschedule_rejects_doctor_block_conflict(client, db_connection):
     seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Reschedule Blocked")
 

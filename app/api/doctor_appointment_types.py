@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-import psycopg
 
 from app.api.staff_auth import require_role
 from app.db.connection import get_connection
@@ -96,7 +95,55 @@ def assign_appointment_type_to_doctor(
                     detail="Appointment type not found",
                 )
 
-            try:
+            # doctor_appointment_types has a UNIQUE(doctor_id, appointment_type_id)
+            # constraint (migrations/0001), and removal (DELETE below) is a soft
+            # delete (active = FALSE), not a row delete. A plain INSERT would
+            # therefore hit UniqueViolation not only for a still-active
+            # assignment (correctly a 409 -- use PUT to change its duration)
+            # but also for one that was previously removed and is now
+            # inactive, permanently blocking re-assignment through this
+            # endpoint. Check which case this is first, and reactivate
+            # (UPDATE) the inactive row instead of trying to INSERT a
+            # duplicate.
+            cur.execute(
+                """
+                SELECT active
+                FROM doctor_appointment_types
+                WHERE doctor_id = %s
+                  AND appointment_type_id = %s
+                """,
+                (doctor_id, appointment_type_id),
+            )
+
+            existing = cur.fetchone()
+
+            if existing is not None and existing[0]:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Appointment type already assigned to doctor",
+                )
+
+            if existing is not None:
+                cur.execute(
+                    """
+                    UPDATE doctor_appointment_types
+                    SET duration_minutes = %s,
+                        active = TRUE,
+                        updated_at = NOW()
+                    WHERE doctor_id = %s
+                      AND appointment_type_id = %s
+                    RETURNING doctor_id,
+                              appointment_type_id,
+                              duration_minutes,
+                              active
+                    """,
+                    (
+                        appointment_type.duration_minutes,
+                        doctor_id,
+                        appointment_type_id,
+                    ),
+                )
+            else:
                 cur.execute(
                     """
                     INSERT INTO doctor_appointment_types (
@@ -117,13 +164,7 @@ def assign_appointment_type_to_doctor(
                     ),
                 )
 
-                row = cur.fetchone()
-
-            except psycopg.errors.UniqueViolation:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Appointment type already assigned to doctor",
-                )
+            row = cur.fetchone()
 
     return {
         "doctor_id": row[0],

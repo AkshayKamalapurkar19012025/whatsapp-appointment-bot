@@ -278,6 +278,28 @@ def test_reschedule_web_appointment_rejects_overlap(client, db_connection):
     assert "booked by someone else" in response.json()["detail"]
 
 
+def test_reschedule_web_appointment_rejects_time_outside_doctor_schedule(client, db_connection):
+    # Wiring test for the OutsideDoctorSchedule -> 409 mapping in
+    # app/api/patient_booking.py's reschedule handler -- the service-level
+    # behavior itself is covered by
+    # tests/test_reschedule_service.py::test_reschedule_rejects_time_outside_doctor_schedule.
+    seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Reschedule Web Schedule")
+    token = register_and_login_web_patient(client, "+919840000099", "Reschedule Schedule Patient")
+    booked = _book_via_web(client, token, seeded, 9)
+
+    saturday = date.today() + timedelta(days=2)
+    while saturday.isoweekday() != 6:
+        saturday += timedelta(days=1)
+
+    response = client.post(
+        f"/api/web/appointments/{booked['id']}/reschedule",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"new_start_at": f"{saturday.isoformat()}T10:00:00+05:30"},
+    )
+    assert response.status_code == 409
+    assert "working hours" in response.json()["detail"]
+
+
 def test_reschedule_web_appointment_enforces_booking_window(client, db_connection):
     seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Reschedule Web Window")
     token = register_and_login_web_patient(client, "+919840000016", "Reschedule Window Patient")
