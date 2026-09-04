@@ -2,6 +2,18 @@
    Design tokens
    =========================================================== */
 
+/* Only used for the new components/ui/* primitives (alert-dialog,
+   select) -- everything else in this file is deliberately untouched,
+   plain unlayered CSS. Tailwind v4 wraps its reset/utilities in
+   `@layer`, and per the CSS Cascade Layers spec, unlayered rules always
+   win over layered ones regardless of selector specificity -- so
+   Preflight's element-level resets (button, input, h1..h4, etc.) do NOT
+   override any of the hand-written rules below; there is no migration
+   or rewrite required for this to coexist safely with the existing
+   design system. Verified visually (login/admin screens unchanged)
+   after adding this import. */
+@import 'tailwindcss';
+
 @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap');
 
 :root {
@@ -144,6 +156,62 @@ h4 {
   from {
     opacity: 0;
     transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Radix AlertDialog (components/ui/alert-dialog.tsx) open/close motion,
+   keyed off its own data-state attribute -- same reasoning as shell-in
+   above: plain CSS so the existing global prefers-reduced-motion rule
+   covers it automatically, no animation utility plugin needed. */
+.alert-dialog-overlay[data-state='open'] {
+  animation: dialog-overlay-in 0.15s ease-out;
+}
+
+.alert-dialog-overlay[data-state='closed'] {
+  animation: dialog-overlay-in 0.1s ease-in reverse;
+}
+
+.alert-dialog-content[data-state='open'] {
+  animation: dialog-content-in 0.18s ease-out;
+}
+
+.alert-dialog-content[data-state='closed'] {
+  animation: dialog-content-in 0.12s ease-in reverse;
+}
+
+@keyframes dialog-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes dialog-content-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -48%) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+/* Radix Select (components/ui/select.tsx) popover open motion. */
+.select-content-anim[data-state='open'] {
+  animation: select-content-in 0.12s ease-out;
+}
+
+@keyframes select-content-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
   }
   to {
     opacity: 1;

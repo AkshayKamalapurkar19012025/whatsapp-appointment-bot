@@ -1,4 +1,5 @@
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
 
 // Proxies /api to the FastAPI backend during development so the browser
@@ -7,7 +8,7 @@ import { defineConfig } from 'vite'
 // A production deployment decides its own same-origin-vs-separate-deploy
 // story later; this proxy is a dev-time convenience only.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   server: {
     // Lets a Cloudflare Quick Tunnel (random *.trycloudflare.com hostname,
     // see scripts/start_tunnel.sh) reach this dev server -- Vite otherwise
