@@ -24,7 +24,7 @@ export default function StaffLoginFlow({ onLoggedIn }: { onLoggedIn: () => void 
 
   return (
     <div className="card">
-      <h1>Staff Login</h1>
+      <h1>Admin Login</h1>
       <form onSubmit={handleSubmit}>
         <label htmlFor="username">Username</label>
         <input
