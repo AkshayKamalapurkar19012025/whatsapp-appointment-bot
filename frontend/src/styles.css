@@ -2,6 +2,16 @@
    Design tokens
    =========================================================== */
 
+/* The Google Fonts import must come before `@import 'tailwindcss'`
+   below, not after: Tailwind v4's import expands inline into its own
+   (large) generated CSS at build time, and once that expansion happens
+   a later `@import` would follow real rules instead of preceding them
+   -- which PostCSS/Vite rejects ("@import statements must precede all
+   other statements"), even though the two imports look adjacent in
+   this source file. Order here, not adjacency in source, is what
+   matters after expansion. */
+@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap');
+
 /* Only used for the new components/ui/* primitives (alert-dialog,
    select) -- everything else in this file is deliberately untouched,
    plain unlayered CSS. Tailwind v4 wraps its reset/utilities in
@@ -13,8 +23,6 @@
    design system. Verified visually (login/admin screens unchanged)
    after adding this import. */
 @import 'tailwindcss';
-
-@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap');
 
 :root {
   --font-heading: 'Lexend', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
