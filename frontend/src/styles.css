@@ -422,6 +422,16 @@ a.link:hover {
   text-decoration: underline;
 }
 
+/* Destructive text-link actions (e.g. cancelling an appointment) get
+   the same danger color the app already uses elsewhere for destructive
+   actions (the confirm-cancel dialog button, the patient-side "Cancel"
+   button in MyAppointments) -- a plain .link on its own only ever means
+   a neutral action (reschedule, remove, etc.). */
+button.link.danger,
+a.link.danger {
+  color: var(--color-danger);
+}
+
 .error {
   color: var(--color-danger);
   background: var(--color-danger-soft);
