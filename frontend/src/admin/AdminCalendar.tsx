@@ -11,10 +11,12 @@ import MonthGrid from '../MonthGrid'
 export default function AdminCalendar({
   doctorId,
   appointmentTypeId,
+  selectedDate,
   onSelectDate,
 }: {
   doctorId: number
   appointmentTypeId: number
+  selectedDate?: string | null
   onSelectDate: (isoDate: string) => void
 }) {
   const today = new Date()
@@ -68,6 +70,7 @@ export default function AdminCalendar({
       dates={dates}
       loading={loading}
       error={error}
+      selectedDate={selectedDate}
       onSelectDate={onSelectDate}
       onPrevMonth={goPrev}
       onNextMonth={goNext}

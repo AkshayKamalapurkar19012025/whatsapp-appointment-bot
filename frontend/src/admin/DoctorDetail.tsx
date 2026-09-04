@@ -25,6 +25,7 @@ import type {
   DoctorScheduleEntry,
 } from '../types'
 import { formatDate, formatTime, formatTimeOfDay } from '../format'
+import Avatar from '../Avatar'
 
 const DAY_NAMES = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
@@ -68,7 +69,10 @@ function previewSlots(startTime: string, endTime: string, durationMinutes: numbe
 export default function DoctorDetail({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean }) {
   return (
     <div className="doctor-detail">
-      <h3>{doctor.name}</h3>
+      <div className="option-row">
+        <Avatar name={doctor.name} size={48} />
+        <h3 style={{ margin: 0 }}>{doctor.name}</h3>
+      </div>
       <DepartmentAssignment doctor={doctor} isAdmin={isAdmin} />
       <ScheduleSection doctor={doctor} isAdmin={isAdmin} />
       <BlocksSection doctor={doctor} />

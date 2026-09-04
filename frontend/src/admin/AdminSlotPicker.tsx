@@ -11,7 +11,7 @@ import { formatDate } from '../format'
 // to the doctor's actual schedule, appointment duration, or existing
 // bookings (and its native browser minute-scroll widget is what read as
 // "rotating slots"). Date selection is now AdminCalendar -- a colour-
-// coded month grid (teal = has open slots, grey = fully booked/no
+// coded date strip (bold/white = has open slots, grey = fully booked/no
 // schedule that day) computed by GET /appointments/calendar, so staff
 // see which days are worth clicking before they click one, rather than
 // picking blind. Once a date is picked, the slot list below it is the
@@ -78,7 +78,12 @@ export default function AdminSlotPicker({
       </div>
 
       <div className="admin-slot-picker-body">
-        <AdminCalendar doctorId={doctorId} appointmentTypeId={appointmentTypeId} onSelectDate={setDate} />
+        <AdminCalendar
+          doctorId={doctorId}
+          appointmentTypeId={appointmentTypeId}
+          selectedDate={date}
+          onSelectDate={setDate}
+        />
 
         <div className="admin-slot-picker-slots">
           {error && <p className="error">{error}</p>}
@@ -91,7 +96,7 @@ export default function AdminSlotPicker({
               emptyMessage="The doctor has no open slots on this date -- try another date."
             />
           ) : (
-            <p className="muted">Pick a teal (open) day on the calendar to see its time slots.</p>
+            <p className="muted">Pick an open day on the calendar to see its time slots.</p>
           )}
         </div>
       </div>

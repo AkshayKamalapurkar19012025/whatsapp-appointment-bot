@@ -20,34 +20,33 @@
   --font-heading: 'Lexend', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-sans: 'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 
-  /* Soft, lavender-tinted neutrals (cool gray rather than the previous
-     green-gray) -- pairs with the page's pastel gradient background
-     below instead of fighting it. */
-  --color-bg: #eef1f8;
-  --color-bg-subtle: #eef0f6;
+  /* Second reskin (per explicit user request to replace the prior
+     gradient/glass pass with this reference's look): flat white cards
+     on a barely-tinted lavender-gray page background, not a diffuse
+     gradient wash -- so neutrals stay close to white/light-gray rather
+     than the previous cool-blue cast. */
+  --color-bg: #eef0f6;
+  --color-bg-subtle: #f5f4fa;
   --color-surface: #ffffff;
-  --color-surface-hover: #f7f8fc;
-  --color-border: #e2e5f0;
-  --color-border-strong: #cdd2e4;
+  --color-surface-hover: #fafafc;
+  --color-border: #e7e7f0;
+  --color-border-strong: #d3d3e2;
 
-  /* "Glass" surface -- used only on the outer page/shell frame (.card,
-     .admin-shell), not on every nested box, so text legibility stays
-     effectively identical to solid white (see contrast note below) while
-     the page background gradient still reads through at the edges. */
-  --color-glass: rgba(255, 255, 255, 0.82);
-  --color-glass-border: rgba(255, 255, 255, 0.6);
+  --color-text: #1e2337;
+  --color-text-secondary: #545b72;
+  --color-text-muted: #8b90a3;
 
-  --color-text: #16211d;
-  --color-text-secondary: #4b5a54;
-  --color-text-muted: #7c8c85;
-
-  /* Primary -- unchanged from the existing brand teal (kept deliberately,
-     per "keep current branding"): already verified for >=4.5:1 text
-     contrast against white, so it isn't touched by this style pass. */
-  --color-primary: #1f7a63;
-  --color-primary-hover: #185f4d;
-  --color-primary-soft: #e3f3ee;
-  --color-primary-soft-strong: #c7e8dd;
+  /* Primary -- coral/red, replacing the prior teal per this round's
+     explicit "replace the look" decision. #c9432e chosen (not a lighter
+     coral like the reference's exact hue) specifically because it clears
+     4.5:1 text contrast with white -- verified by computing WCAG relative
+     luminance directly (L=0.166, contrast=4.86:1) -- a lighter/truer
+     coral (e.g. #ff6f61) does not pass and would fail the accessibility
+     checklist this app has held to throughout. */
+  --color-primary: #c9432e;
+  --color-primary-hover: #a8371f;
+  --color-primary-soft: #fdeae6;
+  --color-primary-soft-strong: #f6cec4;
   --color-on-primary: #ffffff;
 
   --color-danger: #b3261e;
@@ -57,15 +56,15 @@
   --color-warning: #a5680a;
   --color-warning-soft: #fdf2df;
 
-  --radius-sm: 8px;
-  --radius-md: 14px;
+  --radius-sm: 10px;
+  --radius-md: 16px;
   --radius-lg: 24px;
 
-  /* Softer, larger-blur shadows for the glass-card look (diffuse rather
-     than tight/dark). */
-  --shadow-sm: 0 1px 3px rgba(31, 42, 68, 0.05);
-  --shadow-md: 0 10px 34px rgba(31, 42, 68, 0.10);
-  --shadow-lg: 0 20px 55px rgba(31, 42, 68, 0.14);
+  /* Cool-toned, moderate shadows for flat white cards (not the diffuse
+     glass-era blur shadows). */
+  --shadow-sm: 0 1px 2px rgba(30, 35, 55, 0.05);
+  --shadow-md: 0 8px 24px rgba(30, 35, 55, 0.08);
+  --shadow-lg: 0 16px 40px rgba(30, 35, 55, 0.12);
 
   --space-1: 4px;
   --space-2: 8px;
@@ -89,9 +88,7 @@ body {
 
 body {
   margin: 0;
-  /* Diffuse pastel wash (cool blue -> lavender -> warm peach) behind the
-     glass cards/shell, fixed so it doesn't repeat/scroll with content. */
-  background: linear-gradient(135deg, #eaf1fb 0%, #f1ecfa 45%, #fbf0ea 100%) fixed;
+  background: var(--color-bg);
   color: var(--color-text);
   -webkit-font-smoothing: antialiased;
 }
@@ -134,12 +131,10 @@ h4 {
 }
 
 .card {
-  background: var(--color-glass);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  background: var(--color-surface);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
-  border: 1px solid var(--color-glass-border);
+  border: 1px solid var(--color-border);
   padding: var(--space-8);
   width: 100%;
   max-width: 480px;
@@ -664,6 +659,16 @@ a.link:hover {
   font-weight: 400;
 }
 
+.option-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.option-row-title {
+  display: block;
+}
+
 /* ===========================================================
    Slot picker (SlotGrid.tsx / AdminSlotPicker.tsx)
    =========================================================== */
@@ -935,7 +940,7 @@ a.link:hover {
 .calendar-header button {
   background: var(--color-surface);
   border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: 50%;
   width: 32px;
   height: 32px;
   font-size: 1.1rem;
@@ -952,50 +957,51 @@ a.link:hover {
   cursor: default;
 }
 
-.calendar-grid {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 4px;
-  margin-bottom: var(--space-3);
+/* Wrapping row of round day-number buttons -- see MonthGrid.tsx's
+   docstring for why this replaced a weekday-aligned 7-column grid. */
+.date-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: var(--space-4);
 }
 
-.calendar-weekday {
-  text-align: center;
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--color-text-muted);
-  padding: 4px 0;
-}
-
-.calendar-day {
-  aspect-ratio: 1;
+.date-strip-day {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
   background: var(--color-surface);
-  font-size: 0.88rem;
+  color: var(--color-text);
+  font-size: 0.85rem;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease, transform 0.08s ease;
 }
 
-.calendar-day.empty {
-  border: none;
-  background: transparent;
-}
-
-.calendar-day.available {
-  background: var(--color-primary-soft);
-  border-color: var(--color-primary-soft-strong);
-  color: var(--color-primary-hover);
-  font-weight: 700;
-}
-
-.calendar-day.available:hover {
+.date-strip-day.available:hover {
   border-color: var(--color-primary);
+  color: var(--color-primary-hover);
 }
 
-.calendar-day.unavailable {
+.date-strip-day.available:active {
+  transform: scale(0.94);
+}
+
+.date-strip-day.unavailable {
   background: var(--color-bg-subtle);
+  border-color: transparent;
   color: var(--color-text-muted);
   cursor: default;
+}
+
+.date-strip-day.selected {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-on-primary);
 }
 
 .calendar-legend {
@@ -1010,7 +1016,7 @@ a.link:hover {
   display: inline-block;
   width: 11px;
   height: 11px;
-  border-radius: 3px;
+  border-radius: 50%;
   margin-left: var(--space-3);
 }
 
@@ -1026,6 +1032,22 @@ a.link:hover {
 .legend-swatch.available {
   background: var(--color-primary-soft);
   border: 1px solid var(--color-primary);
+}
+
+/* ===========================================================
+   Avatar (initials, in place of a doctor photo -- see Avatar.tsx)
+   =========================================================== */
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #ffffff;
+  font-weight: 700;
+  font-family: var(--font-heading);
+  flex-shrink: 0;
+  letter-spacing: 0.02em;
 }
 
 /* ===========================================================
@@ -1082,12 +1104,10 @@ a.link:hover {
   width: 100%;
   max-width: 1180px;
   min-height: calc(100vh - 48px);
-  background: var(--color-glass);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  background: var(--color-surface);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
-  border: 1px solid var(--color-glass-border);
+  border: 1px solid var(--color-border);
   overflow: hidden;
   animation: shell-in 0.4s ease-out;
 }
@@ -1095,7 +1115,7 @@ a.link:hover {
 .admin-nav {
   width: 232px;
   flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.35);
+  background: var(--color-bg-subtle);
   border-right: 1px solid var(--color-border);
   padding: var(--space-5) var(--space-3);
   display: flex;
@@ -1165,19 +1185,25 @@ a.link:hover {
   background: none;
   border: none;
   padding: 9px var(--space-3);
-  border-radius: var(--radius-sm);
+  border-radius: 999px;
   color: var(--color-text-secondary);
   font-weight: 500;
   font-size: 0.9rem;
   margin-bottom: 2px;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
 }
 
 .admin-nav-item .nav-icon {
   flex-shrink: 0;
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
   color: currentColor;
   opacity: 0.75;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 
 .admin-nav-item:hover {
@@ -1185,13 +1211,20 @@ a.link:hover {
   color: var(--color-text);
 }
 
+/* White floating pill for the active item, with the icon picked out in a
+   small solid coral badge -- matches the reference's sidebar treatment
+   (a white capsule on the tinted sidebar background) rather than the
+   previous solid-fill rectangle. */
 .admin-nav-item.active {
-  background: var(--color-primary);
-  color: var(--color-on-primary);
+  background: var(--color-surface);
+  color: var(--color-text);
   font-weight: 600;
+  box-shadow: var(--shadow-sm);
 }
 
 .admin-nav-item.active .nav-icon {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
   opacity: 1;
 }
 

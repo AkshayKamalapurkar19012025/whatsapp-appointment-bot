@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { CalendarBlank } from '@phosphor-icons/react'
+import Avatar from './Avatar'
 import {
   ApiError,
   cancelWebAppointment,
@@ -253,12 +254,15 @@ export default function MyAppointments({
           <ul className="appointment-list" ref={listRef}>
             {list.map((appointment) => (
               <li key={appointment.id} className="appointment-card">
-                <div>
-                  <strong>{appointment.doctor_name}</strong>
-                  <div className="muted">{appointment.appointment_type_name}</div>
+                <div className="option-row">
+                  <Avatar name={appointment.doctor_name} size={40} />
                   <div>
-                    {formatDate(appointment.start_at)} · {formatTime(appointment.start_at)} –{' '}
-                    {formatTime(appointment.end_at)}
+                    <strong>{appointment.doctor_name}</strong>
+                    <div className="muted">{appointment.appointment_type_name}</div>
+                    <div>
+                      {formatDate(appointment.start_at)} · {formatTime(appointment.start_at)} –{' '}
+                      {formatTime(appointment.end_at)}
+                    </div>
                   </div>
                 </div>
                 {tab === 'upcoming' && (
