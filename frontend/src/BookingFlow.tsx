@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { CheckCircle } from '@phosphor-icons/react'
-import Avatar from './Avatar'
 import {
   ApiError,
   createWebAppointment,
@@ -191,10 +190,7 @@ export default function BookingFlow({
             {doctors.map((doc) => (
               <li key={doc.id}>
                 <button type="button" onClick={() => chooseDoctor(doc)}>
-                  <span className="option-row">
-                    <Avatar name={doc.name} size={36} />
-                    <span className="option-row-title">{doc.name}</span>
-                  </span>
+                  {doc.name}
                 </button>
               </li>
             ))}

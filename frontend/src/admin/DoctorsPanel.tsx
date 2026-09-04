@@ -4,7 +4,6 @@ import { ApiError, createDoctor, listAllDoctors } from '../api'
 import type { Doctor } from '../types'
 import { formatDateTime } from '../format'
 import { useStaggerReveal } from '../useStaggerReveal'
-import Avatar from '../Avatar'
 import DoctorDetail from './DoctorDetail'
 
 export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
@@ -84,15 +83,10 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
               className={selectedDoctor?.id === d.id ? 'selected' : ''}
               onClick={() => setSelectedDoctor(d)}
             >
-              <span className="option-row">
-                <Avatar name={d.name} size={36} />
-                <span>
-                  <span className="option-row-title">{d.name}</span>
-                  <span className="muted doctor-added-meta">
-                    Added {formatDateTime(d.created_at)}
-                    {d.created_by ? ` by ${d.created_by}` : ''}
-                  </span>
-                </span>
+              <span>{d.name}</span>
+              <span className="muted doctor-added-meta">
+                Added {formatDateTime(d.created_at)}
+                {d.created_by ? ` by ${d.created_by}` : ''}
               </span>
             </button>
           </li>

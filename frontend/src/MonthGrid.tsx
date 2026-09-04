@@ -5,30 +5,32 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ]
 
+const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
 function daysInMonth(year: number, month: number): number {
   return new Date(year, month, 0).getDate()
 }
 
-// The presentational date-strip every calendar picker in this app
+// Monday-first column index (0..6) for the 1st of the month, matching
+// day_of_week's Monday=1 convention used throughout the backend.
+function firstWeekdayColumn(year: number, month: number): number {
+  const jsDay = new Date(year, month - 1, 1).getDay() // Sunday = 0
+  return (jsDay + 6) % 7
+}
+
+// The presentational month-grid every calendar picker in this app
 // renders -- extracted from what used to be Calendar.tsx's own JSX so
 // the patient booking calendar (window-limited, via GET /web/calendar)
 // and the admin date picker (unrestricted, via GET /appointments/
-// calendar) can share the exact same strip/legend/nav-button rendering
+// calendar) can share the exact same grid/legend/nav-button rendering
 // while each keeps its own data-fetching and window rules, which
 // genuinely differ between the two callers.
-//
-// Renders as a wrapping row of round day-number buttons (not a
-// weekday-aligned 7-column grid) -- deliberately NOT a horizontally
-// scrolling strip: ui-ux-pro-max's own `horizontal-scroll` rule flags
-// horizontal scroll as an anti-pattern, so this wraps onto multiple rows
-// instead, keeping the same "row of day circles" look without it.
 export default function MonthGrid({
   year,
   month,
   dates,
   loading,
   error,
-  selectedDate,
   onSelectDate,
   onPrevMonth,
   onNextMonth,
@@ -40,13 +42,6 @@ export default function MonthGrid({
   dates: Record<string, boolean> | null
   loading?: boolean
   error?: string | null
-  // Optional: highlights the currently-picked day. Only meaningful for a
-  // caller that keeps this calendar visible after a date is chosen (see
-  // AdminCalendar.tsx) -- callers that immediately advance to the next
-  // step once a date is picked (Calendar.tsx's patient/reschedule flows)
-  // never show this component again after selection, so they don't pass
-  // it.
-  selectedDate?: string | null
   onSelectDate: (isoDate: string) => void
   onPrevMonth: () => void
   onNextMonth: () => void
@@ -54,10 +49,12 @@ export default function MonthGrid({
   nextDisabled: boolean
 }) {
   const totalDays = daysInMonth(year, month)
-  const days = Array.from({ length: totalDays }, (_, i) => {
-    const day = i + 1
-    return { day, iso: isoDateOnly(year, month, day) }
-  })
+  const leadingBlanks = firstWeekdayColumn(year, month)
+  const cells: Array<{ day: number; iso: string } | null> = []
+  for (let i = 0; i < leadingBlanks; i++) cells.push(null)
+  for (let day = 1; day <= totalDays; day++) {
+    cells.push({ day, iso: isoDateOnly(year, month, day) })
+  }
 
   return (
     <div className="calendar">
@@ -82,15 +79,20 @@ export default function MonthGrid({
       )}
 
       {dates && !loading && (
-        <div className="date-strip">
-          {days.map((cell) => {
+        <div className="calendar-grid">
+          {WEEKDAY_LABELS.map((label) => (
+            <div key={label} className="calendar-weekday">
+              {label}
+            </div>
+          ))}
+          {cells.map((cell, index) => {
+            if (cell === null) return <div key={`blank-${index}`} className="calendar-day empty" />
             const available = dates[cell.iso] === true
-            const selected = cell.iso === selectedDate
             return (
               <button
                 key={cell.iso}
                 type="button"
-                className={`date-strip-day${available ? ' available' : ' unavailable'}${selected ? ' selected' : ''}`}
+                className={`calendar-day${available ? ' available' : ' unavailable'}`}
                 disabled={!available}
                 onClick={() => onSelectDate(cell.iso)}
               >
