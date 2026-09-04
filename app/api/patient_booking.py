@@ -120,6 +120,12 @@ def get_calendar_month(
     appointment_type_id: int,
     year: int,
     month: int,
+    # Optional (migrations/0010) -- see AvailabilityRequest.department_id
+    # in app/api/availability.py for the exact semantics. The web
+    # booking flow (BookingFlow.tsx) already selects department before
+    # doctor and passes it here; the reschedule flow has no department
+    # in scope and omits it, seeing every active schedule row.
+    department_id: int | None = None,
 ):
     if not (1 <= month <= 12):
         raise HTTPException(status_code=422, detail="month must be between 1 and 12")
@@ -144,6 +150,7 @@ def get_calendar_month(
                 appointment_type_id,
                 month_start,
                 month_end,
+                department_id=department_id,
             )
 
     dates = {

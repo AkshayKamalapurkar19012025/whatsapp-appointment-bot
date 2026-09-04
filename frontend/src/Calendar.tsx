@@ -6,10 +6,14 @@ import MonthGrid from './MonthGrid'
 export default function Calendar({
   doctorId,
   appointmentTypeId,
+  departmentId,
   onSelectDate,
 }: {
   doctorId: number
   appointmentTypeId: number
+  // Narrows availability to this department's schedule (migrations/0010)
+  // -- omit when there's no department in scope (e.g. rescheduling).
+  departmentId?: number
   onSelectDate: (isoDate: string) => void
 }) {
   const today = new Date()
@@ -23,7 +27,7 @@ export default function Calendar({
     let cancelled = false
     setLoading(true)
     setError(null)
-    getCalendarMonth(doctorId, appointmentTypeId, year, month)
+    getCalendarMonth(doctorId, appointmentTypeId, year, month, departmentId)
       .then((result) => {
         if (!cancelled) setData(result)
       })
@@ -39,7 +43,7 @@ export default function Calendar({
     return () => {
       cancelled = true
     }
-  }, [doctorId, appointmentTypeId, year, month])
+  }, [doctorId, appointmentTypeId, departmentId, year, month])
 
   const isCurrentMonth = year === today.getFullYear() && month === today.getMonth() + 1
   const nextMonthDate = new Date(year, month, 1) // month is 1-based, so this rolls forward one

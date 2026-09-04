@@ -159,6 +159,10 @@ export function getCalendarMonth(
   appointmentTypeId: number,
   year: number,
   month: number,
+  // Narrows results to this department's schedule rows (plus any
+  // department-agnostic ones) -- see migrations/0010. Omit when there's
+  // no department in scope (e.g. rescheduling), which sees every row.
+  departmentId?: number,
 ): Promise<CalendarMonth> {
   const params = new URLSearchParams({
     doctor_id: String(doctorId),
@@ -166,6 +170,7 @@ export function getCalendarMonth(
     year: String(year),
     month: String(month),
   })
+  if (departmentId !== undefined) params.set('department_id', String(departmentId))
   return request(`/web/calendar?${params.toString()}`)
 }
 
@@ -173,6 +178,7 @@ export function getSlotsForDate(
   doctorId: number,
   appointmentTypeId: number,
   isoDate: string,
+  departmentId?: number,
 ): Promise<{ slots: { start_at: string; end_at: string }[]; duration_minutes: number }> {
   return request('/availability', {
     method: 'POST',
@@ -180,6 +186,7 @@ export function getSlotsForDate(
       doctor_id: doctorId,
       appointment_type_id: appointmentTypeId,
       date: isoDate,
+      ...(departmentId !== undefined ? { department_id: departmentId } : {}),
     },
   })
 }
@@ -360,6 +367,7 @@ export function createDoctorSchedule(
     end_time: string
     start_date?: string | null
     end_date?: string | null
+    department_id?: number | null
   },
 ): Promise<DoctorScheduleEntry> {
   return request(`/doctors/${doctorId}/schedule`, {

@@ -350,11 +350,13 @@ function DepartmentAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmin: bo
 
 function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean }) {
   const [entries, setEntries] = useState<DoctorScheduleEntry[]>([])
+  const [departments, setDepartments] = useState<Department[]>([])
   const [dayOfWeek, setDayOfWeek] = useState('1')
   const [startTime, setStartTime] = useState('09:00')
   const [endTime, setEndTime] = useState('17:00')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
+  const [departmentId, setDepartmentId] = useState('')
   const [breaks, setBreaks] = useState<{ start: string; end: string }[]>([])
   const [previewDuration, setPreviewDuration] = useState(30)
   const [error, setError] = useState<string | null>(null)
@@ -362,12 +364,25 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
   const [removeTarget, setRemoveTarget] = useState<DoctorScheduleEntry | null>(null)
 
   function load() {
-    getDoctorScheduleAdmin(doctor.id)
-      .then(setEntries)
+    // The doctor's own assigned departments (not every department in the
+    // system) populate the schedule form's department picker -- a row
+    // can only be scoped to a department this doctor actually belongs
+    // to, matching what app/api/doctor_schedule.py's create/update
+    // handlers validate server-side.
+    Promise.all([getDoctorScheduleAdmin(doctor.id), getDoctorDepartments(doctor.id)])
+      .then(([schedule, depts]) => {
+        setEntries(schedule)
+        setDepartments(depts)
+      })
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load schedule'))
   }
 
   useEffect(load, [doctor.id])
+
+  function departmentName(id: number | null): string {
+    if (id === null) return 'All departments'
+    return departments.find((d) => d.id === id)?.name ?? 'All departments'
+  }
 
   function addBreak() {
     setBreaks((prev) => [...prev, { start: '13:00', end: '14:00' }])
@@ -431,6 +446,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
     setEndTime('17:00')
     setStartDate('')
     setEndDate('')
+    setDepartmentId('')
     setBreaks([])
   }
 
@@ -440,6 +456,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
     endTime !== '17:00' ||
     startDate !== '' ||
     endDate !== '' ||
+    departmentId !== '' ||
     breaks.length > 0
 
   async function handleCreate(e: React.FormEvent) {
@@ -477,6 +494,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
             end_time: segments[i].end,
             start_date: startDate || null,
             end_date: endDate || null,
+            department_id: departmentId ? Number(departmentId) : null,
           })
         } catch (err) {
           if (i > 0) {
@@ -528,6 +546,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
             <th>Day</th>
             <th>Hours</th>
             <th>Date range</th>
+            <th>Department</th>
             <th />
           </tr>
         </thead>
@@ -543,6 +562,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
                   ? `${e.start_date ? formatDate(e.start_date) : 'Always'} – ${e.end_date ? formatDate(e.end_date) : 'Always'}`
                   : 'Every week'}
               </td>
+              <td>{departmentName(e.department_id)}</td>
               <td>
                 {isAdmin && (
                   <button type="button" className="link" onClick={() => setRemoveTarget(e)}>
@@ -554,7 +574,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
           ))}
           {entries.length === 0 && (
             <tr>
-              <td colSpan={4} className="muted">
+              <td colSpan={5} className="muted">
                 No recurring schedule set.
               </td>
             </tr>
@@ -598,6 +618,24 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
           <label className="inline-label">
             Until (optional)
             <AdminDatePicker value={endDate} onChange={setEndDate} label="Pick end date" />
+          </label>
+          <label className="inline-label">
+            Department (optional)
+            <select
+              value={departmentId}
+              onChange={(e) => setDepartmentId(e.target.value)}
+              disabled={departments.length === 0}
+            >
+              <option value="">All departments</option>
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+            {departments.length === 0 && (
+              <span className="muted">Assign a department (Departments tab) to set department-specific hours.</span>
+            )}
           </label>
           <button type="submit" disabled={busy}>
             {busy ? 'Saving…' : 'Save'}

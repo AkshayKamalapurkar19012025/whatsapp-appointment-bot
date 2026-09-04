@@ -114,6 +114,8 @@ export interface DoctorScheduleEntry {
   active: boolean
   start_date: string | null
   end_date: string | null
+  // Null means this row applies regardless of department (migrations/0010).
+  department_id: number | null
 }
 
 // start_at/end_at here are raw DB values (UTC-labeled on read-back, per
