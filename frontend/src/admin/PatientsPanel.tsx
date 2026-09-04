@@ -137,7 +137,7 @@ export default function PatientsPanel() {
           <thead>
             <tr>
               <th>Name</th>
-              <th>WhatsApp number</th>
+              <th>Contact number</th>
               <th>Type</th>
             </tr>
           </thead>
