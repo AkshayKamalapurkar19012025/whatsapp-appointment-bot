@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ApiError, requestOtp, setToken, verifyOtp } from './api'
+import PhoneInput from './PhoneInput'
 
 type Stage = 'number' | 'otp' | 'register'
 
@@ -50,14 +51,7 @@ export default function LoginFlow({ onLoggedIn }: { onLoggedIn: () => void }) {
       {stage === 'number' && (
         <form onSubmit={handleRequestOtp}>
           <label htmlFor="whatsapp_number">Mobile number</label>
-          <input
-            id="whatsapp_number"
-            type="tel"
-            placeholder="+91 98765 43210"
-            value={whatsappNumber}
-            onChange={(e) => setWhatsappNumber(e.target.value)}
-            required
-          />
+          <PhoneInput id="whatsapp_number" value={whatsappNumber} onChange={setWhatsappNumber} autoFocus />
           {error && <p className="error">{error}</p>}
           <button type="submit" disabled={busy}>
             {busy ? 'Sending…' : 'Send OTP'}

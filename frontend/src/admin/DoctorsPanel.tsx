@@ -50,14 +50,26 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
             onChange={(e) => setName(e.target.value)}
             required
           />
-          <button type="submit" disabled={busy}>
+          <button type="submit" style={{ width: 'auto' }} disabled={busy}>
             {busy ? 'Creating…' : 'Add doctor'}
           </button>
         </form>
       )}
 
-      {loading && <p>Loading…</p>}
-      {!loading && doctors.length === 0 && <p className="muted">No doctors yet.</p>}
+      {loading && (
+        <div className="state-block">
+          <span className="spinner" aria-hidden="true" />
+          Loading doctors…
+        </div>
+      )}
+      {!loading && doctors.length === 0 && (
+        <div className="state-block empty">
+          <span className="state-icon" aria-hidden="true">
+            🩺
+          </span>
+          No doctors yet.
+        </div>
+      )}
 
       <ul className="option-list">
         {doctors.map((d) => (

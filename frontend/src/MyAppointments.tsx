@@ -9,6 +9,7 @@ import {
 } from './api'
 import type { MyAppointment, MyAppointmentsResponse, Slot } from './types'
 import Calendar from './Calendar'
+import SlotGrid from './SlotGrid'
 import { formatDate, formatTime } from './format'
 
 type Tab = 'upcoming' | 'history' | 'cancelled'
@@ -166,16 +167,7 @@ export default function MyAppointments({
           {rescheduleStep === 'slot' && (
             <>
               <h3>Choose a new time</h3>
-              {rescheduleSlots.length === 0 && <p>No slots available on this date.</p>}
-              <ul className="option-list">
-                {rescheduleSlots.map((slot) => (
-                  <li key={slot.start_at}>
-                    <button type="button" onClick={() => chooseRescheduleSlot(slot)}>
-                      {formatTime(slot.start_at)} – {formatTime(slot.end_at)}
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              <SlotGrid slots={rescheduleSlots} onSelect={chooseRescheduleSlot} />
               <button type="button" className="link" onClick={() => setRescheduleStep('date')}>
                 Back
               </button>
@@ -227,9 +219,21 @@ export default function MyAppointments({
             ))}
           </div>
 
-          {loading && <p>Loading…</p>}
+          {loading && (
+            <div className="state-block">
+              <span className="spinner" aria-hidden="true" />
+              Loading…
+            </div>
+          )}
 
-          {!loading && list.length === 0 && <p className="muted">Nothing here yet.</p>}
+          {!loading && list.length === 0 && (
+            <div className="state-block empty">
+              <span className="state-icon" aria-hidden="true">
+                📅
+              </span>
+              Nothing here yet.
+            </div>
+          )}
 
           <ul className="appointment-list">
             {list.map((appointment) => (

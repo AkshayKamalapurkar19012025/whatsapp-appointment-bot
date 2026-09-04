@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.api.staff_auth import get_current_staff
 from app.db.connection import get_connection
+from app.utils.phone import normalize_whatsapp_number
 
 router = APIRouter(
     prefix="/patients",
@@ -61,7 +62,7 @@ class PatientCreate(BaseModel):
         if not value:
             raise ValueError("WhatsApp number cannot be empty")
 
-        return value
+        return normalize_whatsapp_number(value)
 
 
 @router.get("")

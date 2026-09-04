@@ -1,92 +1,295 @@
+/* ===========================================================
+   Design tokens
+   =========================================================== */
+
 :root {
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  /* Neutral scale -- a hint of teal in the grays, not a pure gray, so it
+     reads as chosen rather than a default Bootstrap-ish palette. */
   --color-bg: #f4f7f6;
-  --color-card: #ffffff;
-  --color-primary: #2f6f5e;
-  --color-primary-dark: #234f43;
-  --color-text: #23302c;
-  --color-muted: #6b7a75;
-  --color-border: #dfe6e3;
-  --color-error: #b3261e;
-  --color-unavailable: #ffe0b2;
-  --color-available: #e3f1ec;
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --color-bg-subtle: #eaf1ee;
+  --color-surface: #ffffff;
+  --color-surface-hover: #f6f9f8;
+  --color-border: #dde6e2;
+  --color-border-strong: #c3d1cb;
+
+  --color-text: #16211d;
+  --color-text-secondary: #4b5a54;
+  --color-text-muted: #7c8c85;
+
+  /* Primary -- clinical teal. Kept close to the app's original accent so
+     existing users don't get a jarring rebrand, refined for contrast. */
+  --color-primary: #1f7a63;
+  --color-primary-hover: #185f4d;
+  --color-primary-soft: #e3f3ee;
+  --color-primary-soft-strong: #c7e8dd;
+  --color-on-primary: #ffffff;
+
+  --color-danger: #b3261e;
+  --color-danger-soft: #fbe9e7;
+  --color-success: #1f7a4d;
+  --color-success-soft: #e4f5ea;
+  --color-warning: #a5680a;
+  --color-warning-soft: #fdf2df;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+
+  --shadow-sm: 0 1px 2px rgba(16, 33, 27, 0.06);
+  --shadow-md: 0 4px 16px rgba(16, 33, 27, 0.08);
+  --shadow-lg: 0 12px 32px rgba(16, 33, 27, 0.12);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  font-family: var(--font-sans);
 }
 
 * {
   box-sizing: border-box;
 }
 
+html,
+body {
+  height: 100%;
+}
+
 body {
   margin: 0;
   background: var(--color-bg);
   color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
 }
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-sans);
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+::selection {
+  background: var(--color-primary-soft-strong);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ===========================================================
+   Page shell
+   =========================================================== */
 
 .page {
   min-height: 100vh;
   display: flex;
   justify-content: center;
-  padding: 16px;
+  padding: var(--space-6) var(--space-4);
 }
 
 .card {
-  background: var(--color-card);
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  padding: 24px;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--color-border);
+  padding: var(--space-8);
   width: 100%;
   max-width: 480px;
   align-self: flex-start;
 }
 
 h1 {
-  font-size: 1.4rem;
-  margin: 0 0 16px;
-  color: var(--color-primary-dark);
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0 0 var(--space-5);
+  color: var(--color-text);
+  letter-spacing: -0.01em;
 }
 
 h2 {
-  font-size: 1.15rem;
-  margin: 0 0 16px;
-  color: var(--color-primary-dark);
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin: 0 0 var(--space-5);
+  color: var(--color-text);
+  letter-spacing: -0.01em;
 }
+
+h3 {
+  font-size: 1.02rem;
+  font-weight: 600;
+  margin: 0 0 var(--space-3);
+  color: var(--color-text);
+}
+
+h4 {
+  font-size: 0.92rem;
+  font-weight: 700;
+  margin: 0 0 var(--space-3);
+  color: var(--color-primary-hover);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+p {
+  line-height: 1.55;
+}
+
+.muted {
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+/* ===========================================================
+   Forms
+   =========================================================== */
 
 label {
   display: block;
   font-size: 0.85rem;
-  color: var(--color-muted);
-  margin-bottom: 4px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-1);
 }
 
-input {
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  font-size: 1rem;
-  margin-bottom: 12px;
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
 }
+
+.field-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  padding: 10px 13px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  font-size: 0.95rem;
+  font-family: inherit;
+  color: var(--color-text);
+  background: var(--color-surface);
+  margin-bottom: var(--space-3);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+select {
+  cursor: pointer;
+}
+
+input:hover,
+select:hover,
+textarea:hover {
+  border-color: var(--color-text-muted);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+
+input:disabled,
+select:disabled {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+input[type='date'],
+input[type='time'] {
+  cursor: pointer;
+}
+
+/* ===========================================================
+   Buttons
+   =========================================================== */
 
 button {
   cursor: pointer;
-  font-size: 1rem;
+  font-size: 0.95rem;
+  font-family: inherit;
 }
 
+.btn,
 button[type='submit'],
 .card > button:not(.link) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
   width: 100%;
-  padding: 12px;
+  padding: 12px 16px;
   background: var(--color-primary);
-  color: #fff;
-  border: none;
-  border-radius: 8px;
+  color: var(--color-on-primary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   font-weight: 600;
+  transition: background 0.12s ease, transform 0.05s ease;
+}
+
+.btn:hover,
+button[type='submit']:hover,
+.card > button:not(.link):hover {
+  background: var(--color-primary-hover);
+}
+
+.btn:active,
+button[type='submit']:active {
+  transform: translateY(1px);
 }
 
 button[type='submit']:disabled,
-.card > button:not(.link):disabled {
-  opacity: 0.6;
+.card > button:not(.link):disabled,
+.btn:disabled {
+  opacity: 0.55;
   cursor: default;
+  transform: none;
+}
+
+.btn-secondary {
+  background: var(--color-surface);
+  color: var(--color-primary-hover);
+  border: 1px solid var(--color-border-strong);
+}
+
+.btn-secondary:hover {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+}
+
+.btn-danger {
+  background: var(--color-danger);
+}
+
+.btn-danger:hover {
+  background: #8f1f19;
 }
 
 button.link,
@@ -94,30 +297,104 @@ a.link {
   background: none;
   border: none;
   color: var(--color-primary);
-  padding: 8px 0;
+  padding: var(--space-2) 0;
+  text-decoration: none;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: var(--space-2);
+}
+
+button.link:hover,
+a.link:hover {
   text-decoration: underline;
-  display: block;
-  margin-top: 8px;
 }
 
 .error {
-  color: var(--color-error);
-  font-size: 0.9rem;
-  margin: -4px 0 12px;
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  font-size: 0.88rem;
+  margin: 0 0 var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
-.muted {
-  color: var(--color-muted);
-  font-size: 0.85rem;
+.error::before {
+  content: '!';
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-danger);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  flex-shrink: 0;
 }
+
+/* ===========================================================
+   Loading / empty / error state blocks
+   =========================================================== */
+
+.state-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  text-align: center;
+  color: var(--color-text-muted);
+  padding: var(--space-6) var(--space-4);
+  font-size: 0.9rem;
+}
+
+.state-block.empty {
+  background: var(--color-bg-subtle);
+  border-radius: var(--radius-md);
+}
+
+.state-icon {
+  font-size: 1.6rem;
+  opacity: 0.7;
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--color-border-strong);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ===========================================================
+   Topbar (patient app)
+   =========================================================== */
 
 .topbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
   font-size: 0.9rem;
-  color: var(--color-muted);
+  color: var(--color-text-secondary);
+}
+
+.topbar strong {
+  color: var(--color-text);
 }
 
 .topbar .link {
@@ -127,23 +404,34 @@ a.link {
 .topbar > div {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-4);
 }
+
+/* ===========================================================
+   Tabs
+   =========================================================== */
 
 .tabs {
   display: flex;
-  gap: 4px;
-  margin-bottom: 16px;
+  gap: var(--space-1);
+  margin-bottom: var(--space-5);
   border-bottom: 1px solid var(--color-border);
 }
 
 .tabs .tab {
   background: none;
   border: none;
-  padding: 8px 12px;
-  color: var(--color-muted);
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-text-muted);
   font-weight: 600;
+  font-size: 0.9rem;
   border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.12s ease;
+}
+
+.tabs .tab:hover {
+  color: var(--color-primary-hover);
 }
 
 .tabs .tab.active {
@@ -151,43 +439,65 @@ a.link {
   border-bottom-color: var(--color-primary);
 }
 
+/* ===========================================================
+   Appointment cards (patient "My Appointments")
+   =========================================================== */
+
 .appointment-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .appointment-card {
   border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-4);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.appointment-card:hover {
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-sm);
 }
 
 .appointment-actions {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
 .appointment-actions button {
-  padding: 6px 10px;
+  padding: 7px 12px;
   font-size: 0.85rem;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-card);
-  color: var(--color-primary);
+  font-weight: 500;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-primary-hover);
+  white-space: nowrap;
+}
+
+.appointment-actions button:hover {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
 }
 
 .appointment-actions button.danger {
-  color: var(--color-error);
+  color: var(--color-danger);
+}
+
+.appointment-actions button.danger:hover {
+  background: var(--color-danger-soft);
+  border-color: var(--color-danger);
 }
 
 @media (max-width: 420px) {
@@ -204,67 +514,264 @@ a.link {
   }
 }
 
+/* ===========================================================
+   Selectable option list (department/doctor/appointment-type steps)
+   =========================================================== */
+
 .option-list {
   list-style: none;
-  margin: 0 0 8px;
+  margin: 0 0 var(--space-2);
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .option-list button {
   width: 100%;
   text-align: left;
-  padding: 12px 14px;
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-card);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   color: var(--color-text);
+  font-weight: 500;
+  transition: border-color 0.12s ease, background 0.12s ease;
 }
 
 .option-list button:hover {
   border-color: var(--color-primary);
+  background: var(--color-primary-soft);
 }
+
+.option-list button.selected {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+/* ===========================================================
+   Slot picker (SlotGrid.tsx / AdminSlotPicker.tsx)
+   =========================================================== */
+
+.slot-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.slot-group-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-2);
+}
+
+.slot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: var(--space-2);
+}
+
+.slot-chip {
+  padding: 10px 8px;
+  text-align: center;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-weight: 600;
+  font-size: 0.87rem;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.slot-chip:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.slot-chip.selected {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+.admin-slot-picker {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  background: var(--color-bg-subtle);
+  margin: var(--space-3) 0;
+}
+
+.slot-picker-context {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.schedule-preview {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: var(--space-3);
+  background: var(--color-primary-soft);
+  border: 1px solid var(--color-primary-soft-strong);
+  border-radius: var(--radius-md);
+  margin: var(--space-3) 0;
+  font-size: 0.85rem;
+}
+
+.schedule-preview .arrow {
+  color: var(--color-text-muted);
+}
+
+.schedule-preview-slots {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: var(--space-2);
+}
+
+.schedule-preview-slots .slot-chip-static {
+  padding: 4px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  border: 1px solid var(--color-primary-soft-strong);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-primary-hover);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===========================================================
+   Phone input
+   =========================================================== */
+
+.phone-input {
+  display: flex;
+  align-items: stretch;
+  margin-bottom: var(--space-3);
+}
+
+.phone-input-prefix {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-right: none;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  background: var(--color-bg-subtle);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.phone-input input {
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  margin-bottom: 0;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+/* ===========================================================
+   Duration stepper (appointment-type assignment)
+   =========================================================== */
+
+.duration-stepper {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 var(--space-3);
+}
+
+.duration-stepper button {
+  padding: 7px 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.duration-stepper button:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary-hover);
+}
+
+.duration-stepper button.selected {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+/* ===========================================================
+   Summary / review lists
+   =========================================================== */
 
 .summary {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 4px 12px;
-  margin: 0 0 16px;
+  gap: var(--space-2) var(--space-4);
+  margin: 0 0 var(--space-5);
+  padding: var(--space-4);
+  background: var(--color-bg-subtle);
+  border-radius: var(--radius-md);
 }
 
 .summary dt {
-  color: var(--color-muted);
+  color: var(--color-text-muted);
   font-size: 0.85rem;
 }
 
 .summary dd {
   margin: 0;
   font-weight: 600;
+  color: var(--color-text);
 }
 
 .confirmation h2 {
-  color: var(--color-primary);
+  color: var(--color-success);
 }
 
-/* Calendar */
+.confirmation .state-icon {
+  font-size: 2.2rem;
+}
+
+/* ===========================================================
+   Calendar
+   =========================================================== */
 
 .calendar-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
-  font-weight: 600;
+  margin-bottom: var(--space-3);
+  font-weight: 700;
 }
 
 .calendar-header button {
-  background: none;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
   width: 32px;
   height: 32px;
   font-size: 1.1rem;
+  color: var(--color-text-secondary);
+}
+
+.calendar-header button:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .calendar-header button:disabled {
@@ -276,22 +783,24 @@ a.link {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   gap: 4px;
-  margin-bottom: 8px;
+  margin-bottom: var(--space-3);
 }
 
 .calendar-weekday {
   text-align: center;
-  font-size: 0.75rem;
-  color: var(--color-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
   padding: 4px 0;
 }
 
 .calendar-day {
   aspect-ratio: 1;
   border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-card);
-  font-size: 0.9rem;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-size: 0.88rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .calendar-day.empty {
@@ -300,32 +809,36 @@ a.link {
 }
 
 .calendar-day.available {
-  background: var(--color-available);
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary-soft-strong);
+  color: var(--color-primary-hover);
+  font-weight: 700;
+}
+
+.calendar-day.available:hover {
   border-color: var(--color-primary);
-  color: var(--color-primary-dark);
-  font-weight: 600;
 }
 
 .calendar-day.unavailable {
-  background: var(--color-unavailable);
-  color: #9c6b1f;
+  background: var(--color-bg-subtle);
+  color: var(--color-text-muted);
   cursor: default;
 }
 
 .calendar-legend {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 0.8rem;
-  color: var(--color-muted);
+  gap: var(--space-2);
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
 }
 
 .legend-swatch {
   display: inline-block;
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
   border-radius: 3px;
-  margin-left: 12px;
+  margin-left: var(--space-3);
 }
 
 .legend-swatch:first-child {
@@ -333,111 +846,263 @@ a.link {
 }
 
 .legend-swatch.unavailable {
-  background: var(--color-unavailable);
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
 }
 
 .legend-swatch.available {
-  background: var(--color-available);
+  background: var(--color-primary-soft);
   border: 1px solid var(--color-primary);
 }
 
-/* WEB P11: admin/staff UI (frontend/src/admin/) -- a wider, table/nav-
-   based shell, deliberately distinct from the patient flow's single
-   narrow .card, since an admin dashboard has multi-column data (staff
-   accounts, appointments, schedules) a phone-width card can't fit. */
+/* ===========================================================
+   Status pills
+   =========================================================== */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.pill.booked,
+.pill.status-booked {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.pill.cancelled,
+.pill.status-cancelled {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.pill.role-admin {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-hover);
+}
+
+.pill.role-staff {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-secondary);
+}
+
+.duration-pill {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-hover);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* ===========================================================
+   Admin shell -- sidebar / topbar / content
+   =========================================================== */
 
 .admin-shell {
   display: flex;
   width: 100%;
-  max-width: 1100px;
-  min-height: calc(100vh - 32px);
-  background: var(--color-card);
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  max-width: 1180px;
+  min-height: calc(100vh - 48px);
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--color-border);
   overflow: hidden;
 }
 
 .admin-nav {
-  width: 200px;
+  width: 232px;
   flex-shrink: 0;
-  background: var(--color-bg);
+  background: var(--color-bg-subtle);
   border-right: 1px solid var(--color-border);
-  padding: 20px 12px;
+  padding: var(--space-5) var(--space-3);
   display: flex;
   flex-direction: column;
 }
 
 .admin-nav-header {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-5);
+  padding: 0 var(--space-2);
 }
 
 .admin-nav-header strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text);
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.admin-nav-header .brand-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.admin-nav-header .muted {
   display: block;
-  color: var(--color-primary-dark);
-  font-size: 1.1rem;
+  margin-top: 2px;
+}
+
+.admin-nav-group-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  padding: 0 var(--space-2);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+.admin-nav-group-label:first-of-type {
+  margin-top: 0;
 }
 
 .admin-nav ul {
   list-style: none;
-  margin: 0 0 16px;
+  margin: 0 0 var(--space-4);
   padding: 0;
   flex: 1;
 }
 
 .admin-nav-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   text-align: left;
   background: none;
   border: none;
-  padding: 10px 12px;
-  border-radius: 6px;
+  padding: 9px var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-weight: 500;
+  font-size: 0.9rem;
+  margin-bottom: 2px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.admin-nav-item .nav-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  color: currentColor;
+  opacity: 0.75;
+}
+
+.admin-nav-item:hover {
+  background: var(--color-surface);
   color: var(--color-text);
+}
+
+.admin-nav-item.active {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  font-weight: 600;
+}
+
+.admin-nav-item.active .nav-icon {
+  opacity: 1;
+}
+
+.admin-nav-footer {
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.admin-nav-footer .link {
+  margin: 0;
+  padding: 8px var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
   font-weight: 500;
 }
 
-.admin-nav-item.active,
-.admin-nav-item:hover {
-  background: var(--color-available);
-  color: var(--color-primary-dark);
+.admin-nav-footer .link:hover {
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-decoration: none;
 }
 
 .admin-content {
   flex: 1;
-  padding: 24px 28px;
+  padding: var(--space-6) var(--space-8);
   overflow-x: auto;
+  min-width: 0;
+}
+
+.admin-content-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-2);
 }
 
 .admin-content h2 {
   margin-top: 0;
 }
 
+/* ===========================================================
+   Data tables
+   =========================================================== */
+
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  margin: 12px 0 20px;
-  font-size: 0.9rem;
+  margin: var(--space-3) 0 var(--space-6);
+  font-size: 0.89rem;
 }
 
 .data-table th,
 .data-table td {
   text-align: left;
-  padding: 8px 10px;
+  padding: 11px 12px;
   border-bottom: 1px solid var(--color-border);
 }
 
 .data-table th {
-  color: var(--color-muted);
-  font-weight: 600;
-  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  font-weight: 700;
+  font-size: 0.74rem;
   text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
+
+.data-table tbody tr {
+  transition: background 0.1s ease;
+}
+
+.data-table tbody tr:hover {
+  background: var(--color-bg-subtle);
+}
+
+/* ===========================================================
+   Inline / filter forms (admin panels)
+   =========================================================== */
 
 .inline-form {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 12px 0;
+  align-items: flex-end;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
 }
 
 .inline-form.wrap {
@@ -450,12 +1115,18 @@ a.link {
   margin-bottom: 0;
 }
 
+.inline-form > button {
+  width: auto;
+  padding: 10px 18px;
+}
+
 .inline-label {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   font-size: 0.8rem;
-  color: var(--color-muted);
+  font-weight: 500;
+  color: var(--color-text-secondary);
 }
 
 .inline-label input,
@@ -463,66 +1134,111 @@ a.link {
   margin-bottom: 0;
 }
 
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--color-bg-subtle);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-4);
+}
+
+/* ===========================================================
+   Tag list (assigned departments/appointment types on a doctor)
+   =========================================================== */
+
 .tag-list {
   list-style: none;
-  margin: 0 0 8px;
+  margin: 0 0 var(--space-3);
   padding: 0;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 .tag-list li {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 4px 0;
-  font-size: 0.9rem;
+  gap: var(--space-2);
+  padding: 6px 6px 6px 12px;
+  font-size: 0.85rem;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
 }
 
 .tag-list .link {
   margin: 0;
-  padding: 0;
-  font-size: 0.8rem;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  border-radius: 999px;
 }
 
+.tag-list .link:hover {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  text-decoration: none;
+}
+
+/* ===========================================================
+   Doctor detail
+   =========================================================== */
+
 .doctor-detail {
-  margin-top: 20px;
-  padding-top: 16px;
+  margin-top: var(--space-6);
+  padding-top: var(--space-5);
   border-top: 1px solid var(--color-border);
 }
 
 .detail-section {
-  margin-bottom: 20px;
+  margin-bottom: var(--space-6);
+  padding: var(--space-5);
+  background: var(--color-bg-subtle);
+  border-radius: var(--radius-md);
 }
 
-.detail-section h4 {
-  margin: 0 0 8px;
-  color: var(--color-primary-dark);
-  font-size: 0.95rem;
-}
+/* ===========================================================
+   Mobile
+   =========================================================== */
 
-.option-list button.selected {
-  border-color: var(--color-primary);
-  background: var(--color-available);
-}
-
-/* Mobile */
-@media (max-width: 420px) {
-  .card {
-    padding: 16px;
-    border-radius: 0;
-    box-shadow: none;
-  }
+@media (max-width: 860px) {
   .page {
     padding: 0;
   }
+  .card {
+    padding: var(--space-6);
+    border-radius: 0;
+    box-shadow: none;
+    border: none;
+    max-width: none;
+  }
   .admin-shell {
     flex-direction: column;
+    border-radius: 0;
+    box-shadow: none;
+    border: none;
+    min-height: 100vh;
   }
   .admin-nav {
     width: 100%;
     border-right: none;
     border-bottom: 1px solid var(--color-border);
+  }
+  .admin-nav ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: var(--space-3);
+  }
+  .admin-nav-item {
+    width: auto;
+  }
+  .admin-content {
+    padding: var(--space-5);
+  }
+  .slot-grid {
+    grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
   }
 }

@@ -53,29 +53,43 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
             onChange={(e) => setName(e.target.value)}
             required
           />
-          <button type="submit" disabled={busy}>
+          <button type="submit" style={{ width: 'auto' }} disabled={busy}>
             {busy ? 'Creating…' : 'Add type'}
           </button>
         </form>
       )}
 
-      {loading && <p>Loading…</p>}
-      {!loading && types.length === 0 && <p className="muted">No appointment types yet.</p>}
+      {loading && (
+        <div className="state-block">
+          <span className="spinner" aria-hidden="true" />
+          Loading appointment types…
+        </div>
+      )}
+      {!loading && types.length === 0 && (
+        <div className="state-block empty">
+          <span className="state-icon" aria-hidden="true">
+            🏷️
+          </span>
+          No appointment types yet.
+        </div>
+      )}
 
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th>Name</th>
-          </tr>
-        </thead>
-        <tbody>
-          {types.map((t) => (
-            <tr key={t.id}>
-              <td>{t.name}</td>
+      {!loading && types.length > 0 && (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Name</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {types.map((t) => (
+              <tr key={t.id}>
+                <td>{t.name}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </section>
   )
 }

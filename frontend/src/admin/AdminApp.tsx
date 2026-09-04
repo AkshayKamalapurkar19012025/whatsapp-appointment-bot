@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactElement } from 'react'
 import { clearStaffToken, getStaffMe, getStaffToken, staffLogout } from '../api'
 import type { Staff } from '../types'
 import StaffLoginFlow from './StaffLoginFlow'
@@ -8,6 +8,14 @@ import AppointmentTypesPanel from './AppointmentTypesPanel'
 import StaffAccountsPanel from './StaffAccountsPanel'
 import PatientsPanel from './PatientsPanel'
 import AppointmentsPanel from './AppointmentsPanel'
+import {
+  IconBuilding,
+  IconCalendar,
+  IconShieldUser,
+  IconStethoscope,
+  IconTag,
+  IconUsers,
+} from './icons'
 
 type Section =
   | 'appointments'
@@ -17,6 +25,13 @@ type Section =
   | 'patients'
   | 'staff-accounts'
 
+// Nothing in this component clears staff/getStaffToken() when `section`
+// changes -- switching sections is a plain in-memory state update, same
+// component tree, same mounted session. The staff bearer token in
+// localStorage (see api.ts) is completely untouched by navigation; it
+// only ever gets cleared by an explicit Log out click or a 401 from the
+// backend (session idle-timeout/absolute-expiry), both handled by
+// handleLoggedIn/handleLogout below, not by which section is showing.
 export default function AdminApp() {
   const [staff, setStaff] = useState<Staff | null>(null)
   const [checkingSession, setCheckingSession] = useState(true)
@@ -49,7 +64,10 @@ export default function AdminApp() {
   if (checkingSession) {
     return (
       <div className="page">
-        <p>Loading…</p>
+        <div className="state-block">
+          <span className="spinner" aria-hidden="true" />
+          Loading…
+        </div>
       </div>
     )
   }
@@ -69,13 +87,23 @@ export default function AdminApp() {
   // they're never authorized to do. Staff accounts management is the
   // same story (ADMIN only). Every other section here accepts either
   // role, matching the RBAC table.
-  const sections: { key: Section; label: string; adminOnly?: boolean }[] = [
-    { key: 'appointments', label: 'Appointments' },
-    { key: 'doctors', label: 'Doctors' },
-    { key: 'departments', label: 'Departments' },
-    { key: 'appointment-types', label: 'Appointment Types' },
-    { key: 'patients', label: 'Patients' },
-    { key: 'staff-accounts', label: 'Staff Accounts', adminOnly: true },
+  const groups: { label: string; items: { key: Section; label: string; icon: ReactElement; adminOnly?: boolean }[] }[] = [
+    {
+      label: 'Scheduling',
+      items: [
+        { key: 'appointments', label: 'Appointments', icon: <IconCalendar /> },
+        { key: 'doctors', label: 'Doctors', icon: <IconStethoscope /> },
+        { key: 'departments', label: 'Departments', icon: <IconBuilding /> },
+        { key: 'appointment-types', label: 'Appointment Types', icon: <IconTag /> },
+      ],
+    },
+    {
+      label: 'People',
+      items: [
+        { key: 'patients', label: 'Patients', icon: <IconUsers /> },
+        { key: 'staff-accounts', label: 'Staff Accounts', icon: <IconShieldUser />, adminOnly: true },
+      ],
+    },
   ]
 
   return (
@@ -83,32 +111,47 @@ export default function AdminApp() {
       <div className="admin-shell">
         <nav className="admin-nav">
           <div className="admin-nav-header">
-            <strong>Admin</strong>
+            <strong>
+              <span className="brand-mark">A</span>
+              Appointment Admin
+            </strong>
             <span className="muted">
-              {staff.username} ({staff.role})
+              {staff.username} · <span className={`pill role-${staff.role.toLowerCase()}`}>{staff.role}</span>
             </span>
           </div>
-          <ul>
-            {sections
-              .filter((s) => !s.adminOnly || staff.role === 'ADMIN')
-              .map((s) => (
-                <li key={s.key}>
-                  <button
-                    type="button"
-                    className={s.key === section ? 'admin-nav-item active' : 'admin-nav-item'}
-                    onClick={() => setSection(s.key)}
-                  >
-                    {s.label}
-                  </button>
-                </li>
-              ))}
-          </ul>
-          <button type="button" className="link" onClick={handleLogout}>
-            Log out
-          </button>
-          <a className="link" href="/">
-            Patient site
-          </a>
+
+          {groups.map((group) => {
+            const visible = group.items.filter((i) => !i.adminOnly || staff.role === 'ADMIN')
+            if (visible.length === 0) return null
+            return (
+              <div key={group.label}>
+                <div className="admin-nav-group-label">{group.label}</div>
+                <ul>
+                  {visible.map((item) => (
+                    <li key={item.key}>
+                      <button
+                        type="button"
+                        className={item.key === section ? 'admin-nav-item active' : 'admin-nav-item'}
+                        onClick={() => setSection(item.key)}
+                      >
+                        <span className="nav-icon">{item.icon}</span>
+                        {item.label}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )
+          })}
+
+          <div className="admin-nav-footer">
+            <button type="button" className="link" onClick={handleLogout}>
+              Log out
+            </button>
+            <a className="link" href="/">
+              Patient site
+            </a>
+          </div>
         </nav>
 
         <main className="admin-content">

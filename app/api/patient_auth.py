@@ -12,6 +12,7 @@ from app.services.patient_auth import (
     get_patient_by_session_token,
     revoke_session,
 )
+from app.utils.phone import normalize_whatsapp_number
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ class OtpRequestBody(BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("WhatsApp number cannot be empty")
-        return value
+        return normalize_whatsapp_number(value)
 
 
 class OtpVerifyBody(BaseModel):
@@ -44,7 +45,7 @@ class OtpVerifyBody(BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("WhatsApp number cannot be empty")
-        return value
+        return normalize_whatsapp_number(value)
 
 
 def get_current_patient(authorization: str | None = Header(default=None)):
@@ -178,6 +179,8 @@ def otp_dev_lookup(whatsapp_number: str):
     """
     if config.ENVIRONMENT == "production":
         raise HTTPException(status_code=404, detail="Not found")
+
+    whatsapp_number = normalize_whatsapp_number(whatsapp_number.strip())
 
     with get_connection() as conn:
         with conn.cursor() as cur:

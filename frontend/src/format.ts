@@ -42,3 +42,21 @@ export function formatDate(isoDate: string): string {
 export function isoDateOnly(year: number, month: number, day: number): string {
   return `${year}-${pad(month)}-${pad(day)}`
 }
+
+// Same AM/PM conversion as formatTime above, but for a bare "HH:MM" or
+// "HH:MM:SS" wall-clock value with no date/timezone attached at all --
+// what doctor_schedule.start_time/end_time and the blocks/schedule forms'
+// <input type="time"> values actually are. Kept as a separate function
+// rather than teaching formatTime a second input shape, since the two
+// inputs mean different things (a moment in time vs. a recurring
+// time-of-day) even though the digit math is identical.
+export function formatTimeOfDay(hhmm: string): string {
+  const match = hhmm.match(/^(\d{1,2}):(\d{2})/)
+  if (!match) return hhmm
+  let hour = Number(match[1])
+  const minute = match[2]
+  const suffix = hour >= 12 ? 'PM' : 'AM'
+  hour = hour % 12
+  if (hour === 0) hour = 12
+  return `${hour}:${minute} ${suffix}`
+}

@@ -10,6 +10,7 @@ import {
 } from './api'
 import type { AppointmentType, BookedAppointment, Department, Doctor, Slot } from './types'
 import Calendar from './Calendar'
+import SlotGrid from './SlotGrid'
 import { formatDate, formatTime } from './format'
 
 type Step =
@@ -230,16 +231,7 @@ export default function BookingFlow({
       {step === 'slot' && selectedDate && (
         <>
           <h2>Choose a time on {formatDate(selectedDate)}</h2>
-          {slots.length === 0 && <p>No slots available on this date.</p>}
-          <ul className="option-list">
-            {slots.map((slot) => (
-              <li key={slot.start_at}>
-                <button type="button" onClick={() => chooseSlot(slot)}>
-                  {formatTime(slot.start_at)} – {formatTime(slot.end_at)}
-                </button>
-              </li>
-            ))}
-          </ul>
+          <SlotGrid slots={slots} onSelect={chooseSlot} />
           <button type="button" className="link" onClick={() => setStep('date')}>
             Back
           </button>
@@ -278,6 +270,9 @@ export default function BookingFlow({
 
       {step === 'confirmation' && confirmed && doctor && department && selectedSlot && (
         <div className="confirmation">
+          <div className="state-icon" aria-hidden="true">
+            ✅
+          </div>
           <h2>Appointment Confirmed</h2>
           <dl className="summary">
             <dt>Doctor</dt>
