@@ -1,12 +1,23 @@
 import { useEffect, useState } from 'react'
 import { ApiError, createStaffAccount, listStaffAccounts, setStaffAccountActive } from '../api'
 import type { StaffAccount } from '../types'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog'
 
 export default function StaffAccountsPanel() {
   const [accounts, setAccounts] = useState<StaffAccount[]>([])
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [role, setRole] = useState<'ADMIN' | 'STAFF'>('STAFF')
+  const [toggleTarget, setToggleTarget] = useState<StaffAccount | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -23,15 +34,19 @@ export default function StaffAccountsPanel() {
 
   useEffect(load, [])
 
+  function resetCreateForm() {
+    setUsername('')
+    setPassword('')
+    setRole('STAFF')
+  }
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
     setBusy(true)
     try {
       await createStaffAccount(username, password, role)
-      setUsername('')
-      setPassword('')
-      setRole('STAFF')
+      resetCreateForm()
       load()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not create staff account')
@@ -40,13 +55,16 @@ export default function StaffAccountsPanel() {
     }
   }
 
-  async function handleToggleActive(account: StaffAccount) {
+  async function confirmToggleActive() {
+    if (!toggleTarget) return
     setError(null)
     try {
-      await setStaffAccountActive(account.id, !account.active)
+      await setStaffAccountActive(toggleTarget.id, !toggleTarget.active)
       load()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not update account')
+    } finally {
+      setToggleTarget(null)
     }
   }
 
@@ -75,8 +93,13 @@ export default function StaffAccountsPanel() {
           <option value="ADMIN">ADMIN</option>
         </select>
         <button type="submit" style={{ width: 'auto' }} disabled={busy}>
-          {busy ? 'Creating…' : 'Add account'}
+          {busy ? 'Saving…' : 'Save'}
         </button>
+        {(username || password) && (
+          <button type="button" className="btn-secondary btn" style={{ width: 'auto' }} onClick={resetCreateForm}>
+            Cancel
+          </button>
+        )}
       </form>
 
       {loading && (
@@ -109,7 +132,7 @@ export default function StaffAccountsPanel() {
                   </span>
                 </td>
                 <td>
-                  <button type="button" className="link" onClick={() => handleToggleActive(a)}>
+                  <button type="button" className="link" onClick={() => setToggleTarget(a)}>
                     {a.active ? 'Deactivate' : 'Reactivate'}
                   </button>
                 </td>
@@ -118,6 +141,29 @@ export default function StaffAccountsPanel() {
           </tbody>
         </table>
       )}
+
+      <AlertDialog open={toggleTarget !== null} onOpenChange={(open) => !open && setToggleTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{toggleTarget?.active ? 'Deactivate this account?' : 'Reactivate this account?'}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {toggleTarget &&
+                (toggleTarget.active
+                  ? `"${toggleTarget.username}" will no longer be able to log in.`
+                  : `"${toggleTarget.username}" will be able to log in again.`)}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant={toggleTarget?.active ? 'danger' : 'default'}
+              onClick={confirmToggleActive}
+            >
+              {toggleTarget?.active ? 'Deactivate' : 'Reactivate'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   )
 }

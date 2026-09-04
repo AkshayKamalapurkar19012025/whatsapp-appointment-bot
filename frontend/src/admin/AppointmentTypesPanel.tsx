@@ -10,7 +10,7 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
-  const tbodyRef = useStaggerReveal<HTMLTableSectionElement>([types])
+  const gridRef = useStaggerReveal<HTMLDivElement>([types])
 
   function load() {
     setLoading(true)
@@ -57,8 +57,13 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
             required
           />
           <button type="submit" style={{ width: 'auto' }} disabled={busy}>
-            {busy ? 'Creating…' : 'Add type'}
+            {busy ? 'Saving…' : 'Save'}
           </button>
+          {name && (
+            <button type="button" className="btn-secondary btn" style={{ width: 'auto' }} onClick={() => setName('')}>
+              Cancel
+            </button>
+          )}
         </form>
       )}
 
@@ -78,20 +83,13 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
       )}
 
       {!loading && types.length > 0 && (
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-            </tr>
-          </thead>
-          <tbody ref={tbodyRef}>
-            {types.map((t) => (
-              <tr key={t.id}>
-                <td>{t.name}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="card-grid" ref={gridRef}>
+          {types.map((t) => (
+            <div key={t.id} className="card-grid-item">
+              {t.name}
+            </div>
+          ))}
+        </div>
       )}
     </section>
   )

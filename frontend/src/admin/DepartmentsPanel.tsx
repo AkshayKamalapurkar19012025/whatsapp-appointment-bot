@@ -10,7 +10,7 @@ export default function DepartmentsPanel({ isAdmin }: { isAdmin: boolean }) {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
-  const tbodyRef = useStaggerReveal<HTMLTableSectionElement>([departments])
+  const gridRef = useStaggerReveal<HTMLDivElement>([departments])
 
   function load() {
     setLoading(true)
@@ -51,8 +51,13 @@ export default function DepartmentsPanel({ isAdmin }: { isAdmin: boolean }) {
             required
           />
           <button type="submit" style={{ width: 'auto' }} disabled={busy}>
-            {busy ? 'Creating…' : 'Add department'}
+            {busy ? 'Saving…' : 'Save'}
           </button>
+          {name && (
+            <button type="button" className="btn-secondary btn" style={{ width: 'auto' }} onClick={() => setName('')}>
+              Cancel
+            </button>
+          )}
         </form>
       )}
 
@@ -72,20 +77,13 @@ export default function DepartmentsPanel({ isAdmin }: { isAdmin: boolean }) {
       )}
 
       {!loading && departments.length > 0 && (
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-            </tr>
-          </thead>
-          <tbody ref={tbodyRef}>
-            {departments.map((d) => (
-              <tr key={d.id}>
-                <td>{d.name}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="card-grid" ref={gridRef}>
+          {departments.map((d) => (
+            <div key={d.id} className="card-grid-item">
+              {d.name}
+            </div>
+          ))}
+        </div>
       )}
     </section>
   )

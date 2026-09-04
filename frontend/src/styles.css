@@ -706,6 +706,82 @@ a.link.danger {
 }
 
 /* ===========================================================
+   Doctor grid (DoctorsPanel.tsx) -- doctors grouped under their
+   department as a heading, cards laid out in a responsive grid rather
+   than one-per-row, so scanning a doctor list of any real size doesn't
+   mean scrolling through a tall single column.
+   =========================================================== */
+
+.doctor-group {
+  margin-bottom: var(--space-5);
+}
+
+.doctor-group-label {
+  margin: 0 0 var(--space-2);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+.doctor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-2);
+}
+
+.doctor-card {
+  text-align: left;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: 500;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.12s ease, background 0.12s ease, transform 0.08s ease;
+}
+
+.doctor-card:active {
+  transform: scale(0.98);
+}
+
+.doctor-card:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.doctor-card.selected {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+/* ===========================================================
+   Plain card grid (DepartmentsPanel.tsx, AppointmentTypesPanel.tsx) --
+   a flat list of names with nothing to click through to (unlike the
+   doctor grid above, these aren't selectable) still reads better as a
+   grid of cards than a one-column, single-cell-per-row table.
+   =========================================================== */
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-2);
+}
+
+.card-grid-item {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+/* ===========================================================
    Slot picker (SlotGrid.tsx / AdminSlotPicker.tsx)
    =========================================================== */
 
@@ -1449,6 +1525,7 @@ a.link.danger {
 }
 
 .admin-date-picker {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -1459,12 +1536,23 @@ a.link.danger {
   font-size: 0.8rem;
 }
 
+/* Positioned absolutely (floating over the page) rather than in normal
+   flow: this sits inside a `.inline-form.wrap` flex row with
+   `align-items: flex-end`, and an in-flow panel taller than its
+   siblings dragged every other field in that row down to match its
+   height when opened -- a real layout bug, not a styling nitpick. As a
+   popover it can never disturb sibling alignment, matching how any
+   other date/select popover in this app behaves. */
 .admin-date-picker-panel {
-  margin-top: var(--space-2);
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  z-index: 20;
   padding: var(--space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface);
+  box-shadow: var(--shadow-md);
   width: 280px;
   max-width: 100%;
 }
