@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Tag } from '@phosphor-icons/react'
 import { ApiError, createAppointmentType, listAppointmentTypeCatalog } from '../api'
 import type { AppointmentTypeSummary } from '../types'
 
@@ -68,7 +69,7 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
       {!loading && types.length === 0 && (
         <div className="state-block empty">
           <span className="state-icon" aria-hidden="true">
-            🏷️
+            <Tag size={28} weight="light" />
           </span>
           No appointment types yet.
         </div>

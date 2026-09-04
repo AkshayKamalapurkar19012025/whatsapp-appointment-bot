@@ -1,3 +1,4 @@
+import { CalendarX } from '@phosphor-icons/react'
 import type { Slot } from './types'
 import { formatTime } from './format'
 
@@ -34,7 +35,7 @@ export default function SlotGrid({
     return (
       <div className="state-block empty">
         <span className="state-icon" aria-hidden="true">
-          🗓️
+          <CalendarX size={28} weight="light" />
         </span>
         {emptyMessage}
       </div>

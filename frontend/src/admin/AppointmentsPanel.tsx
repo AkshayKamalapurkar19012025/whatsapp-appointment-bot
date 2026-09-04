@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState } from 'react'
+import { ClipboardText } from '@phosphor-icons/react'
 import {
   ApiError,
   cancelAdminAppointment,
@@ -238,7 +239,7 @@ export default function AppointmentsPanel() {
       {!loading && visibleAppointments.length === 0 && (
         <div className="state-block empty">
           <span className="state-icon" aria-hidden="true">
-            📋
+            <ClipboardText size={28} weight="light" />
           </span>
           {appointments.length === 0
             ? 'No appointments found.'

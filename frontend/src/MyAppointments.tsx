@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { CalendarBlank } from '@phosphor-icons/react'
 import {
   ApiError,
   cancelWebAppointment,
@@ -229,7 +230,7 @@ export default function MyAppointments({
           {!loading && list.length === 0 && (
             <div className="state-block empty">
               <span className="state-icon" aria-hidden="true">
-                📅
+                <CalendarBlank size={28} weight="light" />
               </span>
               Nothing here yet.
             </div>

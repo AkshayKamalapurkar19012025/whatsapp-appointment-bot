@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { UsersThree } from '@phosphor-icons/react'
 import { ApiError, createPatientAdmin, listPatients } from '../api'
 import type { Patient } from '../types'
 import PhoneInput from '../PhoneInput'
@@ -69,7 +70,7 @@ export default function PatientsPanel() {
       {!loading && patients.length === 0 && (
         <div className="state-block empty">
           <span className="state-icon" aria-hidden="true">
-            🧑‍⚕️
+            <UsersThree size={28} weight="light" />
           </span>
           No patients yet.
         </div>

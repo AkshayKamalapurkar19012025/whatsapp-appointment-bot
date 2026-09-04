@@ -377,8 +377,9 @@ a.link:hover {
 }
 
 .state-icon {
-  font-size: 1.6rem;
-  opacity: 0.7;
+  display: inline-flex;
+  color: var(--color-text-muted);
+  opacity: 0.8;
 }
 
 .spinner {
@@ -822,7 +823,7 @@ a.link:hover {
 }
 
 .confirmation .state-icon {
-  font-size: 2.2rem;
+  opacity: 1;
 }
 
 /* ===========================================================

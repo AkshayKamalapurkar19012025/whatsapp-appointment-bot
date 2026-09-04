@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Buildings } from '@phosphor-icons/react'
 import { ApiError, createDepartment, listDepartments } from '../api'
 import type { Department } from '../types'
 
@@ -62,7 +63,7 @@ export default function DepartmentsPanel({ isAdmin }: { isAdmin: boolean }) {
       {!loading && departments.length === 0 && (
         <div className="state-block empty">
           <span className="state-icon" aria-hidden="true">
-            🏥
+            <Buildings size={28} weight="light" />
           </span>
           No departments yet.
         </div>

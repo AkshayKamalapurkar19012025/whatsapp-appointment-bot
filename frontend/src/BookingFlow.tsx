@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { CheckCircle } from '@phosphor-icons/react'
 import {
   ApiError,
   createWebAppointment,
@@ -271,7 +272,7 @@ export default function BookingFlow({
       {step === 'confirmation' && confirmed && doctor && department && selectedSlot && (
         <div className="confirmation">
           <div className="state-icon" aria-hidden="true">
-            ✅
+            <CheckCircle size={40} weight="fill" color="var(--color-success)" />
           </div>
           <h2>Appointment Confirmed</h2>
           <dl className="summary">

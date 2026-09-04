@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Stethoscope } from '@phosphor-icons/react'
 import { ApiError, createDoctor, listAllDoctors } from '../api'
 import type { Doctor } from '../types'
 import { formatDateTime } from '../format'
@@ -66,7 +67,7 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
       {!loading && doctors.length === 0 && (
         <div className="state-block empty">
           <span className="state-icon" aria-hidden="true">
-            🩺
+            <Stethoscope size={28} weight="light" />
           </span>
           No doctors yet.
         </div>
