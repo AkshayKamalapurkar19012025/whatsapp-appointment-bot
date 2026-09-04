@@ -1,8 +1,18 @@
 import { useEffect, useState } from 'react'
+import { CalendarCheck, ChatCircleDots, UserCircle } from '@phosphor-icons/react'
 import { ApiError, requestOtp, setToken, verifyOtp } from './api'
 import PhoneInput from './PhoneInput'
 
 type Stage = 'number' | 'otp' | 'register'
+
+// Registration only branches off mid-flow (a brand new number lands on
+// 'register' after OTP verification, not before), so the step strip
+// below treats it as still part of "Verify" rather than adding a third
+// step that would only sometimes exist.
+const STEPS: { stage: Stage[]; label: string }[] = [
+  { stage: ['number'], label: 'Phone' },
+  { stage: ['otp', 'register'], label: 'Verify' },
+]
 
 // Purely a client-side "don't let someone hammer the button" guard --
 // the backend's own real limit (3 requests per 10 minutes, see
@@ -75,14 +85,40 @@ export default function LoginFlow({ onLoggedIn }: { onLoggedIn: () => void }) {
     }
   }
 
+  const HeaderIcon = stage === 'number' ? CalendarCheck : stage === 'otp' ? ChatCircleDots : UserCircle
+  const currentStepIndex = STEPS.findIndex((step) => step.stage.includes(stage))
+
   return (
-    <div className="card">
+    <div className="card login-card">
+      <div className="login-icon-badge" aria-hidden="true">
+        <HeaderIcon size={28} weight="light" />
+      </div>
       <h1>Book an Appointment</h1>
+      <p className="muted login-subtitle">Quick and secure — no password needed.</p>
+
+      <div
+        className="login-steps"
+        role="progressbar"
+        aria-valuenow={currentStepIndex + 1}
+        aria-valuemin={1}
+        aria-valuemax={STEPS.length}
+      >
+        {STEPS.map((step, index) => (
+          <div
+            key={step.label}
+            className={`login-step${index === currentStepIndex ? ' current' : ''}${index < currentStepIndex ? ' done' : ''}`}
+          >
+            <span className="login-step-dot" />
+            {step.label}
+          </div>
+        ))}
+      </div>
 
       {stage === 'number' && (
         <form onSubmit={handleRequestOtp}>
           <label htmlFor="whatsapp_number">Mobile number</label>
           <PhoneInput id="whatsapp_number" value={whatsappNumber} onChange={setWhatsappNumber} autoFocus />
+          <p className="muted login-help-text">We'll text a one-time code to verify it's you.</p>
           {error && <p className="error">{error}</p>}
           <button type="submit" disabled={busy}>
             {busy ? 'Sending…' : 'Send OTP'}

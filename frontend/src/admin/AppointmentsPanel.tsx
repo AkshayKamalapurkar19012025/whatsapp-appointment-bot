@@ -370,7 +370,7 @@ export default function AppointmentsPanel({
                   </td>
                   <td>
                     {a.status === 'BOOKED' && (
-                      <>
+                      <div style={{ display: 'flex', gap: 12 }}>
                         <button
                           type="button"
                           className="link"
@@ -380,10 +380,10 @@ export default function AppointmentsPanel({
                         >
                           {reschedulingId === a.id ? 'Close' : 'Reschedule'}
                         </button>
-                        <button type="button" className="link" onClick={() => setCancelTarget(a)}>
+                        <button type="button" className="link danger" onClick={() => setCancelTarget(a)}>
                           Cancel
                         </button>
-                      </>
+                      </div>
                     )}
                   </td>
                 </tr>

@@ -36,6 +36,7 @@ export default function MonthGrid({
   onNextMonth,
   prevDisabled,
   nextDisabled,
+  showLegend = true,
 }: {
   year: number
   month: number
@@ -47,6 +48,14 @@ export default function MonthGrid({
   onNextMonth: () => void
   prevDisabled: boolean
   nextDisabled: boolean
+  // The "Unavailable/Available" legend below only makes sense when
+  // `dates` reflects real appointment-slot availability (the patient/
+  // admin booking calendars). AdminDatePicker reuses this same grid for
+  // plain administrative dates (schedule start/end, one-off block
+  // dates) where greyed-out just means "in the past" -- showing the
+  // availability legend there would misleadingly imply doctor
+  // availability that was never computed.
+  showLegend?: boolean
 }) {
   const totalDays = daysInMonth(year, month)
   const leadingBlanks = firstWeekdayColumn(year, month)
@@ -103,10 +112,12 @@ export default function MonthGrid({
         </div>
       )}
 
-      <p className="calendar-legend">
-        <span className="legend-swatch unavailable" /> Unavailable
-        <span className="legend-swatch available" /> Available
-      </p>
+      {showLegend && (
+        <p className="calendar-legend">
+          <span className="legend-swatch unavailable" /> Unavailable
+          <span className="legend-swatch available" /> Available
+        </p>
+      )}
     </div>
   )
 }

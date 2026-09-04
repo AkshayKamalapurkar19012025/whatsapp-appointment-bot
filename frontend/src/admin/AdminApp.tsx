@@ -20,7 +20,7 @@ import AppointmentTypesPanel from './AppointmentTypesPanel'
 import StaffAccountsPanel from './StaffAccountsPanel'
 import PatientsPanel from './PatientsPanel'
 import AppointmentsPanel from './AppointmentsPanel'
-import NavMenu, { NavMenuToggle, type NavMenuItem } from './NavMenu'
+import AdminSidebar, { type AdminSidebarItem } from './AdminSidebar'
 
 type Section =
   | 'appointments'
@@ -41,7 +41,6 @@ export default function AdminApp() {
   const [staff, setStaff] = useState<Staff | null>(null)
   const [checkingSession, setCheckingSession] = useState(true)
   const [section, setSection] = useState<Section>('appointments')
-  const [menuOpen, setMenuOpen] = useState(false)
   const [bookAppointmentSignal, setBookAppointmentSignal] = useState(0)
 
   useEffect(() => {
@@ -112,45 +111,45 @@ export default function AdminApp() {
   // in scope here -- but the requested menu named them explicitly, so
   // they stay visible (with a plain "Coming soon" label) rather than a
   // silently incomplete menu or a dead-end click.
-  const menuItems: NavMenuItem[] = [
+  const menuItems: AdminSidebarItem[] = [
     {
       key: 'appointments',
       label: 'Appointments',
-      icon: <CalendarCheck size={28} weight="light" />,
+      icon: <CalendarCheck size={20} weight="regular" />,
       active: section === 'appointments',
       onSelect: () => goTo('appointments'),
     },
     {
       key: 'book-appointment',
       label: 'Book Appointment',
-      icon: <CalendarPlus size={28} weight="light" />,
+      icon: <CalendarPlus size={20} weight="regular" />,
       onSelect: bookAppointment,
     },
     {
       key: 'doctors',
       label: 'Doctors',
-      icon: <Stethoscope size={28} weight="light" />,
+      icon: <Stethoscope size={20} weight="regular" />,
       active: section === 'doctors',
       onSelect: () => goTo('doctors'),
     },
     {
       key: 'patients',
       label: 'Patients',
-      icon: <UsersThree size={28} weight="light" />,
+      icon: <UsersThree size={20} weight="regular" />,
       active: section === 'patients',
       onSelect: () => goTo('patients'),
     },
     {
       key: 'departments',
       label: 'Departments',
-      icon: <Buildings size={28} weight="light" />,
+      icon: <Buildings size={20} weight="regular" />,
       active: section === 'departments',
       onSelect: () => goTo('departments'),
     },
     {
       key: 'appointment-types',
       label: 'Appointment Types',
-      icon: <Tag size={28} weight="light" />,
+      icon: <Tag size={20} weight="regular" />,
       active: section === 'appointment-types',
       onSelect: () => goTo('appointment-types'),
     },
@@ -159,49 +158,43 @@ export default function AdminApp() {
           {
             key: 'staff-accounts',
             label: 'Staff Accounts',
-            icon: <ShieldCheck size={28} weight="light" />,
+            icon: <ShieldCheck size={20} weight="regular" />,
             active: section === 'staff-accounts',
             onSelect: () => goTo('staff-accounts'),
-          } satisfies NavMenuItem,
+          } satisfies AdminSidebarItem,
         ]
       : []),
     {
       key: 'analytics',
       label: 'Analytics',
-      icon: <ChartLineUp size={28} weight="light" />,
+      icon: <ChartLineUp size={20} weight="regular" />,
       disabled: true,
     },
     {
       key: 'settings',
       label: 'Settings',
-      icon: <GearSix size={28} weight="light" />,
+      icon: <GearSix size={20} weight="regular" />,
       disabled: true,
     },
     {
       key: 'logout',
       label: 'Logout',
-      icon: <SignOut size={28} weight="light" />,
+      icon: <SignOut size={20} weight="regular" />,
       onSelect: handleLogout,
     },
   ]
 
   return (
     <div className="page">
-      <div className="admin-shell admin-shell-topnav">
-        <header className="admin-topbar">
-          <NavMenuToggle onClick={() => setMenuOpen(true)} />
-          <div className="admin-topbar-brand">
-            <span className="brand-mark">A</span>
-            <span>
-              <strong>Appointment Admin</strong>
-              <span className="muted admin-topbar-role">
-                {staff.username} · <span className={`pill role-${staff.role.toLowerCase()}`}>{staff.role}</span>
-              </span>
-            </span>
-          </div>
-        </header>
+      <div className="admin-shell">
+        <AdminSidebar
+          items={menuItems}
+          username={staff.username}
+          role={staff.role}
+          footerItems={[{ key: 'patient-site', label: 'Patient site', onSelect: () => window.location.assign('/') }]}
+        />
 
-        <main className="admin-content admin-content-full">
+        <main className="admin-content">
           {section === 'appointments' && <AppointmentsPanel autoOpenCreateSignal={bookAppointmentSignal} />}
           {section === 'doctors' && <DoctorsPanel isAdmin={isAdmin} />}
           {section === 'departments' && <DepartmentsPanel isAdmin={isAdmin} />}
@@ -210,13 +203,6 @@ export default function AdminApp() {
           {section === 'staff-accounts' && isAdmin && <StaffAccountsPanel />}
         </main>
       </div>
-
-      <NavMenu
-        open={menuOpen}
-        onClose={() => setMenuOpen(false)}
-        items={menuItems}
-        footerItems={[{ key: 'patient-site', label: 'Patient site', onSelect: () => window.location.assign('/') }]}
-      />
     </div>
   )
 }
