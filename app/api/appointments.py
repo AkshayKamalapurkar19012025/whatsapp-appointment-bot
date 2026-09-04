@@ -21,7 +21,8 @@ nothing about that behavior changed in this phase, only who can reach
 it.
 """
 
-from datetime import datetime
+import calendar as calendar_module
+from datetime import date, datetime
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -35,6 +36,7 @@ from app.services.appointment_services import (
     cancel_appointment_service,
     reschedule_appointment_service,
 )
+from app.services.availability_engine import list_available_dates_in_range
 from app.utils.timezone import convert_to_timezone, validate_timezone
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,9 @@ def get_appointments(
     doctor_id: int | None = None,
     patient_id: int | None = None,
     status: str | None = None,
+    appointment_type_id: int | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
     staff: dict = Depends(get_current_staff),
 ):
     """
@@ -71,13 +76,15 @@ def get_appointments(
     unfiltered call still returns everything, matching this endpoint's
     pre-P9 behavior exactly.
 
-    Deliberately no date-range filter: appointments in this list can
-    span doctors in different timezones, so "give me appointments on
-    date X" has no single unambiguous meaning at the SQL level (X in
-    which doctor's local calendar day?) without doing the same explicit
-    per-row timezone conversion this endpoint's own display already
-    needs (see below) -- worth a look if a later phase's admin UI
-    actually needs date filtering, but not invented speculatively here.
+    date_from/date_to filter on each row's own doctor-local calendar
+    date -- the same ambiguity this docstring used to flag ("which
+    doctor's day?" when doctors span timezones) is resolved by reusing
+    the exact per-row doctor-local conversion this endpoint's display
+    already computes below, rather than inventing a second, separate
+    notion of "date" at the SQL level. Applied in Python after that
+    conversion, not as a WHERE clause, for exactly that reason: the SQL
+    layer only knows start_at's UTC instant, not which doctor-local day
+    it falls on.
 
     start_at/end_at are now converted to each row's own doctor's local
     timezone before being returned -- a real, pre-existing display bug
@@ -100,6 +107,9 @@ def get_appointments(
     if status is not None:
         where_clauses.append("a.status = %s")
         params.append(status)
+    if appointment_type_id is not None:
+        where_clauses.append("a.appointment_type_id = %s")
+        params.append(appointment_type_id)
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
@@ -141,6 +151,13 @@ def get_appointments(
         if not validate_timezone(doctor_tz):
             doctor_tz = "Asia/Kolkata"
 
+        local_start_at = convert_to_timezone(row[9], doctor_tz)
+
+        if date_from is not None and local_start_at.date() < date_from:
+            continue
+        if date_to is not None and local_start_at.date() > date_to:
+            continue
+
         results.append(
             {
                 "id": row[0],
@@ -151,13 +168,61 @@ def get_appointments(
                 "whatsapp_number": row[6],
                 "appointment_type_id": row[7],
                 "appointment_type_name": row[8],
-                "start_at": convert_to_timezone(row[9], doctor_tz).isoformat(),
+                "start_at": local_start_at.isoformat(),
                 "end_at": convert_to_timezone(row[10], doctor_tz).isoformat(),
                 "status": row[11],
             }
         )
 
     return results
+
+
+@router.get("/calendar")
+def get_appointments_calendar(
+    doctor_id: int,
+    appointment_type_id: int,
+    year: int,
+    month: int,
+    staff: dict = Depends(get_current_staff),
+):
+    """
+    A staff-only month-availability view for the admin booking/reschedule
+    UI's date picker, so it can show which days actually have open slots
+    before staff pick one (colour-coded in the frontend) rather than
+    picking blind. Deliberately NOT the same endpoint as GET /web/calendar
+    (app/api/patient_booking.py): that one both rejects a request outside
+    the patient-facing 3-month booking window entirely (409) and marks
+    every day beyond it unavailable -- exactly the restriction staff/
+    admin bookings are already exempt from everywhere else in this router
+    (see create_appointment's own enforce_booking_window=False). Reuses
+    list_available_dates_in_range directly, the same underlying function
+    the patient endpoint calls, so "is this day open" is computed
+    identically either way -- only the window restriction differs.
+    """
+    if not (1 <= month <= 12):
+        raise HTTPException(status_code=422, detail="month must be between 1 and 12")
+
+    _, last_day = calendar_module.monthrange(year, month)
+    month_start = date(year, month, 1)
+    month_end = date(year, month, last_day)
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            dates = list_available_dates_in_range(
+                cur,
+                doctor_id,
+                appointment_type_id,
+                month_start,
+                month_end,
+            )
+
+    return {
+        "doctor_id": doctor_id,
+        "appointment_type_id": appointment_type_id,
+        "year": year,
+        "month": month,
+        "dates": dates,
+    }
 
 
 @router.post("")

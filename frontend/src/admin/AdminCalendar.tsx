@@ -1,9 +1,14 @@
 import { useEffect, useState } from 'react'
-import { ApiError, getCalendarMonth } from './api'
-import type { CalendarMonth } from './types'
-import MonthGrid from './MonthGrid'
+import { ApiError, getAdminCalendarMonth } from '../api'
+import MonthGrid from '../MonthGrid'
 
-export default function Calendar({
+// The admin/staff equivalent of Calendar.tsx (patient booking), backed
+// by GET /appointments/calendar instead of GET /web/calendar -- no
+// booking-window limit, so "next month" is never disabled and a date
+// far in the future still shows real open/full colour-coding instead of
+// being blanked out or rejected. See AdminSlotPicker.tsx's docstring for
+// why this replaced a plain <input type="date">.
+export default function AdminCalendar({
   doctorId,
   appointmentTypeId,
   onSelectDate,
@@ -15,7 +20,7 @@ export default function Calendar({
   const today = new Date()
   const [year, setYear] = useState(today.getFullYear())
   const [month, setMonth] = useState(today.getMonth() + 1)
-  const [data, setData] = useState<CalendarMonth | null>(null)
+  const [dates, setDates] = useState<Record<string, boolean> | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -23,14 +28,14 @@ export default function Calendar({
     let cancelled = false
     setLoading(true)
     setError(null)
-    getCalendarMonth(doctorId, appointmentTypeId, year, month)
+    getAdminCalendarMonth(doctorId, appointmentTypeId, year, month)
       .then((result) => {
-        if (!cancelled) setData(result)
+        if (!cancelled) setDates(result.dates)
       })
       .catch((err) => {
         if (!cancelled) {
           setError(err instanceof ApiError ? err.message : 'Could not load availability')
-          setData(null)
+          setDates(null)
         }
       })
       .finally(() => {
@@ -42,10 +47,6 @@ export default function Calendar({
   }, [doctorId, appointmentTypeId, year, month])
 
   const isCurrentMonth = year === today.getFullYear() && month === today.getMonth() + 1
-  const nextMonthDate = new Date(year, month, 1) // month is 1-based, so this rolls forward one
-  const nextMonthKey = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth() + 1).padStart(2, '0')}`
-  const windowEndKey = data ? data.booking_window_end.slice(0, 7) : null
-  const nextDisabled = windowEndKey !== null && nextMonthKey > windowEndKey
 
   function goPrev() {
     if (isCurrentMonth) return
@@ -55,23 +56,23 @@ export default function Calendar({
   }
 
   function goNext() {
-    if (nextDisabled) return
-    setYear(nextMonthDate.getFullYear())
-    setMonth(nextMonthDate.getMonth() + 1)
+    const nextDate = new Date(year, month, 1)
+    setYear(nextDate.getFullYear())
+    setMonth(nextDate.getMonth() + 1)
   }
 
   return (
     <MonthGrid
       year={year}
       month={month}
-      dates={data ? data.dates : null}
+      dates={dates}
       loading={loading}
       error={error}
       onSelectDate={onSelectDate}
       onPrevMonth={goPrev}
       onNextMonth={goNext}
       prevDisabled={isCurrentMonth}
-      nextDisabled={nextDisabled}
+      nextDisabled={false}
     />
   )
 }

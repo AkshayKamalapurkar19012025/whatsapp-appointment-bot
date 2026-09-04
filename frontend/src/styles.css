@@ -615,6 +615,26 @@ a.link:hover {
   flex-wrap: wrap;
 }
 
+.admin-slot-picker-body {
+  display: flex;
+  gap: var(--space-5);
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.admin-slot-picker-body .calendar {
+  flex: 0 0 300px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+}
+
+.admin-slot-picker-slots {
+  flex: 1 1 260px;
+  min-width: 260px;
+}
+
 .schedule-preview {
   display: flex;
   align-items: center;
@@ -652,6 +672,25 @@ a.link:hover {
 }
 
 /* ===========================================================
+   OTP resend / staff-fallback hint
+   =========================================================== */
+
+.otp-help {
+  margin-top: var(--space-2);
+}
+
+.otp-help .link {
+  margin-top: var(--space-1);
+  display: block;
+}
+
+.otp-fallback-hint {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+/* ===========================================================
    Phone input
    =========================================================== */
 
@@ -659,6 +698,21 @@ a.link:hover {
   display: flex;
   align-items: stretch;
   margin-bottom: var(--space-3);
+}
+
+/* Inside a flex row that aligns its columns by their bottom edge
+   (.inline-form's align-items: flex-end -- see PatientsPanel's Name +
+   Mobile number fields), .phone-input's own margin-bottom throws that
+   alignment off: a plain <input> sibling already has its margin zeroed
+   by ".inline-label input" below, but that selector only ever matched
+   <input> elements, never this wrapping div, so the phone field's box
+   sat 12px higher than the name field's box under flex-end. Zero it
+   here too; .field/.inline-label's own `gap` already provides spacing
+   between stacked fields, matching how every other input in this form
+   gets its spacing. */
+.inline-label .phone-input,
+.field .phone-input {
+  margin-bottom: 0;
 }
 
 .phone-input-prefix {
