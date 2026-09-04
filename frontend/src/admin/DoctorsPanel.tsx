@@ -3,6 +3,7 @@ import { Stethoscope } from '@phosphor-icons/react'
 import { ApiError, createDoctor, listAllDoctors } from '../api'
 import type { Doctor } from '../types'
 import { formatDateTime } from '../format'
+import { useStaggerReveal } from '../useStaggerReveal'
 import DoctorDetail from './DoctorDetail'
 
 export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
@@ -12,6 +13,7 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [selectedDoctor, setSelectedDoctor] = useState<Doctor | null>(null)
+  const listRef = useStaggerReveal<HTMLUListElement>([doctors])
 
   function load() {
     setLoading(true)
@@ -73,7 +75,7 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
         </div>
       )}
 
-      <ul className="option-list">
+      <ul className="option-list" ref={listRef}>
         {doctors.map((d) => (
           <li key={d.id}>
             <button

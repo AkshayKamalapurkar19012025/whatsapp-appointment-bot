@@ -12,6 +12,7 @@ import type { MyAppointment, MyAppointmentsResponse, Slot } from './types'
 import Calendar from './Calendar'
 import SlotGrid from './SlotGrid'
 import { formatDate, formatTime } from './format'
+import { useStaggerReveal } from './useStaggerReveal'
 
 type Tab = 'upcoming' | 'history' | 'cancelled'
 type RescheduleStep = 'date' | 'slot' | 'review' | 'done'
@@ -128,6 +129,7 @@ export default function MyAppointments({
   }
 
   const list: MyAppointment[] = data ? data[tab] : []
+  const listRef = useStaggerReveal<HTMLUListElement>([list])
 
   return (
     <div className="card">
@@ -236,7 +238,7 @@ export default function MyAppointments({
             </div>
           )}
 
-          <ul className="appointment-list">
+          <ul className="appointment-list" ref={listRef}>
             {list.map((appointment) => (
               <li key={appointment.id} className="appointment-card">
                 <div>

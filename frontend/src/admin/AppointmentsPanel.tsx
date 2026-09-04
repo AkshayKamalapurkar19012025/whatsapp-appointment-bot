@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from 'react'
 import { ClipboardText } from '@phosphor-icons/react'
+import { useStaggerReveal } from '../useStaggerReveal'
 import {
   ApiError,
   cancelAdminAppointment,
@@ -92,6 +93,12 @@ export default function AppointmentsPanel() {
           a.whatsapp_number.toLowerCase().includes(searchNeedle),
       )
     : appointments
+  // Keyed on `appointments` (the server-fetched list), not
+  // `visibleAppointments` -- the latter also changes on every keystroke
+  // of the client-side name/number search above, which would restage
+  // the whole table mid-typing instead of just when the underlying data
+  // actually reloads.
+  const tbodyRef = useStaggerReveal<HTMLTableSectionElement>([appointments])
 
   async function handleCancel(appointment: AdminAppointment) {
     if (!window.confirm(`Cancel ${appointment.patient_name}'s appointment with ${appointment.doctor_name}?`)) {
@@ -259,7 +266,7 @@ export default function AppointmentsPanel() {
               <th />
             </tr>
           </thead>
-          <tbody>
+          <tbody ref={tbodyRef}>
             {visibleAppointments.map((a) => (
               <Fragment key={a.id}>
                 <tr>

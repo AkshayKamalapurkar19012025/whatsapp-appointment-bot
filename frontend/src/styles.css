@@ -132,6 +132,23 @@ h4 {
   width: 100%;
   max-width: 480px;
   align-self: flex-start;
+  animation: shell-in 0.4s ease-out;
+}
+
+/* Shared one-time entrance for the two outer "frame" containers (.card,
+   .admin-shell) -- plain CSS rather than GSAP since it only needs to run
+   once on mount with no data-driven timing, and the existing global
+   `@media (prefers-reduced-motion: reduce)` rule above already collapses
+   any animation-duration to ~0, so it's covered for free. */
+@keyframes shell-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 h1 {
@@ -555,7 +572,11 @@ a.link:hover {
   background: var(--color-surface);
   color: var(--color-text);
   font-weight: 500;
-  transition: border-color 0.12s ease, background 0.12s ease;
+  transition: border-color 0.12s ease, background 0.12s ease, transform 0.08s ease;
+}
+
+.option-list button:active {
+  transform: scale(0.98);
 }
 
 .option-list button:hover {
@@ -611,6 +632,11 @@ a.link:hover {
   font-size: 0.87rem;
   color: var(--color-text);
   font-variant-numeric: tabular-nums;
+  transition: border-color 0.12s ease, background 0.12s ease, transform 0.08s ease;
+}
+
+.slot-chip:active {
+  transform: scale(0.96);
 }
 
 .slot-chip:hover {
@@ -995,6 +1021,7 @@ a.link:hover {
   box-shadow: var(--shadow-md);
   border: 1px solid var(--color-glass-border);
   overflow: hidden;
+  animation: shell-in 0.4s ease-out;
 }
 
 .admin-nav {
