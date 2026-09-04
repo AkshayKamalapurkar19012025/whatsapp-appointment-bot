@@ -17,9 +17,6 @@ export default function StaffAccountsPanel() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [role, setRole] = useState<'ADMIN' | 'STAFF'>('STAFF')
-  const [pendingCreate, setPendingCreate] = useState<{ username: string; password: string; role: 'ADMIN' | 'STAFF' } | null>(
-    null,
-  )
   const [toggleTarget, setToggleTarget] = useState<StaffAccount | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -37,27 +34,24 @@ export default function StaffAccountsPanel() {
 
   useEffect(load, [])
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!username.trim() || !password) return
-    setPendingCreate({ username: username.trim(), password, role })
+  function resetCreateForm() {
+    setUsername('')
+    setPassword('')
+    setRole('STAFF')
   }
 
-  async function confirmCreate() {
-    if (!pendingCreate) return
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault()
     setError(null)
     setBusy(true)
     try {
-      await createStaffAccount(pendingCreate.username, pendingCreate.password, pendingCreate.role)
-      setUsername('')
-      setPassword('')
-      setRole('STAFF')
+      await createStaffAccount(username, password, role)
+      resetCreateForm()
       load()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not create staff account')
     } finally {
       setBusy(false)
-      setPendingCreate(null)
     }
   }
 
@@ -79,7 +73,7 @@ export default function StaffAccountsPanel() {
       <h2>Staff Accounts</h2>
       {error && <p className="error">{error}</p>}
 
-      <form className="inline-form wrap" onSubmit={handleSubmit}>
+      <form className="inline-form wrap" onSubmit={handleCreate}>
         <input
           placeholder="Username"
           value={username}
@@ -99,8 +93,13 @@ export default function StaffAccountsPanel() {
           <option value="ADMIN">ADMIN</option>
         </select>
         <button type="submit" style={{ width: 'auto' }} disabled={busy}>
-          {busy ? 'Adding…' : 'Add account'}
+          {busy ? 'Saving…' : 'Save'}
         </button>
+        {(username || password) && (
+          <button type="button" className="btn-secondary btn" style={{ width: 'auto' }} onClick={resetCreateForm}>
+            Cancel
+          </button>
+        )}
       </form>
 
       {loading && (
@@ -142,21 +141,6 @@ export default function StaffAccountsPanel() {
           </tbody>
         </table>
       )}
-
-      <AlertDialog open={pendingCreate !== null} onOpenChange={(open) => !open && setPendingCreate(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Add this staff account?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {pendingCreate && `Create a ${pendingCreate.role} account for "${pendingCreate.username}"?`}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmCreate}>Save</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <AlertDialog open={toggleTarget !== null} onOpenChange={(open) => !open && setToggleTarget(null)}>
         <AlertDialogContent>

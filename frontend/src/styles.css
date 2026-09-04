@@ -760,6 +760,28 @@ a.link.danger {
 }
 
 /* ===========================================================
+   Plain card grid (DepartmentsPanel.tsx, AppointmentTypesPanel.tsx) --
+   a flat list of names with nothing to click through to (unlike the
+   doctor grid above, these aren't selectable) still reads better as a
+   grid of cards than a one-column, single-cell-per-row table.
+   =========================================================== */
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-2);
+}
+
+.card-grid-item {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+/* ===========================================================
    Slot picker (SlotGrid.tsx / AdminSlotPicker.tsx)
    =========================================================== */
 

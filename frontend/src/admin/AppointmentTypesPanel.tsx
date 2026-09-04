@@ -3,25 +3,14 @@ import { Tag } from '@phosphor-icons/react'
 import { ApiError, createAppointmentType, listAppointmentTypeCatalog } from '../api'
 import type { AppointmentTypeSummary } from '../types'
 import { useStaggerReveal } from '../useStaggerReveal'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '../components/ui/alert-dialog'
 
 export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean }) {
   const [types, setTypes] = useState<AppointmentTypeSummary[]>([])
   const [name, setName] = useState('')
-  const [pendingName, setPendingName] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
-  const tbodyRef = useStaggerReveal<HTMLTableSectionElement>([types])
+  const gridRef = useStaggerReveal<HTMLDivElement>([types])
 
   function load() {
     setLoading(true)
@@ -35,25 +24,18 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
 
   useEffect(load, [])
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
-    if (!name.trim()) return
-    setPendingName(name.trim())
-  }
-
-  async function confirmCreate() {
-    if (!pendingName) return
     setError(null)
     setBusy(true)
     try {
-      await createAppointmentType(pendingName)
+      await createAppointmentType(name)
       setName('')
       load()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not create appointment type')
     } finally {
       setBusy(false)
-      setPendingName(null)
     }
   }
 
@@ -67,7 +49,7 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
       {error && <p className="error">{error}</p>}
 
       {isAdmin && (
-        <form className="inline-form" onSubmit={handleSubmit}>
+        <form className="inline-form" onSubmit={handleCreate}>
           <input
             placeholder="New appointment type name"
             value={name}
@@ -75,8 +57,13 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
             required
           />
           <button type="submit" style={{ width: 'auto' }} disabled={busy}>
-            {busy ? 'Adding…' : 'Add type'}
+            {busy ? 'Saving…' : 'Save'}
           </button>
+          {name && (
+            <button type="button" className="btn-secondary btn" style={{ width: 'auto' }} onClick={() => setName('')}>
+              Cancel
+            </button>
+          )}
         </form>
       )}
 
@@ -96,36 +83,14 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
       )}
 
       {!loading && types.length > 0 && (
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-            </tr>
-          </thead>
-          <tbody ref={tbodyRef}>
-            {types.map((t) => (
-              <tr key={t.id}>
-                <td>{t.name}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="card-grid" ref={gridRef}>
+          {types.map((t) => (
+            <div key={t.id} className="card-grid-item">
+              {t.name}
+            </div>
+          ))}
+        </div>
       )}
-
-      <AlertDialog open={pendingName !== null} onOpenChange={(open) => !open && setPendingName(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Add this appointment type?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {pendingName && `Add "${pendingName}" to the appointment type catalog?`}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmCreate}>Save</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </section>
   )
 }

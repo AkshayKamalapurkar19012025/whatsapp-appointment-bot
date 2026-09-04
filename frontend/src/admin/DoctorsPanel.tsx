@@ -5,16 +5,6 @@ import type { Department, Doctor } from '../types'
 import { formatDateTime } from '../format'
 import { useStaggerReveal } from '../useStaggerReveal'
 import DoctorDetail from './DoctorDetail'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '../components/ui/alert-dialog'
 
 interface DoctorGroup {
   key: string
@@ -26,7 +16,6 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
   const [doctors, setDoctors] = useState<Doctor[]>([])
   const [groups, setGroups] = useState<DoctorGroup[]>([])
   const [name, setName] = useState('')
-  const [pendingName, setPendingName] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -67,18 +56,12 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
 
   useEffect(load, [])
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
-    if (!name.trim()) return
-    setPendingName(name.trim())
-  }
-
-  async function confirmCreate() {
-    if (!pendingName) return
     setError(null)
     setBusy(true)
     try {
-      const created = await createDoctor(pendingName)
+      const created = await createDoctor(name)
       setName('')
       load()
       setSelectedDoctor(created)
@@ -86,7 +69,6 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
       setError(err instanceof ApiError ? err.message : 'Could not create doctor')
     } finally {
       setBusy(false)
-      setPendingName(null)
     }
   }
 
@@ -96,7 +78,7 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
       {error && <p className="error">{error}</p>}
 
       {isAdmin && (
-        <form className="inline-form" onSubmit={handleSubmit}>
+        <form className="inline-form" onSubmit={handleCreate}>
           <input
             placeholder="New doctor name"
             value={name}
@@ -104,8 +86,13 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
             required
           />
           <button type="submit" style={{ width: 'auto' }} disabled={busy}>
-            {busy ? 'Adding…' : 'Add doctor'}
+            {busy ? 'Saving…' : 'Save'}
           </button>
+          {name && (
+            <button type="button" className="btn-secondary btn" style={{ width: 'auto' }} onClick={() => setName('')}>
+              Cancel
+            </button>
+          )}
         </form>
       )}
 
@@ -151,19 +138,6 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
       )}
 
       {selectedDoctor && <DoctorDetail doctor={selectedDoctor} isAdmin={isAdmin} />}
-
-      <AlertDialog open={pendingName !== null} onOpenChange={(open) => !open && setPendingName(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Add this doctor?</AlertDialogTitle>
-            <AlertDialogDescription>{pendingName && `Add "${pendingName}" to the doctor list?`}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmCreate}>Save</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </section>
   )
 }
