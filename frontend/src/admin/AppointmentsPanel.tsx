@@ -3,15 +3,27 @@ import {
   ApiError,
   cancelAdminAppointment,
   createAdminAppointment,
+  createPatientAdmin,
   listAdminAppointments,
   listAllDoctors,
+  listAppointmentTypeCatalog,
   listAppointmentTypesForDoctor,
   listPatients,
   rescheduleAdminAppointment,
 } from '../api'
-import type { AdminAppointment, AppointmentType, Doctor, Patient, Slot } from '../types'
+import type {
+  AdminAppointment,
+  AppointmentType,
+  AppointmentTypeSummary,
+  Doctor,
+  Patient,
+  Slot,
+} from '../types'
 import { formatDate, formatTime } from '../format'
 import AdminSlotPicker from './AdminSlotPicker'
+import PhoneInput from '../PhoneInput'
+
+const NEW_PATIENT_VALUE = '__new__'
 
 // Duration in minutes between two ISO timestamps -- AdminAppointment
 // doesn't carry duration_minutes directly (it's a doctor_appointment_
@@ -26,9 +38,14 @@ export default function AppointmentsPanel() {
   const [appointments, setAppointments] = useState<AdminAppointment[]>([])
   const [doctors, setDoctors] = useState<Doctor[]>([])
   const [patients, setPatients] = useState<Patient[]>([])
+  const [appointmentTypes, setAppointmentTypes] = useState<AppointmentTypeSummary[]>([])
   const [doctorFilter, setDoctorFilter] = useState('')
   const [patientFilter, setPatientFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [appointmentTypeFilter, setAppointmentTypeFilter] = useState('')
+  const [dateFromFilter, setDateFromFilter] = useState('')
+  const [dateToFilter, setDateToFilter] = useState('')
+  const [searchText, setSearchText] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
@@ -43,6 +60,9 @@ export default function AppointmentsPanel() {
       doctor_id: doctorFilter ? Number(doctorFilter) : undefined,
       patient_id: patientFilter ? Number(patientFilter) : undefined,
       status: statusFilter || undefined,
+      appointment_type_id: appointmentTypeFilter ? Number(appointmentTypeFilter) : undefined,
+      date_from: dateFromFilter || undefined,
+      date_to: dateToFilter || undefined,
     })
       .then(setAppointments)
       .catch((err) =>
@@ -51,12 +71,26 @@ export default function AppointmentsPanel() {
       .finally(() => setLoading(false))
   }
 
-  useEffect(load, [doctorFilter, patientFilter, statusFilter])
+  useEffect(load, [doctorFilter, patientFilter, statusFilter, appointmentTypeFilter, dateFromFilter, dateToFilter])
 
   useEffect(() => {
     listAllDoctors().then(setDoctors).catch(() => undefined)
     listPatients().then(setPatients).catch(() => undefined)
+    listAppointmentTypeCatalog().then(setAppointmentTypes).catch(() => undefined)
   }, [])
+
+  // Free-text patient search is applied client-side over whatever the
+  // server-side filters above already narrowed down to -- the whole
+  // list is already loaded for this panel, so a second round trip for
+  // a substring match would be pure overhead.
+  const searchNeedle = searchText.trim().toLowerCase()
+  const visibleAppointments = searchNeedle
+    ? appointments.filter(
+        (a) =>
+          a.patient_name.toLowerCase().includes(searchNeedle) ||
+          a.whatsapp_number.toLowerCase().includes(searchNeedle),
+      )
+    : appointments
 
   async function handleCancel(appointment: AdminAppointment) {
     if (!window.confirm(`Cancel ${appointment.patient_name}'s appointment with ${appointment.doctor_name}?`)) {
@@ -135,12 +169,59 @@ export default function AppointmentsPanel() {
             <option value="CANCELLED">Cancelled</option>
           </select>
         </label>
+        <label className="inline-label">
+          Appointment type
+          <select value={appointmentTypeFilter} onChange={(e) => setAppointmentTypeFilter(e.target.value)}>
+            <option value="">All</option>
+            {appointmentTypes.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="inline-label">
+          From
+          <input type="date" value={dateFromFilter} onChange={(e) => setDateFromFilter(e.target.value)} />
+        </label>
+        <label className="inline-label">
+          To
+          <input type="date" value={dateToFilter} onChange={(e) => setDateToFilter(e.target.value)} />
+        </label>
+        <label className="inline-label">
+          Search patient
+          <input
+            type="search"
+            placeholder="Name or number"
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+          />
+        </label>
+        {(doctorFilter || patientFilter || statusFilter || appointmentTypeFilter || dateFromFilter || dateToFilter || searchText) && (
+          <button
+            type="button"
+            className="btn-secondary btn"
+            style={{ width: 'auto' }}
+            onClick={() => {
+              setDoctorFilter('')
+              setPatientFilter('')
+              setStatusFilter('')
+              setAppointmentTypeFilter('')
+              setDateFromFilter('')
+              setDateToFilter('')
+              setSearchText('')
+            }}
+          >
+            Clear filters
+          </button>
+        )}
       </div>
 
       {showCreate && (
         <CreateAppointmentForm
           doctors={doctors}
           patients={patients}
+          onPatientCreated={(patient) => setPatients((prev) => [...prev, patient])}
           onCreated={() => {
             setShowCreate(false)
             load()
@@ -154,16 +235,18 @@ export default function AppointmentsPanel() {
           Loading appointments…
         </div>
       )}
-      {!loading && appointments.length === 0 && (
+      {!loading && visibleAppointments.length === 0 && (
         <div className="state-block empty">
           <span className="state-icon" aria-hidden="true">
             📋
           </span>
-          No appointments found.
+          {appointments.length === 0
+            ? 'No appointments found.'
+            : 'No appointments match your search.'}
         </div>
       )}
 
-      {!loading && appointments.length > 0 && (
+      {!loading && visibleAppointments.length > 0 && (
         <table className="data-table">
           <thead>
             <tr>
@@ -176,7 +259,7 @@ export default function AppointmentsPanel() {
             </tr>
           </thead>
           <tbody>
-            {appointments.map((a) => (
+            {visibleAppointments.map((a) => (
               <Fragment key={a.id}>
                 <tr>
                   <td>
@@ -268,10 +351,12 @@ export default function AppointmentsPanel() {
 function CreateAppointmentForm({
   doctors,
   patients,
+  onPatientCreated,
   onCreated,
 }: {
   doctors: Doctor[]
   patients: Patient[]
+  onPatientCreated: (patient: Patient) => void
   onCreated: () => void
 }) {
   const [doctorId, setDoctorId] = useState('')
@@ -279,8 +364,12 @@ function CreateAppointmentForm({
   const [appointmentTypeId, setAppointmentTypeId] = useState('')
   const [types, setTypes] = useState<AppointmentType[]>([])
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null)
+  const [newPatientName, setNewPatientName] = useState('')
+  const [newPatientPhone, setNewPatientPhone] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  const isNewPatient = patientId === NEW_PATIENT_VALUE
 
   useEffect(() => {
     setAppointmentTypeId('')
@@ -303,18 +392,31 @@ function CreateAppointmentForm({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!doctorId || !patientId || !appointmentTypeId || !selectedSlot) return
+    if (isNewPatient && (!newPatientName.trim() || !newPatientPhone)) return
     setError(null)
     setBusy(true)
     try {
+      let targetPatientId = Number(patientId)
+      if (isNewPatient) {
+        const created = await createPatientAdmin(newPatientName.trim(), newPatientPhone)
+        onPatientCreated(created)
+        targetPatientId = created.id
+      }
       await createAdminAppointment(
         Number(doctorId),
-        Number(patientId),
+        targetPatientId,
         Number(appointmentTypeId),
         selectedSlot.start_at,
       )
       onCreated()
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not create appointment')
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : isNewPatient
+            ? 'Could not create the new patient'
+            : 'Could not create appointment',
+      )
     } finally {
       setBusy(false)
     }
@@ -339,6 +441,7 @@ function CreateAppointmentForm({
           Patient
           <select value={patientId} onChange={(e) => setPatientId(e.target.value)} required>
             <option value="">Choose…</option>
+            <option value={NEW_PATIENT_VALUE}>+ New patient…</option>
             {patients.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
@@ -364,6 +467,24 @@ function CreateAppointmentForm({
         </label>
       </div>
 
+      {isNewPatient && (
+        <div className="inline-form wrap" style={{ marginTop: 0 }}>
+          <label className="inline-label">
+            New patient's name
+            <input
+              placeholder="Full name"
+              value={newPatientName}
+              onChange={(e) => setNewPatientName(e.target.value)}
+              required
+            />
+          </label>
+          <label className="inline-label">
+            Mobile number
+            <PhoneInput value={newPatientPhone} onChange={setNewPatientPhone} />
+          </label>
+        </div>
+      )}
+
       {doctorId && selectedType && (
         <AdminSlotPicker
           doctorId={Number(doctorId)}
@@ -375,7 +496,12 @@ function CreateAppointmentForm({
       )}
 
       {error && <p className="error">{error}</p>}
-      <button type="submit" className="btn" style={{ width: 'auto' }} disabled={busy || !selectedSlot}>
+      <button
+        type="submit"
+        className="btn"
+        style={{ width: 'auto' }}
+        disabled={busy || !selectedSlot || (isNewPatient && (!newPatientName.trim() || !newPatientPhone))}
+      >
         {busy ? 'Booking…' : 'Book appointment'}
       </button>
     </form>

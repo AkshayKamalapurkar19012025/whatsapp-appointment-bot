@@ -431,11 +431,19 @@ export function listAdminAppointments(filters: {
   doctor_id?: number
   patient_id?: number
   status?: string
+  appointment_type_id?: number
+  date_from?: string
+  date_to?: string
 }): Promise<AdminAppointment[]> {
   const params = new URLSearchParams()
   if (filters.doctor_id !== undefined) params.set('doctor_id', String(filters.doctor_id))
   if (filters.patient_id !== undefined) params.set('patient_id', String(filters.patient_id))
   if (filters.status) params.set('status', filters.status)
+  if (filters.appointment_type_id !== undefined) {
+    params.set('appointment_type_id', String(filters.appointment_type_id))
+  }
+  if (filters.date_from) params.set('date_from', filters.date_from)
+  if (filters.date_to) params.set('date_to', filters.date_to)
   const query = params.toString()
   return request(`/appointments${query ? `?${query}` : ''}`, { auth: 'staff' })
 }
@@ -473,4 +481,23 @@ export function rescheduleAdminAppointment(
     auth: 'staff',
     body: { new_start_at: newStartAt },
   })
+}
+
+// Staff-only month availability for the admin date picker -- unlike
+// getCalendarMonth (patient-facing, booking-window-limited), this never
+// rejects or blanks out a far-future month, matching how staff/admin
+// bookings are exempt from the patient booking window everywhere else.
+export function getAdminCalendarMonth(
+  doctorId: number,
+  appointmentTypeId: number,
+  year: number,
+  month: number,
+): Promise<{ dates: Record<string, boolean> }> {
+  const params = new URLSearchParams({
+    doctor_id: String(doctorId),
+    appointment_type_id: String(appointmentTypeId),
+    year: String(year),
+    month: String(month),
+  })
+  return request(`/appointments/calendar?${params.toString()}`, { auth: 'staff' })
 }
