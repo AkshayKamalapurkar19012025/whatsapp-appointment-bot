@@ -28,8 +28,39 @@ import type {
 } from '../types'
 import { formatDate, formatTime, formatTimeOfDay } from '../format'
 import AdminDatePicker from './AdminDatePicker'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog'
 
 const DAY_NAMES = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+// Does `dayOfWeek` (1=Monday..7=Sunday) occur at least once between
+// startDate and endDate (inclusive)? A schedule row bounded to a date
+// range that never actually contains its own day-of-week can be created
+// today with no error and then silently never produce a single bookable
+// day -- e.g. "Monday, 10 Sep - 11 Sep" when the 10th and 11th are a
+// Wednesday and Thursday. An open-ended side (no start or no end) always
+// eventually reaches every weekday, so only a fully-bounded range needs
+// checking.
+function dayOfWeekOccursInRange(dayOfWeek: number, startDate: string, endDate: string): boolean {
+  const start = new Date(`${startDate}T00:00:00`)
+  const end = new Date(`${endDate}T00:00:00`)
+  if (start > end) return true // a different problem (end before start) -- not this check's job
+  const jsTargetDay = dayOfWeek % 7 // Date.getDay(): Sunday=0..Saturday=6; ours: Monday=1..Sunday=7
+  const cursor = new Date(start)
+  while (cursor <= end) {
+    if (cursor.getDay() === jsTargetDay) return true
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return false
+}
 
 // Duration options offered when assigning an appointment type to a
 // doctor. 0 is deliberately excluded even though it would otherwise be
@@ -68,15 +99,48 @@ function previewSlots(startTime: string, endTime: string, durationMinutes: numbe
   return slots
 }
 
+type DetailTab = 'upcoming' | 'schedule' | 'blocks' | 'departments' | 'types'
+
+const DETAIL_TABS: { key: DetailTab; label: string }[] = [
+  { key: 'upcoming', label: 'Upcoming' },
+  { key: 'schedule', label: 'Schedule' },
+  { key: 'blocks', label: 'Time off' },
+  { key: 'departments', label: 'Departments' },
+  { key: 'types', label: 'Appointment types' },
+]
+
+// Tabbed rather than every section stacked one after another -- with
+// the schedule form's break list and the upcoming-appointments table
+// both on screen at once, the page had grown long enough that it read
+// as cluttered/confusing (direct feedback). Each section keeps its own
+// state and reloads from the server when its tab is shown; nothing here
+// changes what any section does, only how many of them are visible at
+// once.
 export default function DoctorDetail({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean }) {
+  const [tab, setTab] = useState<DetailTab>('upcoming')
+
   return (
     <div className="doctor-detail">
       <h3>{doctor.name}</h3>
-      <UpcomingAppointmentsSection doctor={doctor} />
-      <DepartmentAssignment doctor={doctor} isAdmin={isAdmin} />
-      <ScheduleSection doctor={doctor} isAdmin={isAdmin} />
-      <BlocksSection doctor={doctor} />
-      <AppointmentTypeAssignment doctor={doctor} isAdmin={isAdmin} />
+
+      <div className="tabs">
+        {DETAIL_TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            className={t.key === tab ? 'tab active' : 'tab'}
+            onClick={() => setTab(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'upcoming' && <UpcomingAppointmentsSection doctor={doctor} />}
+      {tab === 'schedule' && <ScheduleSection doctor={doctor} isAdmin={isAdmin} />}
+      {tab === 'blocks' && <BlocksSection doctor={doctor} />}
+      {tab === 'departments' && <DepartmentAssignment doctor={doctor} isAdmin={isAdmin} />}
+      {tab === 'types' && <AppointmentTypeAssignment doctor={doctor} isAdmin={isAdmin} />}
     </div>
   )
 }
@@ -185,6 +249,7 @@ function DepartmentAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmin: bo
   const [allDepartments, setAllDepartments] = useState<Department[]>([])
   const [selected, setSelected] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [removeTarget, setRemoveTarget] = useState<Department | null>(null)
 
   function load() {
     Promise.all([getDoctorDepartments(doctor.id), listDepartments()])
@@ -212,13 +277,16 @@ function DepartmentAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmin: bo
     }
   }
 
-  async function handleRemove(departmentId: number) {
+  async function confirmRemove() {
+    if (!removeTarget) return
     setError(null)
     try {
-      await removeDoctorFromDepartment(doctor.id, departmentId)
+      await removeDoctorFromDepartment(doctor.id, removeTarget.id)
       load()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not remove department')
+    } finally {
+      setRemoveTarget(null)
     }
   }
 
@@ -231,7 +299,7 @@ function DepartmentAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmin: bo
           <li key={d.id}>
             {d.name}
             {isAdmin && (
-              <button type="button" className="link" onClick={() => handleRemove(d.id)}>
+              <button type="button" className="link" onClick={() => setRemoveTarget(d)}>
                 remove
               </button>
             )}
@@ -252,6 +320,23 @@ function DepartmentAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmin: bo
           <button type="submit">Assign</button>
         </form>
       )}
+
+      <AlertDialog open={removeTarget !== null} onOpenChange={(open) => !open && setRemoveTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove department?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {removeTarget && `Remove ${doctor.name} from ${removeTarget.name}?`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it</AlertDialogCancel>
+            <AlertDialogAction variant="danger" onClick={confirmRemove}>
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -269,6 +354,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
   const [previewDuration, setPreviewDuration] = useState(30)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [removeTarget, setRemoveTarget] = useState<DoctorScheduleEntry | null>(null)
 
   function load() {
     getDoctorScheduleAdmin(doctor.id)
@@ -335,6 +421,15 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
     e.preventDefault()
     setError(null)
 
+    if (startDate && endDate && !dayOfWeekOccursInRange(Number(dayOfWeek), startDate, endDate)) {
+      setError(
+        `${DAY_NAMES[Number(dayOfWeek)]} doesn't fall between ${formatDate(startDate)} and ${formatDate(endDate)}, ` +
+          'so this schedule would never actually apply. Pick a date range that includes at least one ' +
+          `${DAY_NAMES[Number(dayOfWeek)]}, or choose a different day of week.`,
+      )
+      return
+    }
+
     const breaksError = validateBreaks()
     if (breaksError) {
       setError(breaksError)
@@ -384,13 +479,16 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
     previewSlots(seg.start, seg.end, previewDuration),
   )
 
-  async function handleDelete(scheduleId: number) {
+  async function confirmRemove() {
+    if (!removeTarget) return
     setError(null)
     try {
-      await deleteDoctorSchedule(doctor.id, scheduleId)
+      await deleteDoctorSchedule(doctor.id, removeTarget.id)
       load()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not remove schedule')
+    } finally {
+      setRemoveTarget(null)
     }
   }
 
@@ -422,7 +520,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
               </td>
               <td>
                 {isAdmin && (
-                  <button type="button" className="link" onClick={() => handleDelete(e.id)}>
+                  <button type="button" className="link" onClick={() => setRemoveTarget(e)}>
                     remove
                   </button>
                 )}
@@ -438,6 +536,24 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
           )}
         </tbody>
       </table>
+
+      <AlertDialog open={removeTarget !== null} onOpenChange={(open) => !open && setRemoveTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this schedule?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {removeTarget &&
+                `Remove the ${DAY_NAMES[removeTarget.day_of_week]} ${formatTimeOfDay(removeTarget.start_time)}–${formatTimeOfDay(removeTarget.end_time)} schedule? Patients will no longer be able to book into this slot.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it</AlertDialogCancel>
+            <AlertDialogAction variant="danger" onClick={confirmRemove}>
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {isAdmin && (
         <form className="inline-form wrap" onSubmit={handleCreate}>
@@ -548,6 +664,7 @@ function BlocksSection({ doctor }: { doctor: Doctor }) {
   const [reason, setReason] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [removeTarget, setRemoveTarget] = useState<DoctorBlockEntry | null>(null)
 
   function load() {
     getDoctorBlocks(doctor.id)
@@ -584,13 +701,16 @@ function BlocksSection({ doctor }: { doctor: Doctor }) {
     }
   }
 
-  async function handleDelete(blockId: number) {
+  async function confirmRemove() {
+    if (!removeTarget) return
     setError(null)
     try {
-      await deleteDoctorBlock(doctor.id, blockId)
+      await deleteDoctorBlock(doctor.id, removeTarget.id)
       load()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not remove block')
+    } finally {
+      setRemoveTarget(null)
     }
   }
 
@@ -603,7 +723,7 @@ function BlocksSection({ doctor }: { doctor: Doctor }) {
         {blocks.map((b) => (
           <li key={b.id}>
             {formatDate(b.start_at)} {formatTime(b.start_at)} – {formatTime(b.end_at)}: {b.reason}
-            <button type="button" className="link" onClick={() => handleDelete(b.id)}>
+            <button type="button" className="link" onClick={() => setRemoveTarget(b)}>
               remove
             </button>
           </li>
@@ -625,6 +745,24 @@ function BlocksSection({ doctor }: { doctor: Doctor }) {
           {busy ? 'Adding…' : 'Add block'}
         </button>
       </form>
+
+      <AlertDialog open={removeTarget !== null} onOpenChange={(open) => !open && setRemoveTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this block?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {removeTarget &&
+                `Remove the ${formatDate(removeTarget.start_at)} ${formatTime(removeTarget.start_at)}–${formatTime(removeTarget.end_at)} block (${removeTarget.reason})? That time will become bookable again.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it</AlertDialogCancel>
+            <AlertDialogAction variant="danger" onClick={confirmRemove}>
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -637,6 +775,7 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
   const [selected, setSelected] = useState('')
   const [duration, setDuration] = useState(30)
   const [error, setError] = useState<string | null>(null)
+  const [removeTarget, setRemoveTarget] = useState<AppointmentType | null>(null)
 
   function load() {
     Promise.all([listAppointmentTypesForDoctor(doctor.id), listAppointmentTypeCatalog()])
@@ -667,13 +806,16 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
     }
   }
 
-  async function handleRemove(appointmentTypeId: number) {
+  async function confirmRemove() {
+    if (!removeTarget) return
     setError(null)
     try {
-      await removeAppointmentTypeFromDoctor(doctor.id, appointmentTypeId)
+      await removeAppointmentTypeFromDoctor(doctor.id, removeTarget.id)
       load()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not remove appointment type')
+    } finally {
+      setRemoveTarget(null)
     }
   }
 
@@ -687,7 +829,7 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
           <li key={a.id}>
             {a.name} ({a.duration_minutes} min)
             {isAdmin && (
-              <button type="button" className="link" onClick={() => handleRemove(a.id)}>
+              <button type="button" className="link" onClick={() => setRemoveTarget(a)}>
                 remove
               </button>
             )}
@@ -727,6 +869,23 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
           </div>
         </form>
       )}
+
+      <AlertDialog open={removeTarget !== null} onOpenChange={(open) => !open && setRemoveTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove appointment type?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {removeTarget && `Stop offering ${removeTarget.name} for ${doctor.name}?`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it</AlertDialogCancel>
+            <AlertDialogAction variant="danger" onClick={confirmRemove}>
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
