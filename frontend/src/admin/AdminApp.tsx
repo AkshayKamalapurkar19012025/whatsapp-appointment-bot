@@ -1,4 +1,16 @@
-import { useEffect, useState, type ReactElement } from 'react'
+import { useEffect, useState } from 'react'
+import {
+  Buildings,
+  CalendarCheck,
+  CalendarPlus,
+  ChartLineUp,
+  GearSix,
+  ShieldCheck,
+  SignOut,
+  Stethoscope,
+  Tag,
+  UsersThree,
+} from '@phosphor-icons/react'
 import { clearStaffToken, getStaffMe, getStaffToken, staffLogout } from '../api'
 import type { Staff } from '../types'
 import StaffLoginFlow from './StaffLoginFlow'
@@ -8,14 +20,7 @@ import AppointmentTypesPanel from './AppointmentTypesPanel'
 import StaffAccountsPanel from './StaffAccountsPanel'
 import PatientsPanel from './PatientsPanel'
 import AppointmentsPanel from './AppointmentsPanel'
-import {
-  IconBuilding,
-  IconCalendar,
-  IconShieldUser,
-  IconStethoscope,
-  IconTag,
-  IconUsers,
-} from './icons'
+import NavMenu, { NavMenuToggle, type NavMenuItem } from './NavMenu'
 
 type Section =
   | 'appointments'
@@ -36,6 +41,8 @@ export default function AdminApp() {
   const [staff, setStaff] = useState<Staff | null>(null)
   const [checkingSession, setCheckingSession] = useState(true)
   const [section, setSection] = useState<Section>('appointments')
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [bookAppointmentSignal, setBookAppointmentSignal] = useState(0)
 
   useEffect(() => {
     if (!getStaffToken()) {
@@ -61,6 +68,15 @@ export default function AdminApp() {
     setSection('appointments')
   }
 
+  function goTo(target: Section) {
+    setSection(target)
+  }
+
+  function bookAppointment() {
+    setSection('appointments')
+    setBookAppointmentSignal((n) => n + 1)
+  }
+
   if (checkingSession) {
     return (
       <div className="page">
@@ -80,6 +96,8 @@ export default function AdminApp() {
     )
   }
 
+  const isAdmin = staff.role === 'ADMIN'
+
   // Recurring schedule management is ADMIN-only per the RBAC design
   // (docs/WEB_EXPANSION_ARCHITECTURE.md section 8/section 10 item 3) --
   // enforced server-side regardless, but hiding the nav entry for a
@@ -87,84 +105,118 @@ export default function AdminApp() {
   // they're never authorized to do. Staff accounts management is the
   // same story (ADMIN only). Every other section here accepts either
   // role, matching the RBAC table.
-  const groups: { label: string; items: { key: Section; label: string; icon: ReactElement; adminOnly?: boolean }[] }[] = [
+  //
+  // Analytics and Settings are deliberately marked `disabled` rather
+  // than either being silently omitted or wired to a fake page: neither
+  // has a backend or a panel behind it today, and inventing one wasn't
+  // in scope here -- but the requested menu named them explicitly, so
+  // they stay visible (with a plain "Coming soon" label) rather than a
+  // silently incomplete menu or a dead-end click.
+  const menuItems: NavMenuItem[] = [
     {
-      label: 'Scheduling',
-      items: [
-        { key: 'appointments', label: 'Appointments', icon: <IconCalendar /> },
-        { key: 'doctors', label: 'Doctors', icon: <IconStethoscope /> },
-        { key: 'departments', label: 'Departments', icon: <IconBuilding /> },
-        { key: 'appointment-types', label: 'Appointment Types', icon: <IconTag /> },
-      ],
+      key: 'appointments',
+      label: 'Appointments',
+      icon: <CalendarCheck size={28} weight="light" />,
+      active: section === 'appointments',
+      onSelect: () => goTo('appointments'),
     },
     {
-      label: 'People',
-      items: [
-        { key: 'patients', label: 'Patients', icon: <IconUsers /> },
-        { key: 'staff-accounts', label: 'Staff Accounts', icon: <IconShieldUser />, adminOnly: true },
-      ],
+      key: 'book-appointment',
+      label: 'Book Appointment',
+      icon: <CalendarPlus size={28} weight="light" />,
+      onSelect: bookAppointment,
+    },
+    {
+      key: 'doctors',
+      label: 'Doctors',
+      icon: <Stethoscope size={28} weight="light" />,
+      active: section === 'doctors',
+      onSelect: () => goTo('doctors'),
+    },
+    {
+      key: 'patients',
+      label: 'Patients',
+      icon: <UsersThree size={28} weight="light" />,
+      active: section === 'patients',
+      onSelect: () => goTo('patients'),
+    },
+    {
+      key: 'departments',
+      label: 'Departments',
+      icon: <Buildings size={28} weight="light" />,
+      active: section === 'departments',
+      onSelect: () => goTo('departments'),
+    },
+    {
+      key: 'appointment-types',
+      label: 'Appointment Types',
+      icon: <Tag size={28} weight="light" />,
+      active: section === 'appointment-types',
+      onSelect: () => goTo('appointment-types'),
+    },
+    ...(isAdmin
+      ? [
+          {
+            key: 'staff-accounts',
+            label: 'Staff Accounts',
+            icon: <ShieldCheck size={28} weight="light" />,
+            active: section === 'staff-accounts',
+            onSelect: () => goTo('staff-accounts'),
+          } satisfies NavMenuItem,
+        ]
+      : []),
+    {
+      key: 'analytics',
+      label: 'Analytics',
+      icon: <ChartLineUp size={28} weight="light" />,
+      disabled: true,
+    },
+    {
+      key: 'settings',
+      label: 'Settings',
+      icon: <GearSix size={28} weight="light" />,
+      disabled: true,
+    },
+    {
+      key: 'logout',
+      label: 'Logout',
+      icon: <SignOut size={28} weight="light" />,
+      onSelect: handleLogout,
     },
   ]
 
   return (
     <div className="page">
-      <div className="admin-shell">
-        <nav className="admin-nav">
-          <div className="admin-nav-header">
-            <strong>
-              <span className="brand-mark">A</span>
-              Appointment Admin
-            </strong>
-            <span className="muted">
-              {staff.username} · <span className={`pill role-${staff.role.toLowerCase()}`}>{staff.role}</span>
+      <div className="admin-shell admin-shell-topnav">
+        <header className="admin-topbar">
+          <div className="admin-topbar-brand">
+            <span className="brand-mark">A</span>
+            <span>
+              <strong>Appointment Admin</strong>
+              <span className="muted admin-topbar-role">
+                {staff.username} · <span className={`pill role-${staff.role.toLowerCase()}`}>{staff.role}</span>
+              </span>
             </span>
           </div>
+          <NavMenuToggle onClick={() => setMenuOpen(true)} />
+        </header>
 
-          {groups.map((group) => {
-            const visible = group.items.filter((i) => !i.adminOnly || staff.role === 'ADMIN')
-            if (visible.length === 0) return null
-            return (
-              <div key={group.label}>
-                <div className="admin-nav-group-label">{group.label}</div>
-                <ul>
-                  {visible.map((item) => (
-                    <li key={item.key}>
-                      <button
-                        type="button"
-                        className={item.key === section ? 'admin-nav-item active' : 'admin-nav-item'}
-                        onClick={() => setSection(item.key)}
-                      >
-                        <span className="nav-icon">{item.icon}</span>
-                        {item.label}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )
-          })}
-
-          <div className="admin-nav-footer">
-            <button type="button" className="link" onClick={handleLogout}>
-              Log out
-            </button>
-            <a className="link" href="/">
-              Patient site
-            </a>
-          </div>
-        </nav>
-
-        <main className="admin-content">
-          {section === 'appointments' && <AppointmentsPanel />}
-          {section === 'doctors' && <DoctorsPanel isAdmin={staff.role === 'ADMIN'} />}
-          {section === 'departments' && <DepartmentsPanel isAdmin={staff.role === 'ADMIN'} />}
-          {section === 'appointment-types' && (
-            <AppointmentTypesPanel isAdmin={staff.role === 'ADMIN'} />
-          )}
+        <main className="admin-content admin-content-full">
+          {section === 'appointments' && <AppointmentsPanel autoOpenCreateSignal={bookAppointmentSignal} />}
+          {section === 'doctors' && <DoctorsPanel isAdmin={isAdmin} />}
+          {section === 'departments' && <DepartmentsPanel isAdmin={isAdmin} />}
+          {section === 'appointment-types' && <AppointmentTypesPanel isAdmin={isAdmin} />}
           {section === 'patients' && <PatientsPanel />}
-          {section === 'staff-accounts' && staff.role === 'ADMIN' && <StaffAccountsPanel />}
+          {section === 'staff-accounts' && isAdmin && <StaffAccountsPanel />}
         </main>
       </div>
+
+      <NavMenu
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        items={menuItems}
+        footerItems={[{ key: 'patient-site', label: 'Patient site', onSelect: () => window.location.assign('/') }]}
+      />
     </div>
   )
 }

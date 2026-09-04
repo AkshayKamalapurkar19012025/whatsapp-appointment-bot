@@ -1092,129 +1092,51 @@ a.link:hover {
   animation: shell-in 0.4s ease-out;
 }
 
-.admin-nav {
-  width: 232px;
-  flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.35);
-  border-right: 1px solid var(--color-border);
-  padding: var(--space-5) var(--space-3);
-  display: flex;
+/* Topbar replaces the old always-visible sidebar -- full nav now lives
+   in the NavMenu overlay (see below), opened via the hamburger toggle. */
+.admin-shell-topnav {
   flex-direction: column;
 }
 
-.admin-nav-header {
-  margin-bottom: var(--space-5);
-  padding: 0 var(--space-2);
-}
-
-.admin-nav-header strong {
+.admin-topbar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.admin-topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.admin-topbar-brand strong {
+  display: block;
   color: var(--color-text);
-  font-size: 1.05rem;
+  font-size: 1.02rem;
   font-weight: 700;
 }
 
-.admin-nav-header .brand-mark {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+.admin-topbar-role {
+  display: block;
+  margin-top: 1px;
+}
+
+.brand-mark {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
   background: var(--color-primary);
   color: var(--color-on-primary);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.85rem;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-
-.admin-nav-header .muted {
-  display: block;
-  margin-top: 2px;
-}
-
-.admin-nav-group-label {
-  font-size: 0.68rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--color-text-muted);
-  padding: 0 var(--space-2);
-  margin: var(--space-4) 0 var(--space-2);
-}
-
-.admin-nav-group-label:first-of-type {
-  margin-top: 0;
-}
-
-.admin-nav ul {
-  list-style: none;
-  margin: 0 0 var(--space-4);
-  padding: 0;
-  flex: 1;
-}
-
-.admin-nav-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: none;
-  padding: 9px var(--space-3);
-  border-radius: var(--radius-sm);
-  color: var(--color-text-secondary);
-  font-weight: 500;
   font-size: 0.9rem;
-  margin-bottom: 2px;
-  transition: background 0.12s ease, color 0.12s ease;
-}
-
-.admin-nav-item .nav-icon {
+  font-weight: 700;
   flex-shrink: 0;
-  display: inline-flex;
-  color: currentColor;
-  opacity: 0.75;
-}
-
-.admin-nav-item:hover {
-  background: var(--color-surface);
-  color: var(--color-text);
-}
-
-.admin-nav-item.active {
-  background: var(--color-primary);
-  color: var(--color-on-primary);
-  font-weight: 600;
-}
-
-.admin-nav-item.active .nav-icon {
-  opacity: 1;
-}
-
-.admin-nav-footer {
-  border-top: 1px solid var(--color-border);
-  padding-top: var(--space-3);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.admin-nav-footer .link {
-  margin: 0;
-  padding: 8px var(--space-2);
-  border-radius: var(--radius-sm);
-  color: var(--color-text-secondary);
-  font-weight: 500;
-}
-
-.admin-nav-footer .link:hover {
-  background: var(--color-surface);
-  color: var(--color-text);
-  text-decoration: none;
 }
 
 .admin-content {
@@ -1222,6 +1144,10 @@ a.link:hover {
   padding: var(--space-6) var(--space-8);
   overflow-x: auto;
   min-width: 0;
+}
+
+.admin-content-full {
+  width: 100%;
 }
 
 .admin-content-header {
@@ -1234,6 +1160,267 @@ a.link:hover {
 
 .admin-content h2 {
   margin-top: 0;
+}
+
+/* ===========================================================
+   Nav menu -- full-screen "reveal a visual per hovered item" menu
+   (NavMenu.tsx), opened from the topbar's hamburger toggle. Interaction
+   concept only (large numbered list, per-item hover-revealed visual,
+   arrow that responds to hover) -- colors/typography/icons are this
+   app's own existing tokens, not copied branding.
+   =========================================================== */
+
+.nav-menu-toggle {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  flex-shrink: 0;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.08s ease;
+}
+
+.nav-menu-toggle:hover {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary-hover);
+}
+
+.nav-menu-toggle:active {
+  transform: scale(0.94);
+}
+
+.nav-menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: var(--color-bg);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.nav-menu-close {
+  position: absolute;
+  top: var(--space-6);
+  right: var(--space-6);
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  box-shadow: var(--shadow-sm);
+  z-index: 1;
+  transition: background 0.12s ease, transform 0.12s ease;
+}
+
+.nav-menu-close:hover {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-hover);
+}
+
+.nav-menu-close:active {
+  transform: scale(0.92) rotate(90deg);
+}
+
+.nav-menu-body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  max-width: 1180px;
+  width: 100%;
+  margin: 0 auto;
+  padding: calc(var(--space-8) + 44px) var(--space-6) var(--space-6);
+}
+
+.nav-menu-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1 1 55%;
+  min-width: 0;
+}
+
+.nav-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--color-border);
+  padding: var(--space-4) var(--space-2);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: color 0.18s ease, padding-left 0.18s ease;
+}
+
+.nav-menu-list li:last-child .nav-menu-item {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.nav-menu-item-index {
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+  width: 28px;
+  flex-shrink: 0;
+}
+
+.nav-menu-item-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--color-primary);
+  opacity: 0.85;
+}
+
+.nav-menu-item-label {
+  flex: 1;
+  font-family: var(--font-heading);
+  font-size: clamp(1.4rem, 3vw, 2.1rem);
+  font-weight: 700;
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.nav-menu-item-badge {
+  font-family: var(--font-sans);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.nav-menu-item-arrow {
+  flex-shrink: 0;
+  display: inline-flex;
+  color: var(--color-primary);
+  opacity: 0;
+  transform: translate(-6px, 6px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.nav-menu-item:not(.disabled):hover,
+.nav-menu-item:not(.disabled):focus-visible {
+  color: var(--color-primary-hover);
+  padding-left: var(--space-3);
+}
+
+.nav-menu-item:not(.disabled):hover .nav-menu-item-label,
+.nav-menu-item:not(.disabled):focus-visible .nav-menu-item-label {
+  color: var(--color-primary-hover);
+}
+
+.nav-menu-item:not(.disabled):hover .nav-menu-item-arrow,
+.nav-menu-item:not(.disabled):focus-visible .nav-menu-item-arrow {
+  opacity: 1;
+  transform: translate(0, 0);
+}
+
+.nav-menu-item.active .nav-menu-item-label {
+  color: var(--color-primary-hover);
+}
+
+.nav-menu-item.active .nav-menu-item-icon {
+  opacity: 1;
+}
+
+/* Disabled ("Coming soon") items must not offer any hover affordance --
+   no arrow reveal, no color/position shift -- since they don't navigate
+   anywhere; only their fixed 0.5 opacity distinguishes them. */
+.nav-menu-item.disabled {
+  cursor: default;
+}
+
+.nav-menu-item.disabled .nav-menu-item-label,
+.nav-menu-item.disabled .nav-menu-item-icon {
+  opacity: 0.5;
+}
+
+.nav-menu-item.disabled:hover .nav-menu-item-label {
+  color: var(--color-text);
+}
+
+.nav-menu-visual {
+  flex: 0 0 40%;
+}
+
+.nav-menu-visual-card {
+  aspect-ratio: 1;
+  max-width: 320px;
+  margin: 0 auto;
+  border-radius: var(--radius-lg);
+  background: var(--color-primary-soft);
+  border: 1px solid var(--color-primary-soft-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav-menu-visual-icon {
+  display: inline-flex;
+  color: var(--color-primary);
+  transform: scale(4.4);
+}
+
+.nav-menu-footer {
+  border-top: 1px solid var(--color-border);
+  padding: var(--space-4) var(--space-6) var(--space-6);
+  max-width: 1180px;
+  width: 100%;
+  margin: 0 auto;
+  display: flex;
+  gap: var(--space-5);
+}
+
+.nav-menu-footer .link {
+  margin: 0;
+}
+
+/* Hover-reveal visual and hover-only affordances (arrow slide, left
+   nudge) are desktop/hover-capable-pointer only -- a touch device never
+   fires hover at all, so tapping a row navigates immediately instead of
+   requiring a "reveal then tap" two-step. */
+@media (hover: none) {
+  .nav-menu-visual {
+    display: none;
+  }
+  .nav-menu-item:hover,
+  .nav-menu-item:focus-visible {
+    padding-left: var(--space-2);
+  }
+}
+
+@media (max-width: 760px) {
+  .nav-menu-body {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-4);
+  }
+  .nav-menu-visual {
+    display: none;
+  }
+  .nav-menu-item-label {
+    font-size: 1.3rem;
+  }
 }
 
 /* ===========================================================
@@ -1397,19 +1584,8 @@ a.link:hover {
     border: none;
     min-height: 100vh;
   }
-  .admin-nav {
-    width: 100%;
-    border-right: none;
-    border-bottom: 1px solid var(--color-border);
-  }
-  .admin-nav ul {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    margin-bottom: var(--space-3);
-  }
-  .admin-nav-item {
-    width: auto;
+  .admin-topbar {
+    padding: var(--space-4) var(--space-5);
   }
   .admin-content {
     padding: var(--space-5);

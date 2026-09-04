@@ -52,7 +52,15 @@ function durationBetween(startAt: string, endAt: string): number {
   return Math.round((new Date(endAt).getTime() - new Date(startAt).getTime()) / 60000)
 }
 
-export default function AppointmentsPanel() {
+export default function AppointmentsPanel({
+  autoOpenCreateSignal,
+}: {
+  // Bumped by the nav menu's "Book Appointment" item (see AdminApp.tsx)
+  // to open the create form even when this panel is already mounted/on
+  // screen -- a plain boolean prop wouldn't re-trigger on a second click
+  // once already true, so the caller increments a counter instead.
+  autoOpenCreateSignal?: number
+} = {}) {
   const [appointments, setAppointments] = useState<AdminAppointment[]>([])
   const [doctors, setDoctors] = useState<Doctor[]>([])
   const [patients, setPatients] = useState<Patient[]>([])
@@ -70,6 +78,14 @@ export default function AppointmentsPanel() {
   const [reschedulingId, setReschedulingId] = useState<number | null>(null)
   const [rescheduleSlot, setRescheduleSlot] = useState<Slot | null>(null)
   const [rescheduleBusy, setRescheduleBusy] = useState(false)
+
+  useEffect(() => {
+    if (autoOpenCreateSignal) setShowCreate(true)
+    // Only autoOpenCreateSignal should retrigger this -- showCreate is
+    // intentionally excluded so the user closing the form again doesn't
+    // immediately reopen it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpenCreateSignal])
 
   function load() {
     setLoading(true)
