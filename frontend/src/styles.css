@@ -1495,6 +1495,38 @@ a.link:hover {
   margin-bottom: 0;
 }
 
+.inline-label.checkbox-label {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.inline-label.checkbox-label input[type='checkbox'] {
+  width: auto;
+  margin: 0;
+}
+
+.admin-date-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.admin-date-picker-value {
+  font-size: 0.8rem;
+}
+
+.admin-date-picker-panel {
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  width: 280px;
+  max-width: 100%;
+}
+
 .filter-bar {
   display: flex;
   flex-wrap: wrap;

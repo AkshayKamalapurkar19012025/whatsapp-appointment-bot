@@ -25,6 +25,7 @@ import type {
   DoctorScheduleEntry,
 } from '../types'
 import { formatDate, formatTime, formatTimeOfDay } from '../format'
+import AdminDatePicker from './AdminDatePicker'
 
 const DAY_NAMES = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
@@ -164,6 +165,9 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
   const [endTime, setEndTime] = useState('17:00')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
+  const [lunchEnabled, setLunchEnabled] = useState(false)
+  const [lunchStart, setLunchStart] = useState('13:00')
+  const [lunchEnd, setLunchEnd] = useState('14:00')
   const [previewDuration, setPreviewDuration] = useState(30)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -176,18 +180,75 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
 
   useEffect(load, [doctor.id])
 
+  // There is no "lunch break" field on the backend -- a doctor_schedule
+  // row is just one contiguous start_time/end_time range (see
+  // app/api/doctor_schedule.py). A break is expressed the same way the
+  // availability engine already supports it: two separate, non-
+  // overlapping rows for the same day (app/services/availability_engine.py
+  // iterates every matching row and generates slots per-row, so a gap
+  // between two rows naturally has no slots in it). This form just saves
+  // the admin from having to submit that as two manual "Add schedule"
+  // round trips.
+  function validateLunch(): string | null {
+    if (!lunchEnabled) return null
+    if (!(lunchStart < lunchEnd)) return 'Lunch end must be after lunch start'
+    if (!(startTime < lunchStart) || !(lunchEnd < endTime)) {
+      return 'Lunch break must fall entirely within the working hours'
+    }
+    return null
+  }
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
+
+    const lunchError = validateLunch()
+    if (lunchError) {
+      setError(lunchError)
+      return
+    }
+
     setBusy(true)
     try {
-      await createDoctorSchedule(doctor.id, {
-        day_of_week: Number(dayOfWeek),
-        start_time: startTime,
-        end_time: endTime,
-        start_date: startDate || null,
-        end_date: endDate || null,
-      })
+      if (lunchEnabled) {
+        // Submitted as two rows, not one transaction -- if the second
+        // call fails (e.g. it overlaps something the first call's
+        // success didn't), say so plainly and reload so the list shows
+        // what's actually there, rather than silently leaving a
+        // half-added schedule the admin doesn't know about.
+        await createDoctorSchedule(doctor.id, {
+          day_of_week: Number(dayOfWeek),
+          start_time: startTime,
+          end_time: lunchStart,
+          start_date: startDate || null,
+          end_date: endDate || null,
+        })
+        try {
+          await createDoctorSchedule(doctor.id, {
+            day_of_week: Number(dayOfWeek),
+            start_time: lunchEnd,
+            end_time: endTime,
+            start_date: startDate || null,
+            end_date: endDate || null,
+          })
+        } catch (err) {
+          setError(
+            `Added the morning portion, but could not add the afternoon portion: ${
+              err instanceof ApiError ? err.message : 'unknown error'
+            }`,
+          )
+          load()
+          return
+        }
+      } else {
+        await createDoctorSchedule(doctor.id, {
+          day_of_week: Number(dayOfWeek),
+          start_time: startTime,
+          end_time: endTime,
+          start_date: startDate || null,
+          end_date: endDate || null,
+        })
+      }
       setStartDate('')
       setEndDate('')
       load()
@@ -197,6 +258,10 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
       setBusy(false)
     }
   }
+
+  const previewSlotsList = lunchEnabled
+    ? [...previewSlots(startTime, lunchStart, previewDuration), ...previewSlots(lunchEnd, endTime, previewDuration)]
+    : previewSlots(startTime, endTime, previewDuration)
 
   async function handleDelete(scheduleId: number) {
     setError(null)
@@ -266,20 +331,42 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
           <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required />
           <label className="inline-label">
             From (optional)
-            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            <AdminDatePicker value={startDate} onChange={setStartDate} label="Pick start date" />
           </label>
           <label className="inline-label">
             Until (optional)
-            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            <AdminDatePicker value={endDate} onChange={setEndDate} label="Pick end date" />
           </label>
           <button type="submit" disabled={busy}>
             {busy ? 'Adding…' : 'Add schedule'}
           </button>
 
+          <label className="inline-label checkbox-label" style={{ width: '100%' }}>
+            <input type="checkbox" checked={lunchEnabled} onChange={(e) => setLunchEnabled(e.target.checked)} />
+            Add a lunch break (or other daily gap) within these hours
+          </label>
+          {lunchEnabled && (
+            <div className="inline-form wrap" style={{ marginTop: 0 }}>
+              <label className="inline-label">
+                Break start
+                <input type="time" value={lunchStart} onChange={(e) => setLunchStart(e.target.value)} required />
+              </label>
+              <label className="inline-label">
+                Break end
+                <input type="time" value={lunchEnd} onChange={(e) => setLunchEnd(e.target.value)} required />
+              </label>
+            </div>
+          )}
+
           <div className="schedule-preview">
             <strong>{formatTimeOfDay(startTime)}</strong>
             <span className="arrow">→</span>
             <strong>{formatTimeOfDay(endTime)}</strong>
+            {lunchEnabled && (
+              <span className="muted">
+                (minus {formatTimeOfDay(lunchStart)}–{formatTimeOfDay(lunchEnd)})
+              </span>
+            )}
             <span className="arrow">÷</span>
             <select
               aria-label="Preview appointment length"
@@ -296,12 +383,12 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
             <span className="arrow">=</span>
             <span className="muted">generated slots preview</span>
             <div className="schedule-preview-slots">
-              {previewSlots(startTime, endTime, previewDuration).map((s) => (
+              {previewSlotsList.map((s) => (
                 <span key={s} className="slot-chip-static">
                   {s}
                 </span>
               ))}
-              {previewSlots(startTime, endTime, previewDuration).length === 0 && (
+              {previewSlotsList.length === 0 && (
                 <span className="muted">End time must be after start time to preview slots.</span>
               )}
             </div>
@@ -338,6 +425,13 @@ function BlocksSection({ doctor }: { doctor: Doctor }) {
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
+    // The date field is no longer a native <input required> (it's the
+    // calendar-panel AdminDatePicker below, which has no built-in HTML
+    // validation), so this guard replaces what `required` used to do.
+    if (!date) {
+      setError('Choose a date for this block')
+      return
+    }
     setBusy(true)
     try {
       await createDoctorBlock(
@@ -383,7 +477,7 @@ function BlocksSection({ doctor }: { doctor: Doctor }) {
       </ul>
 
       <form className="inline-form wrap" onSubmit={handleCreate}>
-        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+        <AdminDatePicker value={date} onChange={setDate} label={date ? 'Change date' : 'Pick a date'} />
         <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required />
         <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required />
         <input
