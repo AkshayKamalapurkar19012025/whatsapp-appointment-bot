@@ -10,6 +10,7 @@ import {
   getDoctorBlocks,
   getDoctorDepartments,
   getDoctorScheduleAdmin,
+  listAdminAppointments,
   listAppointmentTypeCatalog,
   listAppointmentTypesForDoctor,
   listDepartments,
@@ -17,6 +18,7 @@ import {
   removeDoctorFromDepartment,
 } from '../api'
 import type {
+  AdminAppointment,
   AppointmentType,
   AppointmentTypeSummary,
   Department,
@@ -70,10 +72,108 @@ export default function DoctorDetail({ doctor, isAdmin }: { doctor: Doctor; isAd
   return (
     <div className="doctor-detail">
       <h3>{doctor.name}</h3>
+      <UpcomingAppointmentsSection doctor={doctor} />
       <DepartmentAssignment doctor={doctor} isAdmin={isAdmin} />
       <ScheduleSection doctor={doctor} isAdmin={isAdmin} />
       <BlocksSection doctor={doctor} />
       <AppointmentTypeAssignment doctor={doctor} isAdmin={isAdmin} />
+    </div>
+  )
+}
+
+// -- This doctor's upcoming appointments (ADMIN or STAFF) ---------------
+// Scoped to doctor.id server-side via the same /appointments listing
+// AppointmentsPanel's own Upcoming tab uses; "upcoming" here means the
+// same thing it does there -- booked and not yet started (no separate
+// COMPLETED status, see migrations/0001_baseline_schema.sql, so a past
+// BOOKED appointment falls out of Upcoming on its own).
+
+function UpcomingAppointmentsSection({ doctor }: { doctor: Doctor }) {
+  const [appointments, setAppointments] = useState<AdminAppointment[]>([])
+  const [searchText, setSearchText] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  function load() {
+    setLoading(true)
+    setError(null)
+    listAdminAppointments({ doctor_id: doctor.id, status: 'BOOKED' })
+      .then(setAppointments)
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load appointments'))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(load, [doctor.id])
+
+  const searchNeedle = searchText.trim().toLowerCase()
+  // Same "is it still in the future" check AppointmentsPanel's own
+  // Upcoming tab already does; Date.now() here only ever changes what
+  // already-stale data looks like on the next real render, never
+  // mid-render.
+  const upcoming = appointments
+    // eslint-disable-next-line react/purity
+    .filter((a) => new Date(a.start_at).getTime() >= Date.now())
+    .filter(
+      (a) =>
+        !searchNeedle ||
+        a.patient_name.toLowerCase().includes(searchNeedle) ||
+        a.whatsapp_number.toLowerCase().includes(searchNeedle),
+    )
+    .sort((a, b) => a.start_at.localeCompare(b.start_at))
+
+  return (
+    <div className="detail-section">
+      <h4>Upcoming appointments</h4>
+      {error && <p className="error">{error}</p>}
+
+      <div className="inline-form">
+        <label className="inline-label">
+          Search patient
+          <input
+            type="search"
+            placeholder="Name or number"
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+          />
+        </label>
+      </div>
+
+      {loading && (
+        <div className="state-block">
+          <span className="spinner" aria-hidden="true" />
+          Loading…
+        </div>
+      )}
+      {!loading && upcoming.length === 0 && (
+        <p className="muted">
+          {appointments.length === 0 ? 'No upcoming appointments.' : 'No appointments match your search.'}
+        </p>
+      )}
+      {!loading && upcoming.length > 0 && (
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Patient</th>
+              <th>Type</th>
+              <th>When</th>
+            </tr>
+          </thead>
+          <tbody>
+            {upcoming.map((a) => (
+              <tr key={a.id}>
+                <td>
+                  {a.patient_name}
+                  <div className="muted">{a.whatsapp_number}</div>
+                </td>
+                <td>{a.appointment_type_name}</td>
+                <td>
+                  {formatDate(a.start_at)} · {formatTime(a.start_at)} – {formatTime(a.end_at)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   )
 }
@@ -165,9 +265,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
   const [endTime, setEndTime] = useState('17:00')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
-  const [lunchEnabled, setLunchEnabled] = useState(false)
-  const [lunchStart, setLunchStart] = useState('13:00')
-  const [lunchEnd, setLunchEnd] = useState('14:00')
+  const [breaks, setBreaks] = useState<{ start: string; end: string }[]>([])
   const [previewDuration, setPreviewDuration] = useState(30)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -180,74 +278,97 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
 
   useEffect(load, [doctor.id])
 
-  // There is no "lunch break" field on the backend -- a doctor_schedule
-  // row is just one contiguous start_time/end_time range (see
-  // app/api/doctor_schedule.py). A break is expressed the same way the
-  // availability engine already supports it: two separate, non-
-  // overlapping rows for the same day (app/services/availability_engine.py
-  // iterates every matching row and generates slots per-row, so a gap
-  // between two rows naturally has no slots in it). This form just saves
-  // the admin from having to submit that as two manual "Add schedule"
-  // round trips.
-  function validateLunch(): string | null {
-    if (!lunchEnabled) return null
-    if (!(lunchStart < lunchEnd)) return 'Lunch end must be after lunch start'
-    if (!(startTime < lunchStart) || !(lunchEnd < endTime)) {
-      return 'Lunch break must fall entirely within the working hours'
+  function addBreak() {
+    setBreaks((prev) => [...prev, { start: '13:00', end: '14:00' }])
+  }
+
+  function updateBreak(index: number, field: 'start' | 'end', value: string) {
+    setBreaks((prev) => prev.map((b, i) => (i === index ? { ...b, [field]: value } : b)))
+  }
+
+  function removeBreak(index: number) {
+    setBreaks((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const sortedBreaks = [...breaks].sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0))
+
+  // There is no "break" field on the backend -- a doctor_schedule row is
+  // just one contiguous start_time/end_time range (see
+  // app/api/doctor_schedule.py). Any number of breaks is expressed the
+  // same way the availability engine already supports it: separate,
+  // non-overlapping rows for the same day (app/services/
+  // availability_engine.py iterates every matching row and generates
+  // slots per-row, so a gap between rows naturally has no slots in it).
+  // This form just saves the admin from having to work that split out
+  // by hand and submit it as several manual "Add schedule" round trips.
+  function validateBreaks(): string | null {
+    for (const b of sortedBreaks) {
+      if (!(b.start < b.end)) return "Each break's end time must be after its start time"
+      if (!(startTime < b.start) || !(b.end < endTime)) {
+        return 'Breaks must fall entirely within the working hours'
+      }
+    }
+    for (let i = 1; i < sortedBreaks.length; i++) {
+      if (sortedBreaks[i].start < sortedBreaks[i - 1].end) {
+        return 'Breaks cannot overlap each other'
+      }
     }
     return null
+  }
+
+  // The working hours split around zero or more sorted, non-overlapping
+  // breaks -- e.g. 09:00-17:00 with breaks at 11:00-11:15 and
+  // 13:00-14:00 becomes [09:00-11:00, 11:15-13:00, 14:00-17:00]. With no
+  // breaks this is just the one original [startTime, endTime] segment.
+  function scheduleSegments(): { start: string; end: string }[] {
+    const segments: { start: string; end: string }[] = []
+    let cursor = startTime
+    for (const b of sortedBreaks) {
+      segments.push({ start: cursor, end: b.start })
+      cursor = b.end
+    }
+    segments.push({ start: cursor, end: endTime })
+    return segments
   }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
 
-    const lunchError = validateLunch()
-    if (lunchError) {
-      setError(lunchError)
+    const breaksError = validateBreaks()
+    if (breaksError) {
+      setError(breaksError)
       return
     }
 
+    const segments = scheduleSegments()
     setBusy(true)
     try {
-      if (lunchEnabled) {
-        // Submitted as two rows, not one transaction -- if the second
-        // call fails (e.g. it overlaps something the first call's
-        // success didn't), say so plainly and reload so the list shows
-        // what's actually there, rather than silently leaving a
-        // half-added schedule the admin doesn't know about.
-        await createDoctorSchedule(doctor.id, {
-          day_of_week: Number(dayOfWeek),
-          start_time: startTime,
-          end_time: lunchStart,
-          start_date: startDate || null,
-          end_date: endDate || null,
-        })
+      // Submitted as N separate rows, not one transaction -- if a later
+      // call fails (e.g. it overlaps something an earlier call's
+      // success didn't), say so plainly with how far it got and reload
+      // so the list shows what's actually there, rather than silently
+      // leaving a half-added schedule the admin doesn't know about.
+      for (let i = 0; i < segments.length; i++) {
         try {
           await createDoctorSchedule(doctor.id, {
             day_of_week: Number(dayOfWeek),
-            start_time: lunchEnd,
-            end_time: endTime,
+            start_time: segments[i].start,
+            end_time: segments[i].end,
             start_date: startDate || null,
             end_date: endDate || null,
           })
         } catch (err) {
-          setError(
-            `Added the morning portion, but could not add the afternoon portion: ${
-              err instanceof ApiError ? err.message : 'unknown error'
-            }`,
-          )
-          load()
-          return
+          if (i > 0) {
+            setError(
+              `Added ${i} of ${segments.length} segments, but could not add the segment starting at ` +
+                `${formatTimeOfDay(segments[i].start)}: ${err instanceof ApiError ? err.message : 'unknown error'}`,
+            )
+            load()
+            return
+          }
+          throw err
         }
-      } else {
-        await createDoctorSchedule(doctor.id, {
-          day_of_week: Number(dayOfWeek),
-          start_time: startTime,
-          end_time: endTime,
-          start_date: startDate || null,
-          end_date: endDate || null,
-        })
       }
       setStartDate('')
       setEndDate('')
@@ -259,9 +380,9 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
     }
   }
 
-  const previewSlotsList = lunchEnabled
-    ? [...previewSlots(startTime, lunchStart, previewDuration), ...previewSlots(lunchEnd, endTime, previewDuration)]
-    : previewSlots(startTime, endTime, previewDuration)
+  const previewSlotsList = scheduleSegments().flatMap((seg) =>
+    previewSlots(seg.start, seg.end, previewDuration),
+  )
 
   async function handleDelete(scheduleId: number) {
     setError(null)
@@ -341,30 +462,44 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
             {busy ? 'Adding…' : 'Add schedule'}
           </button>
 
-          <label className="inline-label checkbox-label" style={{ width: '100%' }}>
-            <input type="checkbox" checked={lunchEnabled} onChange={(e) => setLunchEnabled(e.target.checked)} />
-            Add a lunch break (or other daily gap) within these hours
-          </label>
-          {lunchEnabled && (
-            <div className="inline-form wrap" style={{ marginTop: 0 }}>
-              <label className="inline-label">
-                Break start
-                <input type="time" value={lunchStart} onChange={(e) => setLunchStart(e.target.value)} required />
-              </label>
-              <label className="inline-label">
-                Break end
-                <input type="time" value={lunchEnd} onChange={(e) => setLunchEnd(e.target.value)} required />
-              </label>
-            </div>
-          )}
+          <div style={{ width: '100%' }}>
+            {breaks.map((b, i) => (
+              <div key={i} className="inline-form wrap" style={{ marginTop: 0 }}>
+                <label className="inline-label">
+                  Break {i + 1} start
+                  <input
+                    type="time"
+                    value={b.start}
+                    onChange={(e) => updateBreak(i, 'start', e.target.value)}
+                    required
+                  />
+                </label>
+                <label className="inline-label">
+                  Break {i + 1} end
+                  <input
+                    type="time"
+                    value={b.end}
+                    onChange={(e) => updateBreak(i, 'end', e.target.value)}
+                    required
+                  />
+                </label>
+                <button type="button" className="link danger" onClick={() => removeBreak(i)}>
+                  Remove break
+                </button>
+              </div>
+            ))}
+            <button type="button" className="link" onClick={addBreak}>
+              + Add a break (lunch, or any other daily gap)
+            </button>
+          </div>
 
           <div className="schedule-preview">
             <strong>{formatTimeOfDay(startTime)}</strong>
             <span className="arrow">→</span>
             <strong>{formatTimeOfDay(endTime)}</strong>
-            {lunchEnabled && (
+            {sortedBreaks.length > 0 && (
               <span className="muted">
-                (minus {formatTimeOfDay(lunchStart)}–{formatTimeOfDay(lunchEnd)})
+                (minus {sortedBreaks.map((b) => `${formatTimeOfDay(b.start)}–${formatTimeOfDay(b.end)}`).join(', ')})
               </span>
             )}
             <span className="arrow">÷</span>
