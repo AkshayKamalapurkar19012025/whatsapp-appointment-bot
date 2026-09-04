@@ -1,5 +1,7 @@
+import { CalendarX } from '@phosphor-icons/react'
 import type { Slot } from './types'
 import { formatTime } from './format'
+import { useStaggerReveal } from './useStaggerReveal'
 
 // The one clickable slot-time control every flow in the app uses --
 // patient booking, patient reschedule, and (as of this change) admin
@@ -21,6 +23,8 @@ export default function SlotGrid({
   loading?: boolean
   emptyMessage?: string
 }) {
+  const groupsRef = useStaggerReveal<HTMLDivElement>([slots], '.slot-chip')
+
   if (loading) {
     return (
       <div className="state-block">
@@ -34,7 +38,7 @@ export default function SlotGrid({
     return (
       <div className="state-block empty">
         <span className="state-icon" aria-hidden="true">
-          🗓️
+          <CalendarX size={28} weight="light" />
         </span>
         {emptyMessage}
       </div>
@@ -54,7 +58,7 @@ export default function SlotGrid({
   }
 
   return (
-    <div className="slot-groups">
+    <div className="slot-groups" ref={groupsRef}>
       {groups
         .filter((g) => g.slots.length > 0)
         .map((group) => (

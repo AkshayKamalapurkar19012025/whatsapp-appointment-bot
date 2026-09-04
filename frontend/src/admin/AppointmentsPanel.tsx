@@ -1,4 +1,17 @@
 import { Fragment, useEffect, useState } from 'react'
+import { ClipboardText } from '@phosphor-icons/react'
+import { useStaggerReveal } from '../useStaggerReveal'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import {
   ApiError,
   cancelAdminAppointment,
@@ -24,6 +37,11 @@ import AdminSlotPicker from './AdminSlotPicker'
 import PhoneInput from '../PhoneInput'
 
 const NEW_PATIENT_VALUE = '__new__'
+// Radix Select.Item disallows an empty-string value (it's reserved
+// internally for "no selection"), so the "All" filter option -- which
+// maps to '' for the actual doctorFilter/etc. state, meaning "don't
+// filter" -- needs a distinct sentinel value instead.
+const ALL_FILTER_VALUE = '__all__'
 
 // Duration in minutes between two ISO timestamps -- AdminAppointment
 // doesn't carry duration_minutes directly (it's a doctor_appointment_
@@ -34,7 +52,15 @@ function durationBetween(startAt: string, endAt: string): number {
   return Math.round((new Date(endAt).getTime() - new Date(startAt).getTime()) / 60000)
 }
 
-export default function AppointmentsPanel() {
+export default function AppointmentsPanel({
+  autoOpenCreateSignal,
+}: {
+  // Bumped by the nav menu's "Book Appointment" item (see AdminApp.tsx)
+  // to open the create form even when this panel is already mounted/on
+  // screen -- a plain boolean prop wouldn't re-trigger on a second click
+  // once already true, so the caller increments a counter instead.
+  autoOpenCreateSignal?: number
+} = {}) {
   const [appointments, setAppointments] = useState<AdminAppointment[]>([])
   const [doctors, setDoctors] = useState<Doctor[]>([])
   const [patients, setPatients] = useState<Patient[]>([])
@@ -52,6 +78,14 @@ export default function AppointmentsPanel() {
   const [reschedulingId, setReschedulingId] = useState<number | null>(null)
   const [rescheduleSlot, setRescheduleSlot] = useState<Slot | null>(null)
   const [rescheduleBusy, setRescheduleBusy] = useState(false)
+
+  useEffect(() => {
+    if (autoOpenCreateSignal) setShowCreate(true)
+    // Only autoOpenCreateSignal should retrigger this -- showCreate is
+    // intentionally excluded so the user closing the form again doesn't
+    // immediately reopen it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpenCreateSignal])
 
   function load() {
     setLoading(true)
@@ -91,17 +125,24 @@ export default function AppointmentsPanel() {
           a.whatsapp_number.toLowerCase().includes(searchNeedle),
       )
     : appointments
+  // Keyed on `appointments` (the server-fetched list), not
+  // `visibleAppointments` -- the latter also changes on every keystroke
+  // of the client-side name/number search above, which would restage
+  // the whole table mid-typing instead of just when the underlying data
+  // actually reloads.
+  const tbodyRef = useStaggerReveal<HTMLTableSectionElement>([appointments])
+  const [cancelTarget, setCancelTarget] = useState<AdminAppointment | null>(null)
 
-  async function handleCancel(appointment: AdminAppointment) {
-    if (!window.confirm(`Cancel ${appointment.patient_name}'s appointment with ${appointment.doctor_name}?`)) {
-      return
-    }
+  async function confirmCancel() {
+    if (!cancelTarget) return
     setError(null)
     try {
-      await cancelAdminAppointment(appointment.id)
+      await cancelAdminAppointment(cancelTarget.id)
       load()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not cancel the appointment')
+    } finally {
+      setCancelTarget(null)
     }
   }
 
@@ -141,44 +182,76 @@ export default function AppointmentsPanel() {
       <div className="filter-bar">
         <label className="inline-label">
           Doctor
-          <select value={doctorFilter} onChange={(e) => setDoctorFilter(e.target.value)}>
-            <option value="">All</option>
-            {doctors.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </select>
+          <Select
+            value={doctorFilter || ALL_FILTER_VALUE}
+            onValueChange={(v) => setDoctorFilter(v === ALL_FILTER_VALUE ? '' : v)}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_FILTER_VALUE}>All</SelectItem>
+              {doctors.map((d) => (
+                <SelectItem key={d.id} value={String(d.id)}>
+                  {d.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </label>
         <label className="inline-label">
           Patient
-          <select value={patientFilter} onChange={(e) => setPatientFilter(e.target.value)}>
-            <option value="">All</option>
-            {patients.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
+          <Select
+            value={patientFilter || ALL_FILTER_VALUE}
+            onValueChange={(v) => setPatientFilter(v === ALL_FILTER_VALUE ? '' : v)}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_FILTER_VALUE}>All</SelectItem>
+              {patients.map((p) => (
+                <SelectItem key={p.id} value={String(p.id)}>
+                  {p.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </label>
         <label className="inline-label">
           Status
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-            <option value="">All</option>
-            <option value="BOOKED">Booked</option>
-            <option value="CANCELLED">Cancelled</option>
-          </select>
+          <Select
+            value={statusFilter || ALL_FILTER_VALUE}
+            onValueChange={(v) => setStatusFilter(v === ALL_FILTER_VALUE ? '' : v)}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_FILTER_VALUE}>All</SelectItem>
+              <SelectItem value="BOOKED">Booked</SelectItem>
+              <SelectItem value="CANCELLED">Cancelled</SelectItem>
+            </SelectContent>
+          </Select>
         </label>
         <label className="inline-label">
           Appointment type
-          <select value={appointmentTypeFilter} onChange={(e) => setAppointmentTypeFilter(e.target.value)}>
-            <option value="">All</option>
-            {appointmentTypes.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
+          <Select
+            value={appointmentTypeFilter || ALL_FILTER_VALUE}
+            onValueChange={(v) => setAppointmentTypeFilter(v === ALL_FILTER_VALUE ? '' : v)}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_FILTER_VALUE}>All</SelectItem>
+              {appointmentTypes.map((t) => (
+                <SelectItem key={t.id} value={String(t.id)}>
+                  {t.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </label>
         <label className="inline-label">
           From
@@ -238,7 +311,7 @@ export default function AppointmentsPanel() {
       {!loading && visibleAppointments.length === 0 && (
         <div className="state-block empty">
           <span className="state-icon" aria-hidden="true">
-            📋
+            <ClipboardText size={28} weight="light" />
           </span>
           {appointments.length === 0
             ? 'No appointments found.'
@@ -258,7 +331,7 @@ export default function AppointmentsPanel() {
               <th />
             </tr>
           </thead>
-          <tbody>
+          <tbody ref={tbodyRef}>
             {visibleAppointments.map((a) => (
               <Fragment key={a.id}>
                 <tr>
@@ -286,7 +359,7 @@ export default function AppointmentsPanel() {
                         >
                           {reschedulingId === a.id ? 'Close' : 'Reschedule'}
                         </button>
-                        <button type="button" className="link" onClick={() => handleCancel(a)}>
+                        <button type="button" className="link" onClick={() => setCancelTarget(a)}>
                           Cancel
                         </button>
                       </>
@@ -344,6 +417,24 @@ export default function AppointmentsPanel() {
           </tbody>
         </table>
       )}
+
+      <AlertDialog open={cancelTarget !== null} onOpenChange={(open) => !open && setCancelTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel appointment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {cancelTarget &&
+                `Cancel ${cancelTarget.patient_name}'s appointment with ${cancelTarget.doctor_name}?`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it</AlertDialogCancel>
+            <AlertDialogAction variant="danger" onClick={confirmCancel}>
+              Cancel appointment
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   )
 }

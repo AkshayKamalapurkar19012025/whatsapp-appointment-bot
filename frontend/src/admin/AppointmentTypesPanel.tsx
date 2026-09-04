@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
+import { Tag } from '@phosphor-icons/react'
 import { ApiError, createAppointmentType, listAppointmentTypeCatalog } from '../api'
 import type { AppointmentTypeSummary } from '../types'
+import { useStaggerReveal } from '../useStaggerReveal'
 
 export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean }) {
   const [types, setTypes] = useState<AppointmentTypeSummary[]>([])
@@ -8,6 +10,7 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const tbodyRef = useStaggerReveal<HTMLTableSectionElement>([types])
 
   function load() {
     setLoading(true)
@@ -68,7 +71,7 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
       {!loading && types.length === 0 && (
         <div className="state-block empty">
           <span className="state-icon" aria-hidden="true">
-            🏷️
+            <Tag size={28} weight="light" />
           </span>
           No appointment types yet.
         </div>
@@ -81,7 +84,7 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
               <th>Name</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody ref={tbodyRef}>
             {types.map((t) => (
               <tr key={t.id}>
                 <td>{t.name}</td>

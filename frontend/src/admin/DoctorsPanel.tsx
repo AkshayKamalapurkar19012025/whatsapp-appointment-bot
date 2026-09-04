@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
+import { Stethoscope } from '@phosphor-icons/react'
 import { ApiError, createDoctor, listAllDoctors } from '../api'
 import type { Doctor } from '../types'
+import { formatDateTime } from '../format'
+import { useStaggerReveal } from '../useStaggerReveal'
 import DoctorDetail from './DoctorDetail'
 
 export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
@@ -10,6 +13,7 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [selectedDoctor, setSelectedDoctor] = useState<Doctor | null>(null)
+  const listRef = useStaggerReveal<HTMLUListElement>([doctors])
 
   function load() {
     setLoading(true)
@@ -65,13 +69,13 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
       {!loading && doctors.length === 0 && (
         <div className="state-block empty">
           <span className="state-icon" aria-hidden="true">
-            🩺
+            <Stethoscope size={28} weight="light" />
           </span>
           No doctors yet.
         </div>
       )}
 
-      <ul className="option-list">
+      <ul className="option-list" ref={listRef}>
         {doctors.map((d) => (
           <li key={d.id}>
             <button
@@ -79,7 +83,11 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
               className={selectedDoctor?.id === d.id ? 'selected' : ''}
               onClick={() => setSelectedDoctor(d)}
             >
-              {d.name}
+              <span>{d.name}</span>
+              <span className="muted doctor-added-meta">
+                Added {formatDateTime(d.created_at)}
+                {d.created_by ? ` by ${d.created_by}` : ''}
+              </span>
             </button>
           </li>
         ))}

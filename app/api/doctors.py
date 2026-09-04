@@ -28,10 +28,11 @@ def get_doctors():
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, name, active
-                FROM doctors
-                WHERE active = TRUE
-                ORDER BY name
+                SELECT d.id, d.name, d.active, d.created_at, s.username
+                FROM doctors d
+                LEFT JOIN staff s ON s.id = d.created_by
+                WHERE d.active = TRUE
+                ORDER BY d.name
                 """
             )
             rows = cur.fetchall()
@@ -41,6 +42,8 @@ def get_doctors():
             "id": row[0],
             "name": row[1],
             "active": row[2],
+            "created_at": row[3].isoformat(),
+            "created_by": row[4],
         }
         for row in rows
     ]
@@ -56,11 +59,11 @@ def create_doctor(
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO doctors (name)
-                    VALUES (%s)
-                    RETURNING id, name, active
+                    INSERT INTO doctors (name, created_by)
+                    VALUES (%s, %s)
+                    RETURNING id, name, active, created_at
                     """,
-                    (doctor.name,),
+                    (doctor.name, admin["id"]),
                 )
                 row = cur.fetchone()
 
@@ -68,6 +71,8 @@ def create_doctor(
             "id": row[0],
             "name": row[1],
             "active": row[2],
+            "created_at": row[3].isoformat(),
+            "created_by": admin["username"],
         }
 
     except psycopg.errors.UniqueViolation:

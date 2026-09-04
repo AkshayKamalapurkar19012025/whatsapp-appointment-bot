@@ -14,6 +14,8 @@ export interface Doctor {
   id: number
   name: string
   active: boolean
+  created_at: string
+  created_by: string | null
 }
 
 export interface AppointmentType {

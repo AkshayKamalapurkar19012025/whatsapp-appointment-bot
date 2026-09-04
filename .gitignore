@@ -33,3 +33,14 @@ htmlcov/
 # Editor / backup files
 *.save
 app/api/booking backup.py
+
+# Cloudflare Tunnel (scripts/start_tunnel.sh) -- credentials, config, and
+# logs for a *named* tunnel, if one is ever set up instead of the default
+# Quick Tunnel. Quick Tunnels themselves create none of this (no login, no
+# cert, no persisted config), but ignore it defensively either way.
+.cloudflared/
+cloudflared.log
+*.pem
+cert.pem
+tunnel*.log
+tunnel*.json

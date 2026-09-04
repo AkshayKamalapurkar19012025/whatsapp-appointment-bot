@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
+import { UsersThree } from '@phosphor-icons/react'
 import { ApiError, createPatientAdmin, listPatients } from '../api'
 import type { Patient } from '../types'
 import PhoneInput from '../PhoneInput'
+import { useStaggerReveal } from '../useStaggerReveal'
 
 export default function PatientsPanel() {
   const [patients, setPatients] = useState<Patient[]>([])
@@ -10,6 +12,7 @@ export default function PatientsPanel() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const tbodyRef = useStaggerReveal<HTMLTableSectionElement>([patients])
 
   function load() {
     setLoading(true)
@@ -69,7 +72,7 @@ export default function PatientsPanel() {
       {!loading && patients.length === 0 && (
         <div className="state-block empty">
           <span className="state-icon" aria-hidden="true">
-            🧑‍⚕️
+            <UsersThree size={28} weight="light" />
           </span>
           No patients yet.
         </div>
@@ -83,7 +86,7 @@ export default function PatientsPanel() {
               <th>WhatsApp number</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody ref={tbodyRef}>
             {patients.map((p) => (
               <tr key={p.id}>
                 <td>{p.name}</td>

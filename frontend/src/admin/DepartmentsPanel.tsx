@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
+import { Buildings } from '@phosphor-icons/react'
 import { ApiError, createDepartment, listDepartments } from '../api'
 import type { Department } from '../types'
+import { useStaggerReveal } from '../useStaggerReveal'
 
 export default function DepartmentsPanel({ isAdmin }: { isAdmin: boolean }) {
   const [departments, setDepartments] = useState<Department[]>([])
@@ -8,6 +10,7 @@ export default function DepartmentsPanel({ isAdmin }: { isAdmin: boolean }) {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const tbodyRef = useStaggerReveal<HTMLTableSectionElement>([departments])
 
   function load() {
     setLoading(true)
@@ -62,7 +65,7 @@ export default function DepartmentsPanel({ isAdmin }: { isAdmin: boolean }) {
       {!loading && departments.length === 0 && (
         <div className="state-block empty">
           <span className="state-icon" aria-hidden="true">
-            🏥
+            <Buildings size={28} weight="light" />
           </span>
           No departments yet.
         </div>
@@ -75,7 +78,7 @@ export default function DepartmentsPanel({ isAdmin }: { isAdmin: boolean }) {
               <th>Name</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody ref={tbodyRef}>
             {departments.map((d) => (
               <tr key={d.id}>
                 <td>{d.name}</td>

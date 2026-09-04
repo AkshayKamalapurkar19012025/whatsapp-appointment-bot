@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { CalendarBlank } from '@phosphor-icons/react'
 import {
   ApiError,
   cancelWebAppointment,
@@ -11,6 +12,17 @@ import type { MyAppointment, MyAppointmentsResponse, Slot } from './types'
 import Calendar from './Calendar'
 import SlotGrid from './SlotGrid'
 import { formatDate, formatTime } from './format'
+import { useStaggerReveal } from './useStaggerReveal'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from './components/ui/alert-dialog'
 
 type Tab = 'upcoming' | 'history' | 'cancelled'
 type RescheduleStep = 'date' | 'slot' | 'review' | 'done'
@@ -56,13 +68,13 @@ export default function MyAppointments({
 
   useEffect(load, [])
 
-  async function handleCancel(appointment: MyAppointment) {
-    if (!window.confirm(`Cancel your ${formatDate(appointment.start_at)} appointment with ${appointment.doctor_name}?`)) {
-      return
-    }
+  const [cancelTarget, setCancelTarget] = useState<MyAppointment | null>(null)
+
+  async function confirmCancel() {
+    if (!cancelTarget) return
     setError(null)
     try {
-      await cancelWebAppointment(appointment.id)
+      await cancelWebAppointment(cancelTarget.id)
       load()
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
@@ -70,6 +82,8 @@ export default function MyAppointments({
         return
       }
       setError(err instanceof ApiError ? err.message : 'Could not cancel the appointment')
+    } finally {
+      setCancelTarget(null)
     }
   }
 
@@ -127,6 +141,7 @@ export default function MyAppointments({
   }
 
   const list: MyAppointment[] = data ? data[tab] : []
+  const listRef = useStaggerReveal<HTMLUListElement>([list])
 
   return (
     <div className="card">
@@ -229,13 +244,13 @@ export default function MyAppointments({
           {!loading && list.length === 0 && (
             <div className="state-block empty">
               <span className="state-icon" aria-hidden="true">
-                📅
+                <CalendarBlank size={28} weight="light" />
               </span>
               Nothing here yet.
             </div>
           )}
 
-          <ul className="appointment-list">
+          <ul className="appointment-list" ref={listRef}>
             {list.map((appointment) => (
               <li key={appointment.id} className="appointment-card">
                 <div>
@@ -251,7 +266,7 @@ export default function MyAppointments({
                     <button type="button" onClick={() => startReschedule(appointment)}>
                       Reschedule
                     </button>
-                    <button type="button" className="danger" onClick={() => handleCancel(appointment)}>
+                    <button type="button" className="danger" onClick={() => setCancelTarget(appointment)}>
                       Cancel
                     </button>
                   </div>
@@ -261,6 +276,24 @@ export default function MyAppointments({
           </ul>
         </>
       )}
+
+      <AlertDialog open={cancelTarget !== null} onOpenChange={(open) => !open && setCancelTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel appointment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {cancelTarget &&
+                `Cancel your ${formatDate(cancelTarget.start_at)} appointment with ${cancelTarget.doctor_name}?`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it</AlertDialogCancel>
+            <AlertDialogAction variant="danger" onClick={confirmCancel}>
+              Cancel appointment
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
