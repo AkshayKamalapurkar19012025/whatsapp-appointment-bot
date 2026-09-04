@@ -65,6 +65,7 @@ export default function AppointmentsPanel({
   const [doctors, setDoctors] = useState<Doctor[]>([])
   const [patients, setPatients] = useState<Patient[]>([])
   const [appointmentTypes, setAppointmentTypes] = useState<AppointmentTypeSummary[]>([])
+  const [tab, setTab] = useState<'upcoming' | 'all'>('upcoming')
   const [doctorFilter, setDoctorFilter] = useState('')
   const [patientFilter, setPatientFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
@@ -113,18 +114,23 @@ export default function AppointmentsPanel({
     listAppointmentTypeCatalog().then(setAppointmentTypes).catch(() => undefined)
   }, [])
 
-  // Free-text patient search is applied client-side over whatever the
-  // server-side filters above already narrowed down to -- the whole
-  // list is already loaded for this panel, so a second round trip for
-  // a substring match would be pure overhead.
+  // Free-text patient search and the Upcoming/All tab are both applied
+  // client-side over whatever the server-side filters above already
+  // narrowed down to -- the whole list is already loaded for this
+  // panel, so a second round trip for a substring match or a "still in
+  // the future" check would be pure overhead. "Upcoming" means booked
+  // and not yet started; there's no separate COMPLETED status (see
+  // migrations/0001_baseline_schema.sql), so a past BOOKED appointment
+  // falls out of Upcoming on its own without needing a status change.
   const searchNeedle = searchText.trim().toLowerCase()
-  const visibleAppointments = searchNeedle
-    ? appointments.filter(
-        (a) =>
-          a.patient_name.toLowerCase().includes(searchNeedle) ||
-          a.whatsapp_number.toLowerCase().includes(searchNeedle),
-      )
-    : appointments
+  const now = Date.now()
+  const visibleAppointments = appointments.filter((a) => {
+    if (tab === 'upcoming' && (a.status !== 'BOOKED' || new Date(a.start_at).getTime() < now)) return false
+    if (!searchNeedle) return true
+    return (
+      a.patient_name.toLowerCase().includes(searchNeedle) || a.whatsapp_number.toLowerCase().includes(searchNeedle)
+    )
+  })
   // Keyed on `appointments` (the server-fetched list), not
   // `visibleAppointments` -- the latter also changes on every keystroke
   // of the client-side name/number search above, which would restage
@@ -178,6 +184,19 @@ export default function AppointmentsPanel({
         </button>
       </div>
       {error && <p className="error">{error}</p>}
+
+      <div className="tabs">
+        {(['upcoming', 'all'] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            className={t === tab ? 'tab active' : 'tab'}
+            onClick={() => setTab(t)}
+          >
+            {t === 'upcoming' ? 'Upcoming' : 'All'}
+          </button>
+        ))}
+      </div>
 
       <div className="filter-bar">
         <label className="inline-label">
@@ -315,7 +334,9 @@ export default function AppointmentsPanel({
           </span>
           {appointments.length === 0
             ? 'No appointments found.'
-            : 'No appointments match your search.'}
+            : tab === 'upcoming'
+              ? 'No upcoming appointments.'
+              : 'No appointments match your search.'}
         </div>
       )}
 

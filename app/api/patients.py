@@ -71,19 +71,32 @@ def get_patients(staff: dict = Depends(get_current_staff)):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, name, whatsapp_number
-                FROM patients
-                ORDER BY name
+                SELECT
+                    p.id,
+                    p.name,
+                    p.whatsapp_number,
+                    COUNT(a.id) FILTER (WHERE a.status != 'CANCELLED')
+                FROM patients p
+                LEFT JOIN appointments a ON a.patient_id = p.id
+                GROUP BY p.id, p.name, p.whatsapp_number
+                ORDER BY p.name
                 """
             )
 
             rows = cur.fetchall()
 
+    # "Recurring" here means the patient has more than one appointment
+    # on record that was never cancelled (2+ actual visits/bookings);
+    # 0 or 1 reads as "first-time" -- there is no separate COMPLETED
+    # status (see migrations/0001_baseline_schema.sql), so a BOOKED row
+    # already in the past still counts as a real visit.
     return [
         {
             "id": row[0],
             "name": row[1],
             "whatsapp_number": row[2],
+            "appointment_count": row[3],
+            "patient_type": "recurring" if row[3] > 1 else "first-time",
         }
         for row in rows
     ]

@@ -189,6 +189,7 @@ export default function AdminApp() {
     <div className="page">
       <div className="admin-shell admin-shell-topnav">
         <header className="admin-topbar">
+          <NavMenuToggle onClick={() => setMenuOpen(true)} />
           <div className="admin-topbar-brand">
             <span className="brand-mark">A</span>
             <span>
@@ -198,7 +199,6 @@ export default function AdminApp() {
               </span>
             </span>
           </div>
-          <NavMenuToggle onClick={() => setMenuOpen(true)} />
         </header>
 
         <main className="admin-content admin-content-full">

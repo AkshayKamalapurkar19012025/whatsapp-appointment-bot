@@ -1066,6 +1066,16 @@ a.link:hover {
   color: var(--color-text-secondary);
 }
 
+.pill.patient-recurring {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-hover);
+}
+
+.pill.patient-first-time {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-secondary);
+}
+
 .duration-pill {
   background: var(--color-primary-soft);
   color: var(--color-primary-hover);
@@ -1163,11 +1173,11 @@ a.link:hover {
 }
 
 /* ===========================================================
-   Nav menu -- full-screen "reveal a visual per hovered item" menu
+   Nav menu -- left-side "reveal a visual per hovered item" drawer
    (NavMenu.tsx), opened from the topbar's hamburger toggle. Interaction
-   concept only (large numbered list, per-item hover-revealed visual,
-   arrow that responds to hover) -- colors/typography/icons are this
-   app's own existing tokens, not copied branding.
+   concept only (numbered list, per-item hover-revealed preview, arrow
+   that responds to hover) -- colors/typography/icons are this app's own
+   existing tokens, not copied branding.
    =========================================================== */
 
 .nav-menu-toggle {
@@ -1194,31 +1204,36 @@ a.link:hover {
   transform: scale(0.94);
 }
 
-.nav-menu-overlay {
+.nav-menu-drawer {
   position: fixed;
-  inset: 0;
+  inset: 0 auto 0 0;
   z-index: 300;
+  width: min(420px, 92vw);
   background: var(--color-bg);
+  border-right: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
 }
 
+.nav-menu-drawer-header {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-4) var(--space-4) 0;
+  flex-shrink: 0;
+}
+
 .nav-menu-close {
-  position: absolute;
-  top: var(--space-6);
-  right: var(--space-6);
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-surface);
+  background: var(--color-bg-subtle);
   border: 1px solid var(--color-border);
   color: var(--color-text);
-  box-shadow: var(--shadow-sm);
-  z-index: 1;
   transition: background 0.12s ease, transform 0.12s ease;
 }
 
@@ -1231,50 +1246,55 @@ a.link:hover {
   transform: scale(0.92) rotate(90deg);
 }
 
-.nav-menu-body {
-  flex: 1;
+.nav-menu-visual {
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-5) 0;
+}
+
+.nav-menu-visual-card {
+  height: 128px;
+  border-radius: var(--radius-lg);
+  background: var(--color-primary-soft);
+  border: 1px solid var(--color-primary-soft-strong);
   display: flex;
   align-items: center;
-  gap: var(--space-8);
-  max-width: 1180px;
-  width: 100%;
-  margin: 0 auto;
-  padding: calc(var(--space-8) + 44px) var(--space-6) var(--space-6);
+  justify-content: center;
+}
+
+.nav-menu-visual-icon {
+  display: inline-flex;
+  color: var(--color-primary);
+  transform: scale(2.6);
 }
 
 .nav-menu-list {
   list-style: none;
   margin: 0;
-  padding: 0;
-  flex: 1 1 55%;
-  min-width: 0;
+  padding: var(--space-4) var(--space-2) var(--space-2);
+  flex: 1;
 }
 
 .nav-menu-item {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
   width: 100%;
   text-align: left;
   background: none;
   border: none;
-  border-top: 1px solid var(--color-border);
-  padding: var(--space-4) var(--space-2);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
   color: var(--color-text-muted);
   cursor: pointer;
-  transition: color 0.18s ease, padding-left 0.18s ease;
-}
-
-.nav-menu-list li:last-child .nav-menu-item {
-  border-bottom: 1px solid var(--color-border);
+  transition: color 0.18s ease, background 0.18s ease, padding-left 0.18s ease;
 }
 
 .nav-menu-item-index {
-  font-size: 0.85rem;
+  font-size: 0.78rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
-  width: 28px;
+  width: 22px;
   flex-shrink: 0;
 }
 
@@ -1288,17 +1308,18 @@ a.link:hover {
 .nav-menu-item-label {
   flex: 1;
   font-family: var(--font-heading);
-  font-size: clamp(1.4rem, 3vw, 2.1rem);
+  font-size: 1.05rem;
   font-weight: 700;
   color: var(--color-text);
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
+  min-width: 0;
 }
 
 .nav-menu-item-badge {
   font-family: var(--font-sans);
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1306,7 +1327,8 @@ a.link:hover {
   background: var(--color-bg-subtle);
   border: 1px solid var(--color-border);
   border-radius: 999px;
-  padding: 3px 10px;
+  padding: 2px 8px;
+  white-space: nowrap;
 }
 
 .nav-menu-item-arrow {
@@ -1314,14 +1336,15 @@ a.link:hover {
   display: inline-flex;
   color: var(--color-primary);
   opacity: 0;
-  transform: translate(-6px, 6px);
+  transform: translate(-6px, 0);
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 
 .nav-menu-item:not(.disabled):hover,
 .nav-menu-item:not(.disabled):focus-visible {
   color: var(--color-primary-hover);
-  padding-left: var(--space-3);
+  background: var(--color-bg-subtle);
+  padding-left: calc(var(--space-3) + 4px);
 }
 
 .nav-menu-item:not(.disabled):hover .nav-menu-item-label,
@@ -1335,6 +1358,10 @@ a.link:hover {
   transform: translate(0, 0);
 }
 
+.nav-menu-item.active {
+  background: var(--color-primary-soft);
+}
+
 .nav-menu-item.active .nav-menu-item-label {
   color: var(--color-primary-hover);
 }
@@ -1344,8 +1371,8 @@ a.link:hover {
 }
 
 /* Disabled ("Coming soon") items must not offer any hover affordance --
-   no arrow reveal, no color/position shift -- since they don't navigate
-   anywhere; only their fixed 0.5 opacity distinguishes them. */
+   no arrow reveal, no color/background shift -- since they don't
+   navigate anywhere; only their fixed 0.5 opacity distinguishes them. */
 .nav-menu-item.disabled {
   cursor: default;
 }
@@ -1359,36 +1386,13 @@ a.link:hover {
   color: var(--color-text);
 }
 
-.nav-menu-visual {
-  flex: 0 0 40%;
-}
-
-.nav-menu-visual-card {
-  aspect-ratio: 1;
-  max-width: 320px;
-  margin: 0 auto;
-  border-radius: var(--radius-lg);
-  background: var(--color-primary-soft);
-  border: 1px solid var(--color-primary-soft-strong);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.nav-menu-visual-icon {
-  display: inline-flex;
-  color: var(--color-primary);
-  transform: scale(4.4);
-}
-
 .nav-menu-footer {
   border-top: 1px solid var(--color-border);
-  padding: var(--space-4) var(--space-6) var(--space-6);
-  max-width: 1180px;
-  width: 100%;
-  margin: 0 auto;
+  padding: var(--space-4) var(--space-5) var(--space-5);
   display: flex;
-  gap: var(--space-5);
+  flex-direction: column;
+  gap: var(--space-2);
+  flex-shrink: 0;
 }
 
 .nav-menu-footer .link {
@@ -1405,21 +1409,7 @@ a.link:hover {
   }
   .nav-menu-item:hover,
   .nav-menu-item:focus-visible {
-    padding-left: var(--space-2);
-  }
-}
-
-@media (max-width: 760px) {
-  .nav-menu-body {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-4);
-  }
-  .nav-menu-visual {
-    display: none;
-  }
-  .nav-menu-item-label {
-    font-size: 1.3rem;
+    padding-left: var(--space-3);
   }
 }
 

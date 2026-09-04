@@ -12,22 +12,24 @@ export interface NavMenuItem {
   onSelect?: () => void
 }
 
-// Full-screen "reveal a large visual per hovered item" navigation menu,
-// in place of the old always-visible sidebar -- same interaction concept
-// as a large numbered list menu that shows a big illustration for
+// Left-side "reveal a visual per hovered item" navigation drawer, in
+// place of the old always-visible sidebar -- same interaction concept
+// as a numbered list menu that shows a preview illustration for
 // whichever row the pointer is over (see AdminApp.tsx's comment for
 // which real reference this restyles: existing brand colors/typography,
-// not that site's own branding/assets/copy). Every existing section is
-// still just a button that flips `section` state in AdminApp -- this
-// component only changes how that choice is presented, not what any of
-// it does or which roles can reach which item (adminOnly filtering,
-// RBAC enforcement, etc. all still live in AdminApp/the backend).
+// not that site's own branding/assets/copy), adapted to a narrower
+// left-edge panel instead of a full-screen takeover. Every existing
+// section is still just a button that flips `section` state in
+// AdminApp -- this component only changes how that choice is
+// presented, not what any of it does or which roles can reach which
+// item (adminOnly filtering, RBAC enforcement, etc. all still live in
+// AdminApp/the backend).
 //
-// Desktop (hover-capable) pointers get the large reveal panel; touch/
-// coarse pointers never receive hover events at all, so they just get
-// the plain numbered list with each row's own inline icon -- there is
-// no two-step "reveal then tap" on mobile, tapping a row navigates
-// immediately, per explicit responsive requirement.
+// Desktop (hover-capable) pointers get the preview panel reacting to
+// hover; touch/coarse pointers never receive hover events at all, so
+// they just get the plain numbered list with each row's own inline
+// icon -- there is no two-step "reveal then tap" on mobile, tapping a
+// row navigates immediately, per explicit responsive requirement.
 export default function NavMenu({
   open,
   onClose,
@@ -40,12 +42,23 @@ export default function NavMenu({
   footerItems?: { key: string; label: string; onSelect: () => void }[]
 }) {
   const [hovered, setHovered] = useState<string | null>(null)
-  const overlayRef = useRef<HTMLDivElement | null>(null)
+  // `rendered` stays true slightly longer than `open` so the drawer can
+  // play its slide-out animation before actually leaving the DOM --
+  // without this the drawer would just vanish instantly on close, which
+  // reads as broken for a panel whose whole identity is "slides in from
+  // the edge."
+  const [rendered, setRendered] = useState(false)
+  const drawerRef = useRef<HTMLDivElement | null>(null)
+  const backdropRef = useRef<HTMLDivElement | null>(null)
   const visualRef = useRef<HTMLDivElement | null>(null)
 
-  // Every close path (Escape, the X button, picking an item, a footer
-  // link) goes through this so the hovered/revealed item never carries
-  // over stale into the next time the menu opens.
+  function reducedMotion() {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  }
+
+  // Every close path (Escape, the X button, the backdrop, picking an
+  // item, a footer link) goes through this so the hovered/revealed item
+  // never carries over stale into the next time the menu opens.
   function close() {
     setHovered(null)
     onClose()
@@ -64,52 +77,93 @@ export default function NavMenu({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
+  // Mount as soon as `open` goes true; unmounting is deferred to the
+  // exit-animation effect below.
   useEffect(() => {
-    if (!open) return
-    const container = overlayRef.current
-    if (!container) return
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
-    gsap.fromTo(
-      container,
-      { opacity: 0 },
-      { opacity: 1, duration: 0.25, ease: 'power2.out' },
-    )
-    const rows = container.querySelectorAll('.nav-menu-item')
+    if (open) setRendered(true)
+  }, [open])
+
+  // Slide-in entrance, keyed on `rendered` (not `open`) so it only fires
+  // once the drawer is actually in the DOM and drawerRef is populated.
+  useEffect(() => {
+    if (!rendered) return
+    const drawer = drawerRef.current
+    if (!drawer) return
+    if (reducedMotion()) return
+    gsap.set(drawer, { xPercent: -100 })
+    gsap.to(drawer, { xPercent: 0, duration: 0.32, ease: 'power2.out' })
+    if (backdropRef.current) {
+      gsap.fromTo(backdropRef.current, { opacity: 0 }, { opacity: 1, duration: 0.25, ease: 'power2.out' })
+    }
+    const rows = drawer.querySelectorAll('.nav-menu-item')
     gsap.fromTo(
       rows,
-      { opacity: 0, y: 14 },
-      { opacity: 1, y: 0, duration: 0.35, ease: 'power2.out', stagger: 0.04, delay: 0.05 },
+      { opacity: 0, x: -12 },
+      { opacity: 1, x: 0, duration: 0.3, ease: 'power2.out', stagger: 0.035, delay: 0.08 },
     )
+  }, [rendered])
+
+  // Slide-out exit, keyed on `open` -- only runs when closing a drawer
+  // that's currently rendered, and removes it from the DOM once the
+  // animation completes.
+  useEffect(() => {
+    if (open) return
+    if (!rendered) return
+    const drawer = drawerRef.current
+    if (!drawer || reducedMotion()) {
+      setRendered(false)
+      return
+    }
+    const tl = gsap.timeline({ onComplete: () => setRendered(false) })
+    tl.to(drawer, { xPercent: -100, duration: 0.26, ease: 'power2.in' }, 0)
+    if (backdropRef.current) {
+      tl.to(backdropRef.current, { opacity: 0, duration: 0.2, ease: 'power2.in' }, 0)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   useEffect(() => {
     const visual = visualRef.current
     if (!visual) return
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    if (reducedMotion()) return
     gsap.fromTo(
       visual,
-      { opacity: 0, scale: 0.92 },
-      { opacity: 1, scale: 1, duration: 0.3, ease: 'power2.out', overwrite: true },
+      { opacity: 0, scale: 0.94 },
+      { opacity: 1, scale: 1, duration: 0.28, ease: 'power2.out', overwrite: true },
     )
   }, [hovered])
 
-  if (!open) return null
+  if (!rendered) return null
 
   const visualItem = items.find((i) => i.key === hovered) ?? items.find((i) => i.active) ?? items[0]
 
   return (
-    <div
-      className="nav-menu-overlay"
-      ref={overlayRef}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Navigation menu"
-    >
-      <button type="button" className="nav-menu-close" onClick={close} aria-label="Close menu">
-        <X size={22} weight="bold" />
-      </button>
+    <>
+      <div
+        className="nav-menu-backdrop fixed inset-0 z-[299] bg-black/40 backdrop-blur-sm"
+        ref={backdropRef}
+        onClick={close}
+        aria-hidden="true"
+      />
+      <div
+        className="nav-menu-drawer"
+        ref={drawerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Navigation menu"
+      >
+        <div className="nav-menu-drawer-header">
+          <button type="button" className="nav-menu-close" onClick={close} aria-label="Close menu">
+            <X size={20} weight="bold" />
+          </button>
+        </div>
 
-      <div className="nav-menu-body">
+        <div className="nav-menu-visual" aria-hidden="true">
+          <div className="nav-menu-visual-card" ref={visualRef} key={visualItem?.key}>
+            <span className="nav-menu-visual-icon">{visualItem?.icon}</span>
+          </div>
+        </div>
+
         <ul className="nav-menu-list" onMouseLeave={() => setHovered(null)}>
           {items.map((item, index) => (
             <li key={item.key}>
@@ -134,38 +188,32 @@ export default function NavMenu({
                   {item.disabled && <span className="nav-menu-item-badge">Coming soon</span>}
                 </span>
                 <span className="nav-menu-item-arrow" aria-hidden="true">
-                  <ArrowUpRight size={22} weight="bold" />
+                  <ArrowUpRight size={20} weight="bold" />
                 </span>
               </button>
             </li>
           ))}
         </ul>
 
-        <div className="nav-menu-visual" aria-hidden="true">
-          <div className="nav-menu-visual-card" ref={visualRef} key={visualItem?.key}>
-            <span className="nav-menu-visual-icon">{visualItem?.icon}</span>
+        {footerItems && footerItems.length > 0 && (
+          <div className="nav-menu-footer">
+            {footerItems.map((f) => (
+              <button
+                key={f.key}
+                type="button"
+                className="link"
+                onClick={() => {
+                  f.onSelect()
+                  close()
+                }}
+              >
+                {f.label}
+              </button>
+            ))}
           </div>
-        </div>
+        )}
       </div>
-
-      {footerItems && footerItems.length > 0 && (
-        <div className="nav-menu-footer">
-          {footerItems.map((f) => (
-            <button
-              key={f.key}
-              type="button"
-              className="link"
-              onClick={() => {
-                f.onSelect()
-                close()
-              }}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    </>
   )
 }
 
