@@ -2,6 +2,10 @@ export interface Patient {
   id: number
   name: string
   whatsapp_number: string
+  // Absent on the plain create-patient response (a brand new patient has
+  // no appointments yet) -- only the list endpoint computes these.
+  appointment_count?: number
+  patient_type?: 'first-time' | 'recurring'
 }
 
 export interface Department {
