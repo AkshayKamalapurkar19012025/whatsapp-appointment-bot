@@ -20,10 +20,12 @@ import AppointmentTypesPanel from './AppointmentTypesPanel'
 import StaffAccountsPanel from './StaffAccountsPanel'
 import PatientsPanel from './PatientsPanel'
 import AppointmentsPanel from './AppointmentsPanel'
+import BookAppointmentPanel from './BookAppointmentPanel'
 import AdminSidebar, { type AdminSidebarItem } from './AdminSidebar'
 
 type Section =
   | 'appointments'
+  | 'book-appointment'
   | 'doctors'
   | 'departments'
   | 'appointment-types'
@@ -41,7 +43,6 @@ export default function AdminApp() {
   const [staff, setStaff] = useState<Staff | null>(null)
   const [checkingSession, setCheckingSession] = useState(true)
   const [section, setSection] = useState<Section>('appointments')
-  const [bookAppointmentSignal, setBookAppointmentSignal] = useState(0)
 
   useEffect(() => {
     if (!getStaffToken()) {
@@ -69,11 +70,6 @@ export default function AdminApp() {
 
   function goTo(target: Section) {
     setSection(target)
-  }
-
-  function bookAppointment() {
-    setSection('appointments')
-    setBookAppointmentSignal((n) => n + 1)
   }
 
   if (checkingSession) {
@@ -123,7 +119,8 @@ export default function AdminApp() {
       key: 'book-appointment',
       label: 'Book Appointment',
       icon: <CalendarPlus size={20} weight="regular" />,
-      onSelect: bookAppointment,
+      active: section === 'book-appointment',
+      onSelect: () => goTo('book-appointment'),
     },
     {
       key: 'doctors',
@@ -195,7 +192,10 @@ export default function AdminApp() {
         />
 
         <main className="admin-content">
-          {section === 'appointments' && <AppointmentsPanel autoOpenCreateSignal={bookAppointmentSignal} />}
+          {section === 'appointments' && <AppointmentsPanel onBookAppointment={() => goTo('book-appointment')} />}
+          {section === 'book-appointment' && (
+            <BookAppointmentPanel onViewAppointments={() => goTo('appointments')} />
+          )}
           {section === 'doctors' && <DoctorsPanel isAdmin={isAdmin} />}
           {section === 'departments' && <DepartmentsPanel isAdmin={isAdmin} />}
           {section === 'appointment-types' && <AppointmentTypesPanel isAdmin={isAdmin} />}

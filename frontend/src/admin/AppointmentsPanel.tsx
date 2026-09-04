@@ -15,28 +15,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import {
   ApiError,
   cancelAdminAppointment,
-  createAdminAppointment,
-  createPatientAdmin,
   listAdminAppointments,
   listAllDoctors,
   listAppointmentTypeCatalog,
-  listAppointmentTypesForDoctor,
   listPatients,
   rescheduleAdminAppointment,
 } from '../api'
-import type {
-  AdminAppointment,
-  AppointmentType,
-  AppointmentTypeSummary,
-  Doctor,
-  Patient,
-  Slot,
-} from '../types'
+import type { AdminAppointment, AppointmentTypeSummary, Doctor, Patient, Slot } from '../types'
 import { formatDate, formatTime } from '../format'
 import AdminSlotPicker from './AdminSlotPicker'
-import PhoneInput from '../PhoneInput'
 
-const NEW_PATIENT_VALUE = '__new__'
 // Radix Select.Item disallows an empty-string value (it's reserved
 // internally for "no selection"), so the "All" filter option -- which
 // maps to '' for the actual doctorFilter/etc. state, meaning "don't
@@ -53,14 +41,14 @@ function durationBetween(startAt: string, endAt: string): number {
 }
 
 export default function AppointmentsPanel({
-  autoOpenCreateSignal,
+  onBookAppointment,
 }: {
-  // Bumped by the nav menu's "Book Appointment" item (see AdminApp.tsx)
-  // to open the create form even when this panel is already mounted/on
-  // screen -- a plain boolean prop wouldn't re-trigger on a second click
-  // once already true, so the caller increments a counter instead.
-  autoOpenCreateSignal?: number
-} = {}) {
+  // Routes to the dedicated Book Appointment section (see AdminApp.tsx)
+  // -- booking itself no longer happens inline on this page, which is
+  // purely for viewing/filtering/managing appointments that already
+  // exist.
+  onBookAppointment: () => void
+}) {
   const [appointments, setAppointments] = useState<AdminAppointment[]>([])
   const [doctors, setDoctors] = useState<Doctor[]>([])
   const [patients, setPatients] = useState<Patient[]>([])
@@ -75,18 +63,9 @@ export default function AppointmentsPanel({
   const [searchText, setSearchText] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [showCreate, setShowCreate] = useState(false)
   const [reschedulingId, setReschedulingId] = useState<number | null>(null)
   const [rescheduleSlot, setRescheduleSlot] = useState<Slot | null>(null)
   const [rescheduleBusy, setRescheduleBusy] = useState(false)
-
-  useEffect(() => {
-    if (autoOpenCreateSignal) setShowCreate(true)
-    // Only autoOpenCreateSignal should retrigger this -- showCreate is
-    // intentionally excluded so the user closing the form again doesn't
-    // immediately reopen it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoOpenCreateSignal])
 
   function load() {
     setLoading(true)
@@ -179,10 +158,11 @@ export default function AppointmentsPanel({
     <section>
       <div className="admin-content-header">
         <h2>Appointments</h2>
-        <button type="button" className="btn" style={{ width: 'auto' }} onClick={() => setShowCreate((v) => !v)}>
-          {showCreate ? 'Close' : '+ Book on behalf of a patient'}
+        <button type="button" className="btn" style={{ width: 'auto' }} onClick={onBookAppointment}>
+          + Book appointment
         </button>
       </div>
+      <p className="muted">View, filter, reschedule, and cancel existing appointments.</p>
       {error && <p className="error">{error}</p>}
 
       <div className="tabs">
@@ -308,18 +288,6 @@ export default function AppointmentsPanel({
           </button>
         )}
       </div>
-
-      {showCreate && (
-        <CreateAppointmentForm
-          doctors={doctors}
-          patients={patients}
-          onPatientCreated={(patient) => setPatients((prev) => [...prev, patient])}
-          onCreated={() => {
-            setShowCreate(false)
-            load()
-          }}
-        />
-      )}
 
       {loading && (
         <div className="state-block">
@@ -457,165 +425,5 @@ export default function AppointmentsPanel({
         </AlertDialogContent>
       </AlertDialog>
     </section>
-  )
-}
-
-function CreateAppointmentForm({
-  doctors,
-  patients,
-  onPatientCreated,
-  onCreated,
-}: {
-  doctors: Doctor[]
-  patients: Patient[]
-  onPatientCreated: (patient: Patient) => void
-  onCreated: () => void
-}) {
-  const [doctorId, setDoctorId] = useState('')
-  const [patientId, setPatientId] = useState('')
-  const [appointmentTypeId, setAppointmentTypeId] = useState('')
-  const [types, setTypes] = useState<AppointmentType[]>([])
-  const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null)
-  const [newPatientName, setNewPatientName] = useState('')
-  const [newPatientPhone, setNewPatientPhone] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-
-  const isNewPatient = patientId === NEW_PATIENT_VALUE
-
-  useEffect(() => {
-    setAppointmentTypeId('')
-    setSelectedSlot(null)
-    if (!doctorId) {
-      setTypes([])
-      return
-    }
-    listAppointmentTypesForDoctor(Number(doctorId))
-      .then(setTypes)
-      .catch(() => setTypes([]))
-  }, [doctorId])
-
-  useEffect(() => {
-    setSelectedSlot(null)
-  }, [appointmentTypeId])
-
-  const selectedType = types.find((t) => String(t.id) === appointmentTypeId) ?? null
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!doctorId || !patientId || !appointmentTypeId || !selectedSlot) return
-    if (isNewPatient && (!newPatientName.trim() || !newPatientPhone)) return
-    setError(null)
-    setBusy(true)
-    try {
-      let targetPatientId = Number(patientId)
-      if (isNewPatient) {
-        const created = await createPatientAdmin(newPatientName.trim(), newPatientPhone)
-        onPatientCreated(created)
-        targetPatientId = created.id
-      }
-      await createAdminAppointment(
-        Number(doctorId),
-        targetPatientId,
-        Number(appointmentTypeId),
-        selectedSlot.start_at,
-      )
-      onCreated()
-    } catch (err) {
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : isNewPatient
-            ? 'Could not create the new patient'
-            : 'Could not create appointment',
-      )
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <form className="detail-section" onSubmit={handleSubmit}>
-      <h4>Book on behalf of a patient</h4>
-      <div className="inline-form wrap">
-        <label className="inline-label">
-          Doctor
-          <select value={doctorId} onChange={(e) => setDoctorId(e.target.value)} required>
-            <option value="">Choose…</option>
-            {doctors.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="inline-label">
-          Patient
-          <select value={patientId} onChange={(e) => setPatientId(e.target.value)} required>
-            <option value="">Choose…</option>
-            <option value={NEW_PATIENT_VALUE}>+ New patient…</option>
-            {patients.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="inline-label">
-          Appointment type
-          <select
-            value={appointmentTypeId}
-            onChange={(e) => setAppointmentTypeId(e.target.value)}
-            required
-            disabled={!doctorId}
-          >
-            <option value="">Choose…</option>
-            {types.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name} ({t.duration_minutes} min)
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      {isNewPatient && (
-        <div className="inline-form wrap" style={{ marginTop: 0 }}>
-          <label className="inline-label">
-            New patient's name
-            <input
-              placeholder="Full name"
-              value={newPatientName}
-              onChange={(e) => setNewPatientName(e.target.value)}
-              required
-            />
-          </label>
-          <label className="inline-label">
-            Mobile number
-            <PhoneInput value={newPatientPhone} onChange={setNewPatientPhone} />
-          </label>
-        </div>
-      )}
-
-      {doctorId && selectedType && (
-        <AdminSlotPicker
-          doctorId={Number(doctorId)}
-          appointmentTypeId={selectedType.id}
-          durationMinutes={selectedType.duration_minutes}
-          selectedSlot={selectedSlot}
-          onSelect={setSelectedSlot}
-        />
-      )}
-
-      {error && <p className="error">{error}</p>}
-      <button
-        type="submit"
-        className="btn"
-        style={{ width: 'auto' }}
-        disabled={busy || !selectedSlot || (isNewPatient && (!newPatientName.trim() || !newPatientPhone))}
-      >
-        {busy ? 'Booking…' : 'Book appointment'}
-      </button>
-    </form>
   )
 }

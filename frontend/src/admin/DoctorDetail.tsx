@@ -250,6 +250,7 @@ function DepartmentAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmin: bo
   const [selected, setSelected] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [removeTarget, setRemoveTarget] = useState<Department | null>(null)
+  const [pendingAssign, setPendingAssign] = useState<Department | null>(null)
 
   function load() {
     Promise.all([getDoctorDepartments(doctor.id), listDepartments()])
@@ -264,16 +265,24 @@ function DepartmentAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmin: bo
 
   const unassigned = allDepartments.filter((d) => !assigned.some((a) => a.id === d.id))
 
-  async function handleAssign(e: React.FormEvent) {
+  function handleSubmitAssign(e: React.FormEvent) {
     e.preventDefault()
     if (!selected) return
+    const department = unassigned.find((d) => String(d.id) === selected)
+    if (department) setPendingAssign(department)
+  }
+
+  async function confirmAssign() {
+    if (!pendingAssign) return
     setError(null)
     try {
-      await assignDoctorToDepartment(doctor.id, Number(selected))
+      await assignDoctorToDepartment(doctor.id, pendingAssign.id)
       setSelected('')
       load()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not assign department')
+    } finally {
+      setPendingAssign(null)
     }
   }
 
@@ -308,7 +317,7 @@ function DepartmentAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmin: bo
         {assigned.length === 0 && <li className="muted">Not assigned to any department.</li>}
       </ul>
       {isAdmin && unassigned.length > 0 && (
-        <form className="inline-form" onSubmit={handleAssign}>
+        <form className="inline-form" onSubmit={handleSubmitAssign}>
           <select value={selected} onChange={(e) => setSelected(e.target.value)} required>
             <option value="">Add to department…</option>
             {unassigned.map((d) => (
@@ -337,6 +346,21 @@ function DepartmentAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmin: bo
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog open={pendingAssign !== null} onOpenChange={(open) => !open && setPendingAssign(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Assign this department?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingAssign && `Assign ${doctor.name} to ${pendingAssign.name}?`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmAssign}>Save</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -355,6 +379,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [removeTarget, setRemoveTarget] = useState<DoctorScheduleEntry | null>(null)
+  const [confirmCreateOpen, setConfirmCreateOpen] = useState(false)
 
   function load() {
     getDoctorScheduleAdmin(doctor.id)
@@ -417,7 +442,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
     return segments
   }
 
-  async function handleCreate(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
 
@@ -436,6 +461,11 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
       return
     }
 
+    setConfirmCreateOpen(true)
+  }
+
+  async function confirmCreate() {
+    setConfirmCreateOpen(false)
     const segments = scheduleSegments()
     setBusy(true)
     try {
@@ -555,8 +585,29 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
         </AlertDialogContent>
       </AlertDialog>
 
+      <AlertDialog open={confirmCreateOpen} onOpenChange={setConfirmCreateOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Add this schedule?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {DAY_NAMES[Number(dayOfWeek)]}, {formatTimeOfDay(startTime)}–{formatTimeOfDay(endTime)}
+              {sortedBreaks.length > 0 &&
+                ` (minus ${sortedBreaks.map((b) => `${formatTimeOfDay(b.start)}–${formatTimeOfDay(b.end)}`).join(', ')})`}
+              {startDate || endDate
+                ? `, ${startDate ? formatDate(startDate) : 'always'} – ${endDate ? formatDate(endDate) : 'always'}`
+                : ', every week'}
+              .
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmCreate}>Save</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {isAdmin && (
-        <form className="inline-form wrap" onSubmit={handleCreate}>
+        <form className="inline-form wrap" onSubmit={handleSubmit}>
           <select value={dayOfWeek} onChange={(e) => setDayOfWeek(e.target.value)}>
             {DAY_NAMES.slice(1).map((name, i) => (
               <option key={i + 1} value={i + 1}>
@@ -665,6 +716,7 @@ function BlocksSection({ doctor }: { doctor: Doctor }) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [removeTarget, setRemoveTarget] = useState<DoctorBlockEntry | null>(null)
+  const [confirmCreateOpen, setConfirmCreateOpen] = useState(false)
 
   function load() {
     getDoctorBlocks(doctor.id)
@@ -674,7 +726,7 @@ function BlocksSection({ doctor }: { doctor: Doctor }) {
 
   useEffect(load, [doctor.id])
 
-  async function handleCreate(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
     // The date field is no longer a native <input required> (it's the
@@ -684,6 +736,11 @@ function BlocksSection({ doctor }: { doctor: Doctor }) {
       setError('Choose a date for this block')
       return
     }
+    setConfirmCreateOpen(true)
+  }
+
+  async function confirmCreate() {
+    setConfirmCreateOpen(false)
     setBusy(true)
     try {
       await createDoctorBlock(
@@ -731,7 +788,7 @@ function BlocksSection({ doctor }: { doctor: Doctor }) {
         {blocks.length === 0 && <li className="muted">No blocks scheduled.</li>}
       </ul>
 
-      <form className="inline-form wrap" onSubmit={handleCreate}>
+      <form className="inline-form wrap" onSubmit={handleSubmit}>
         <AdminDatePicker value={date} onChange={setDate} label={date ? 'Change date' : 'Pick a date'} />
         <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required />
         <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required />
@@ -763,6 +820,22 @@ function BlocksSection({ doctor }: { doctor: Doctor }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AlertDialog open={confirmCreateOpen} onOpenChange={setConfirmCreateOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Add this block?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {date &&
+                `Block ${formatDate(date)}, ${formatTimeOfDay(startTime)}–${formatTimeOfDay(endTime)}${reason ? ` (${reason})` : ''}? Patients won't be able to book into this time.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmCreate}>Save</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
@@ -776,6 +849,7 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
   const [duration, setDuration] = useState(30)
   const [error, setError] = useState<string | null>(null)
   const [removeTarget, setRemoveTarget] = useState<AppointmentType | null>(null)
+  const [pendingAssign, setPendingAssign] = useState<AppointmentTypeSummary | null>(null)
 
   function load() {
     Promise.all([listAppointmentTypesForDoctor(doctor.id), listAppointmentTypeCatalog()])
@@ -792,17 +866,25 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
 
   const unassigned = catalog.filter((c) => !assigned.some((a) => a.id === c.id))
 
-  async function handleAssign(e: React.FormEvent) {
+  function handleSubmitAssign(e: React.FormEvent) {
     e.preventDefault()
     if (!selected) return
+    const type = unassigned.find((c) => String(c.id) === selected)
+    if (type) setPendingAssign(type)
+  }
+
+  async function confirmAssign() {
+    if (!pendingAssign) return
     setError(null)
     try {
-      await assignAppointmentTypeToDoctor(doctor.id, Number(selected), duration)
+      await assignAppointmentTypeToDoctor(doctor.id, pendingAssign.id, duration)
       setSelected('')
       setDuration(30)
       load()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not assign appointment type')
+    } finally {
+      setPendingAssign(null)
     }
   }
 
@@ -839,7 +921,7 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
       </ul>
 
       {isAdmin && unassigned.length > 0 && (
-        <form className="inline-form wrap" onSubmit={handleAssign}>
+        <form className="inline-form wrap" onSubmit={handleSubmitAssign}>
           <select value={selected} onChange={(e) => setSelected(e.target.value)} required>
             <option value="">Add appointment type…</option>
             {unassigned.map((c) => (
@@ -883,6 +965,21 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
             <AlertDialogAction variant="danger" onClick={confirmRemove}>
               Remove
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={pendingAssign !== null} onOpenChange={(open) => !open && setPendingAssign(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Assign this appointment type?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingAssign && `Offer ${pendingAssign.name} (${duration} min) for ${doctor.name}?`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmAssign}>Save</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

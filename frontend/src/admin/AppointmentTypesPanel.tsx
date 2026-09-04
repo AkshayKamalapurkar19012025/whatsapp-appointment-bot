@@ -3,10 +3,21 @@ import { Tag } from '@phosphor-icons/react'
 import { ApiError, createAppointmentType, listAppointmentTypeCatalog } from '../api'
 import type { AppointmentTypeSummary } from '../types'
 import { useStaggerReveal } from '../useStaggerReveal'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog'
 
 export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean }) {
   const [types, setTypes] = useState<AppointmentTypeSummary[]>([])
   const [name, setName] = useState('')
+  const [pendingName, setPendingName] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -24,18 +35,25 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
 
   useEffect(load, [])
 
-  async function handleCreate(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (!name.trim()) return
+    setPendingName(name.trim())
+  }
+
+  async function confirmCreate() {
+    if (!pendingName) return
     setError(null)
     setBusy(true)
     try {
-      await createAppointmentType(name)
+      await createAppointmentType(pendingName)
       setName('')
       load()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not create appointment type')
     } finally {
       setBusy(false)
+      setPendingName(null)
     }
   }
 
@@ -49,7 +67,7 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
       {error && <p className="error">{error}</p>}
 
       {isAdmin && (
-        <form className="inline-form" onSubmit={handleCreate}>
+        <form className="inline-form" onSubmit={handleSubmit}>
           <input
             placeholder="New appointment type name"
             value={name}
@@ -57,7 +75,7 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
             required
           />
           <button type="submit" style={{ width: 'auto' }} disabled={busy}>
-            {busy ? 'Creating…' : 'Add type'}
+            {busy ? 'Adding…' : 'Add type'}
           </button>
         </form>
       )}
@@ -93,6 +111,21 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
           </tbody>
         </table>
       )}
+
+      <AlertDialog open={pendingName !== null} onOpenChange={(open) => !open && setPendingName(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Add this appointment type?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingName && `Add "${pendingName}" to the appointment type catalog?`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmCreate}>Save</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   )
 }
