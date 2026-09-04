@@ -2,24 +2,36 @@
    Design tokens
    =========================================================== */
 
-:root {
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap');
 
-  /* Neutral scale -- a hint of teal in the grays, not a pure gray, so it
-     reads as chosen rather than a default Bootstrap-ish palette. */
-  --color-bg: #f4f7f6;
-  --color-bg-subtle: #eaf1ee;
+:root {
+  --font-heading: 'Lexend', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-sans: 'Source Sans 3', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  /* Soft, lavender-tinted neutrals (cool gray rather than the previous
+     green-gray) -- pairs with the page's pastel gradient background
+     below instead of fighting it. */
+  --color-bg: #eef1f8;
+  --color-bg-subtle: #eef0f6;
   --color-surface: #ffffff;
-  --color-surface-hover: #f6f9f8;
-  --color-border: #dde6e2;
-  --color-border-strong: #c3d1cb;
+  --color-surface-hover: #f7f8fc;
+  --color-border: #e2e5f0;
+  --color-border-strong: #cdd2e4;
+
+  /* "Glass" surface -- used only on the outer page/shell frame (.card,
+     .admin-shell), not on every nested box, so text legibility stays
+     effectively identical to solid white (see contrast note below) while
+     the page background gradient still reads through at the edges. */
+  --color-glass: rgba(255, 255, 255, 0.82);
+  --color-glass-border: rgba(255, 255, 255, 0.6);
 
   --color-text: #16211d;
   --color-text-secondary: #4b5a54;
   --color-text-muted: #7c8c85;
 
-  /* Primary -- clinical teal. Kept close to the app's original accent so
-     existing users don't get a jarring rebrand, refined for contrast. */
+  /* Primary -- unchanged from the existing brand teal (kept deliberately,
+     per "keep current branding"): already verified for >=4.5:1 text
+     contrast against white, so it isn't touched by this style pass. */
   --color-primary: #1f7a63;
   --color-primary-hover: #185f4d;
   --color-primary-soft: #e3f3ee;
@@ -33,13 +45,15 @@
   --color-warning: #a5680a;
   --color-warning-soft: #fdf2df;
 
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 16px;
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 24px;
 
-  --shadow-sm: 0 1px 2px rgba(16, 33, 27, 0.06);
-  --shadow-md: 0 4px 16px rgba(16, 33, 27, 0.08);
-  --shadow-lg: 0 12px 32px rgba(16, 33, 27, 0.12);
+  /* Softer, larger-blur shadows for the glass-card look (diffuse rather
+     than tight/dark). */
+  --shadow-sm: 0 1px 3px rgba(31, 42, 68, 0.05);
+  --shadow-md: 0 10px 34px rgba(31, 42, 68, 0.10);
+  --shadow-lg: 0 20px 55px rgba(31, 42, 68, 0.14);
 
   --space-1: 4px;
   --space-2: 8px;
@@ -63,7 +77,9 @@ body {
 
 body {
   margin: 0;
-  background: var(--color-bg);
+  /* Diffuse pastel wash (cool blue -> lavender -> warm peach) behind the
+     glass cards/shell, fixed so it doesn't repeat/scroll with content. */
+  background: linear-gradient(135deg, #eaf1fb 0%, #f1ecfa 45%, #fbf0ea 100%) fixed;
   color: var(--color-text);
   -webkit-font-smoothing: antialiased;
 }
@@ -72,7 +88,7 @@ h1,
 h2,
 h3,
 h4 {
-  font-family: var(--font-sans);
+  font-family: var(--font-heading);
   line-height: 1.25;
   text-wrap: balance;
 }
@@ -106,10 +122,12 @@ h4 {
 }
 
 .card {
-  background: var(--color-surface);
+  background: var(--color-glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-glass-border);
   padding: var(--space-8);
   width: 100%;
   max-width: 480px;
@@ -963,17 +981,19 @@ a.link:hover {
   width: 100%;
   max-width: 1180px;
   min-height: calc(100vh - 48px);
-  background: var(--color-surface);
+  background: var(--color-glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-glass-border);
   overflow: hidden;
 }
 
 .admin-nav {
   width: 232px;
   flex-shrink: 0;
-  background: var(--color-bg-subtle);
+  background: rgba(255, 255, 255, 0.35);
   border-right: 1px solid var(--color-border);
   padding: var(--space-5) var(--space-3);
   display: flex;
