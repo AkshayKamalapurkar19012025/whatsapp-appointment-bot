@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ApiError, createDoctor, listAllDoctors } from '../api'
 import type { Doctor } from '../types'
+import { formatDateTime } from '../format'
 import DoctorDetail from './DoctorDetail'
 
 export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
@@ -79,7 +80,11 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
               className={selectedDoctor?.id === d.id ? 'selected' : ''}
               onClick={() => setSelectedDoctor(d)}
             >
-              {d.name}
+              <span>{d.name}</span>
+              <span className="muted doctor-added-meta">
+                Added {formatDateTime(d.created_at)}
+                {d.created_by ? ` by ${d.created_by}` : ''}
+              </span>
             </button>
           </li>
         ))}

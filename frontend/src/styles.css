@@ -568,6 +568,12 @@ a.link:hover {
   box-shadow: 0 0 0 1px var(--color-primary);
 }
 
+.doctor-added-meta {
+  display: block;
+  margin-top: 2px;
+  font-weight: 400;
+}
+
 /* ===========================================================
    Slot picker (SlotGrid.tsx / AdminSlotPicker.tsx)
    =========================================================== */

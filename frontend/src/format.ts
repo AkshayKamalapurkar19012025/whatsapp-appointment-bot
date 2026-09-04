@@ -43,6 +43,18 @@ export function isoDateOnly(year: number, month: number, day: number): string {
   return `${year}-${pad(month)}-${pad(day)}`
 }
 
+// Unlike formatDate/formatTime above, this is for audit-log-style
+// timestamps (e.g. "doctor added on") that are NOT a clinic wall-clock
+// time -- there's no doctor-local zone to preserve here, just "when did
+// this happen" recorded in UTC. Showing it in the viewer's own local
+// time (via Date, deliberately unlike the raw-digit approach above) is
+// the correct behavior for this case, not a bug.
+export function formatDateTime(isoString: string): string {
+  const date = new Date(isoString)
+  if (Number.isNaN(date.getTime())) return isoString
+  return `${MONTH_NAMES[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`
+}
+
 // Same AM/PM conversion as formatTime above, but for a bare "HH:MM" or
 // "HH:MM:SS" wall-clock value with no date/timezone attached at all --
 // what doctor_schedule.start_time/end_time and the blocks/schedule forms'
