@@ -1449,6 +1449,7 @@ a.link.danger {
 }
 
 .admin-date-picker {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -1459,12 +1460,23 @@ a.link.danger {
   font-size: 0.8rem;
 }
 
+/* Positioned absolutely (floating over the page) rather than in normal
+   flow: this sits inside a `.inline-form.wrap` flex row with
+   `align-items: flex-end`, and an in-flow panel taller than its
+   siblings dragged every other field in that row down to match its
+   height when opened -- a real layout bug, not a styling nitpick. As a
+   popover it can never disturb sibling alignment, matching how any
+   other date/select popover in this app behaves. */
 .admin-date-picker-panel {
-  margin-top: var(--space-2);
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  z-index: 20;
   padding: var(--space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface);
+  box-shadow: var(--shadow-md);
   width: 280px;
   max-width: 100%;
 }
