@@ -75,3 +75,12 @@ ALLOWED_ORIGINS = [
     for origin in os.environ.get("ALLOWED_ORIGINS", "").split(",")
     if origin.strip()
 ]
+
+# Real SMS delivery for patient OTP codes, via Twilio (see
+# app/services/sms_provider.py). All three must be set for real SMS to be
+# attempted -- with any of them unset (the default), OTP delivery stays on
+# the pre-existing mock_sms_outbox path used by local dev/tests, and no
+# Twilio API call is ever made.
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
+TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER", "")

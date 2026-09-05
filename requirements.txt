@@ -18,3 +18,9 @@ python-dotenv==1.2.3
 # the actively maintained Python binding (unlike passlib, which is in
 # maintenance mode).
 argon2-cffi==23.1.0
+
+# Real SMS delivery for patient OTP codes (optional -- only used when
+# TWILIO_* env vars are set, see app/config.py and
+# app/services/sms_provider.py). Without those set, OTP delivery stays on
+# the pre-existing mock_sms_outbox path and this dependency sits unused.
+twilio==9.11.0
