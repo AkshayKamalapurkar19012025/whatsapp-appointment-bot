@@ -21,24 +21,15 @@ export interface AdminSidebarItem {
 export default function AdminSidebar({
   items,
   footerItems,
-  username,
-  role,
 }: {
   items: AdminSidebarItem[]
   footerItems?: { key: string; label: string; onSelect: () => void }[]
-  username: string
-  role: string
 }) {
   return (
     <nav className="admin-sidebar" aria-label="Admin navigation">
       <div className="admin-sidebar-brand">
         <span className="brand-mark">A</span>
-        <span>
-          <strong>Appointment Admin</strong>
-          <span className="muted admin-sidebar-role">
-            {username} · <span className={`pill role-${role.toLowerCase()}`}>{role}</span>
-          </span>
-        </span>
+        <strong>Appointment Admin</strong>
       </div>
 
       <ul className="admin-sidebar-list">

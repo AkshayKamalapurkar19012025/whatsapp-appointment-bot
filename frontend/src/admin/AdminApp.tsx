@@ -7,7 +7,6 @@ import {
   Gauge,
   GearSix,
   ShieldCheck,
-  SignOut,
   Stethoscope,
   Tag,
   UsersThree,
@@ -24,6 +23,7 @@ import PatientsPanel from './PatientsPanel'
 import AppointmentsPanel from './AppointmentsPanel'
 import BookAppointmentPanel from './BookAppointmentPanel'
 import AdminSidebar, { type AdminSidebarItem } from './AdminSidebar'
+import AdminTopBar from './AdminTopBar'
 
 type Section =
   | 'dashboard'
@@ -183,12 +183,6 @@ export default function AdminApp() {
       icon: <GearSix size={20} weight="regular" />,
       disabled: true,
     },
-    {
-      key: 'logout',
-      label: 'Logout',
-      icon: <SignOut size={20} weight="regular" />,
-      onSelect: handleLogout,
-    },
   ]
 
   return (
@@ -196,12 +190,12 @@ export default function AdminApp() {
       <div className="admin-shell">
         <AdminSidebar
           items={menuItems}
-          username={staff.username}
-          role={staff.role}
           footerItems={[{ key: 'patient-site', label: 'Patient site', onSelect: () => window.location.assign('/') }]}
         />
 
         <main className="admin-content">
+          <AdminTopBar username={staff.username} role={staff.role} onLogout={handleLogout} />
+
           {section === 'dashboard' && (
             <DashboardPanel
               staffName={staff.username}
