@@ -188,10 +188,7 @@ export default function AdminApp() {
   return (
     <div className="page">
       <div className="admin-shell">
-        <AdminSidebar
-          items={menuItems}
-          footerItems={[{ key: 'patient-site', label: 'Patient site', onSelect: () => window.location.assign('/') }]}
-        />
+        <AdminSidebar items={menuItems} />
 
         <main className="admin-content">
           <AdminTopBar username={staff.username} role={staff.role} onLogout={handleLogout} />

@@ -1717,16 +1717,6 @@ a.link.danger {
   opacity: 0.5;
 }
 
-.admin-sidebar-footer {
-  border-top: 1px solid var(--color-border);
-  padding: var(--space-3) var(--space-2) 0;
-  flex-shrink: 0;
-}
-
-.admin-sidebar-footer .link {
-  margin: 0;
-}
-
 /* ===========================================================
    Data tables
    =========================================================== */
@@ -1958,10 +1948,6 @@ a.link.danger {
     flex-wrap: wrap;
     flex: 1;
     gap: var(--space-1);
-  }
-  .admin-sidebar-footer {
-    border-top: none;
-    padding: 0;
   }
   .admin-content {
     padding: var(--space-5);
