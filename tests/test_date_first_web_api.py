@@ -62,9 +62,19 @@ def test_web_department_calendar_matches_single_doctor_availability(client, db_c
     assert body["department_id"] == seeded["department_id"]
 
     for iso_date, is_available in body["dates"].items():
-        weekday = date.fromisoformat(iso_date).weekday() + 1
-        if date.fromisoformat(iso_date) < today:
+        row_date = date.fromisoformat(iso_date)
+        weekday = row_date.weekday() + 1
+        if row_date < today:
             assert is_available is False
+        elif row_date == today:
+            # Deliberately not asserted: get_available_slots also
+            # filters out a day's slots once the doctor's local clock
+            # has passed schedule end_time (see the "past dates/times"
+            # fix), so whether today itself still has open slots now
+            # depends on what time of day the suite happens to run --
+            # weekday alone no longer determines it. Every other date
+            # in this loop is unaffected (always in the future).
+            continue
         else:
             assert is_available is (weekday in (1, 2, 3, 4, 5))
 

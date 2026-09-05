@@ -28,7 +28,7 @@ UX nor the existing REST/test behavior changes as a side effect of this
 phase.
 """
 
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta
 import calendar
 import logging
 
@@ -37,6 +37,7 @@ from app.utils.timezone import (
     ensure_aware_datetime,
     overlaps,
     get_doctor_timezone,
+    get_timezone,
 )
 
 logger = logging.getLogger(__name__)
@@ -204,6 +205,22 @@ def get_available_slots(
         doctor_tz = "Asia/Kolkata"
 
     # ---------------------------------------------------------
+    # "Now", in the doctor's own timezone -- a slot can only be booked
+    # if it hasn't started yet. Compared against this doctor-local
+    # instant (never the server's or a caller's own timezone) so a
+    # doctor in a zone ahead of or behind the server gets the correct
+    # answer for "is this date/time already in the past for them".
+    # ---------------------------------------------------------
+
+    now = datetime.now(get_timezone(doctor_tz))
+
+    # A date that has already ended in the doctor's own local time can
+    # never have a bookable slot -- short-circuit before even querying
+    # schedule/blocks/appointments for it.
+    if selected_date < now.date():
+        return []
+
+    # ---------------------------------------------------------
     # Weekday
     # Monday = 1 ... Sunday = 7
     # ---------------------------------------------------------
@@ -357,7 +374,13 @@ def get_available_slots(
                 + timedelta(minutes=duration_minutes)
             )
 
-            slot_available = True
+            # A slot that has already started (relevant when
+            # selected_date is the doctor's local "today" -- for any
+            # later date current_start is always > now already) is not
+            # bookable. Comparing two aware datetimes here compares real
+            # instants regardless of either side's tzinfo, so this is
+            # correct without any further timezone conversion.
+            slot_available = current_start > now
 
             # -------------------------------------------------
             # Check blocks

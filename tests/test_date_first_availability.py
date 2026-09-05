@@ -215,7 +215,13 @@ def test_list_available_dates_for_department_is_true_if_any_doctor_available(cli
         schedule_days=(4, 5),
     )
 
-    start = date.today()
+    # Starts tomorrow, not today -- see test_availability_engine.py's
+    # test_list_available_dates_in_range for why: get_available_slots
+    # now also filters out a day's slots once the doctor's local clock
+    # has passed schedule end_time, which would make a same-day
+    # weekday-only expectation flaky depending on what time the suite
+    # runs.
+    start = date.today() + timedelta(days=1)
     end = start + timedelta(days=13)
 
     with db_connection.cursor() as cur:

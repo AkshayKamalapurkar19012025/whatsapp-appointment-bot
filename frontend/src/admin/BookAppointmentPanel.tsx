@@ -62,6 +62,24 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
   const selectedType = types.find((t) => String(t.id) === appointmentTypeId) ?? null
   const selectedDoctor = doctors.find((d) => String(d.id) === doctorId) ?? null
 
+  // What's still missing before this can be submitted, in the order a
+  // staff member would naturally fill the form -- null once everything
+  // required (including an actual time slot, not just a date) is in
+  // place. Drives both the disabled state below and the helper text,
+  // so the two can never drift out of sync with each other.
+  function missingSelectionMessage(): string | null {
+    if (!doctorId) return 'Select a doctor to see available dates.'
+    if (!appointmentTypeId) return 'Select an appointment type to see available dates.'
+    if (!selectedSlot) return 'Pick an available date and time slot to continue.'
+    if (!patientId) return 'Select a patient (or add a new one) to continue.'
+    if (isNewPatient && !newPatientName.trim()) return "Enter the new patient's name to continue."
+    if (isNewPatient && !newPatientPhone) return "Enter the new patient's mobile number to continue."
+    return null
+  }
+
+  const missingSelection = missingSelectionMessage()
+  const canSubmit = !busy && missingSelection === null
+
   function resetForm() {
     setDoctorId('')
     setPatientId('')
@@ -203,12 +221,12 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
         )}
 
         {error && <p className="error">{error}</p>}
-        <button
-          type="submit"
-          className="btn"
-          style={{ width: 'auto' }}
-          disabled={busy || !selectedSlot || (isNewPatient && (!newPatientName.trim() || !newPatientPhone))}
-        >
+        {!busy && (
+          <p className="muted" aria-live="polite">
+            {missingSelection ?? 'Ready to book -- review the details above, then confirm.'}
+          </p>
+        )}
+        <button type="submit" className="btn" style={{ width: 'auto' }} disabled={!canSubmit}>
           {busy ? 'Booking…' : 'Book appointment'}
         </button>
       </form>
