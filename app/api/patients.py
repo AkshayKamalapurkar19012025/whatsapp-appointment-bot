@@ -75,7 +75,10 @@ def get_patients(staff: dict = Depends(get_current_staff)):
                     p.id,
                     p.name,
                     p.whatsapp_number,
-                    COUNT(a.id) FILTER (WHERE NOT (a.status = ANY(ARRAY['CANCELLED', 'REJECTED'])))
+                    -- a.status::text: see availability_engine.py's
+                    -- get_available_slots for why (enum-typed
+                    -- appointments.status on some databases).
+                    COUNT(a.id) FILTER (WHERE NOT (a.status::text = ANY(ARRAY['CANCELLED', 'REJECTED'])))
                 FROM patients p
                 LEFT JOIN appointments a ON a.patient_id = p.id
                 GROUP BY p.id, p.name, p.whatsapp_number

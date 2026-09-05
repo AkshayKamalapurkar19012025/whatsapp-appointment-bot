@@ -292,7 +292,9 @@ def create_appointment_service(
         WHERE doctor_id = %s
           AND start_at < %s
           AND end_at > %s
-          AND NOT (status = ANY(%s::text[]))
+          -- status::text: see availability_engine.py's get_available_slots
+          -- for why (enum-typed appointments.status on some databases).
+          AND NOT (status::text = ANY(%s::text[]))
         ORDER BY start_at
         """,
         (
@@ -626,7 +628,9 @@ def reschedule_appointment_service(
         WHERE doctor_id = %s
           AND start_at < %s
           AND end_at > %s
-          AND NOT (status = ANY(%s::text[]))
+          -- status::text: see availability_engine.py's get_available_slots
+          -- for why (enum-typed appointments.status on some databases).
+          AND NOT (status::text = ANY(%s::text[]))
           AND id <> %s
         """,
         (doctor_id, new_end_at, new_start_at, list(RELEASED_STATUSES), appointment_id),
@@ -650,7 +654,9 @@ def reschedule_appointment_service(
             updated_at = NOW()
         WHERE id = %s
           AND patient_id = %s
-          AND status = ANY(%s::text[])
+          -- status::text: see availability_engine.py's get_available_slots
+          -- for why (enum-typed appointments.status on some databases).
+          AND status::text = ANY(%s::text[])
         RETURNING id
         """,
         (appointment_id, patient_id, list(ACTIONABLE_STATUSES)),
