@@ -74,6 +74,8 @@ from app.services.availability_engine import (
     booking_window,
     is_within_booking_window,
     list_available_dates_in_range,
+    list_available_dates_for_department,
+    list_doctors_with_slots_for_date,
 )
 from app.services.notifications import (
     KIND_BOOKING_CONFIRMATION,
@@ -166,6 +168,101 @@ def get_calendar_month(
         "booking_window_start": window_start.isoformat(),
         "booking_window_end": window_end.isoformat(),
         "dates": dates,
+    }
+
+
+@router.get("/calendar/department")
+def get_department_calendar_month(
+    department_id: int,
+    appointment_type_id: int,
+    year: int,
+    month: int,
+):
+    """
+    Date-First's aggregate calendar: same window enforcement and same
+    per-day-boolean response shape as GET /web/calendar above, but a date
+    is available if ANY doctor in the department offering this
+    appointment type has a real slot on it (list_available_dates_for_
+    department -- department_id is applied per doctor, same as GET
+    /web/calendar already does for a single doctor's own department-
+    scoped schedule rows, see migrations/0010). No doctor_id is known
+    yet at this step, by definition.
+    """
+    if not (1 <= month <= 12):
+        raise HTTPException(status_code=422, detail="month must be between 1 and 12")
+
+    _, last_day = calendar_module.monthrange(year, month)
+    month_start = date(year, month, 1)
+    month_end = date(year, month, last_day)
+
+    window_start, window_end = booking_window()
+
+    if month_end < window_start or month_start > window_end:
+        raise HTTPException(
+            status_code=409,
+            detail="Requested month is outside the allowed booking window",
+        )
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            raw = list_available_dates_for_department(
+                cur,
+                department_id,
+                appointment_type_id,
+                month_start,
+                month_end,
+            )
+
+    dates = {
+        iso_date: (is_available and is_within_booking_window(date.fromisoformat(iso_date)))
+        for iso_date, is_available in raw.items()
+    }
+
+    return {
+        "department_id": department_id,
+        "appointment_type_id": appointment_type_id,
+        "year": year,
+        "month": month,
+        "booking_window_start": window_start.isoformat(),
+        "booking_window_end": window_end.isoformat(),
+        "dates": dates,
+    }
+
+
+@router.get("/availability/by-date")
+def get_department_availability_by_date(
+    department_id: int,
+    appointment_type_id: int,
+    selected_date: date,
+):
+    """
+    Date-First's per-date doctor list: every doctor in the department
+    offering this appointment type with at least one real slot on this
+    date, each with their actual slots -- a doctor with zero valid slots
+    is never included (list_doctors_with_slots_for_date already filters
+    this), so the frontend never has to filter again or show a doctor
+    with nothing to pick.
+    """
+    if not is_within_booking_window(selected_date):
+        raise HTTPException(
+            status_code=409,
+            detail="Requested date is outside the allowed booking window",
+        )
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            doctors = list_doctors_with_slots_for_date(
+                cur,
+                department_id,
+                appointment_type_id,
+                selected_date,
+            )
+
+    return {
+        "department_id": department_id,
+        "appointment_type_id": appointment_type_id,
+        "date": selected_date.isoformat(),
+        "doctors": doctors,
     }
 
 

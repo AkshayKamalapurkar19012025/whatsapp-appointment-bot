@@ -18,6 +18,9 @@ from app.utils.timezone import (
 from app.services.availability_engine import (
     get_appointment_type_for_doctor,
     get_available_slots,
+    get_appointment_types_for_department,
+    get_doctors_offering_appointment_type,
+    list_doctors_with_slots_for_date,
 )
 from app.services.appointment_services import reschedule_appointment_service
 from app.services.exceptions import (
@@ -178,7 +181,8 @@ def get_booking_session(cur, whatsapp_number: str):
             appointment_type_id,
             selected_date,
             selected_start_at,
-            selected_appointment_id
+            selected_appointment_id,
+            booking_mode
         FROM booking_sessions
         WHERE whatsapp_number = %s
         """,
@@ -201,6 +205,9 @@ def get_booking_session(cur, whatsapp_number: str):
         "selected_date": row[7],
         "selected_start_at": row[8],
         "selected_appointment_id": row[9],
+        # NULL (default) = Doctor-First. 'DATE_FIRST' = inside the
+        # Date-First state chain -- see migrations/0013's header comment.
+        "booking_mode": row[10],
     }
 
 
@@ -276,8 +283,16 @@ def update_session(
     selected_date=None,
     selected_start_at=None,
     selected_appointment_id=None,
+    booking_mode=None,
 ):
-    
+    # booking_mode follows the exact same convention every other
+    # parameter here already does: every call site sets the full row,
+    # and any call that doesn't pass it explicitly resets it to NULL --
+    # by design, not an oversight. Doctor-First transitions and every
+    # MAIN_MENU/start-over/cancel/reschedule reset never pass it, so they
+    # correctly clear it; only the Date-First state chain passes
+    # booking_mode="DATE_FIRST" explicitly, at every one of its own
+    # transitions, to keep carrying it forward. See migrations/0013.
     cur.execute(
         """
         UPDATE booking_sessions
@@ -289,6 +304,7 @@ def update_session(
             selected_date = %s,
             selected_start_at = %s,
             selected_appointment_id = %s,
+            booking_mode = %s,
             updated_at = NOW()
         WHERE id = %s
         """,
@@ -300,6 +316,7 @@ def update_session(
             selected_date,
             selected_start_at,
             selected_appointment_id,
+            booking_mode,
             session_id,
         ),
     )
@@ -458,6 +475,195 @@ def slot_selection_message(slot_options):
         lines.append(f"{option['number']}. {option['label']}")
 
     return "\n".join(lines)
+
+
+# -------------------------------------------------------------------------
+# Date-First helpers
+#
+# Everything below builds on the shared availability_engine functions
+# imported above (get_doctors_offering_appointment_type,
+# get_appointment_types_for_department, list_doctors_with_slots_for_date)
+# -- no new slot/duration/timezone logic, only new WhatsApp message
+# formatting and a department-scoped sibling of get_available_dates().
+# -------------------------------------------------------------------------
+
+def booking_mode_selection_message():
+    return (
+        "How would you like to find your appointment?\n\n"
+        "1. Choose a Doctor\n"
+        "2. Find by Date\n\n"
+        "Reply with 1 or 2."
+    )
+
+
+def get_available_dates_for_department(
+    cur,
+    department_id: int,
+    appointment_type_id: int,
+    max_dates: int = 5,
+    max_days: int = 60,
+):
+    """Date-First's version of get_available_dates(): the next dates
+    (within the same 60-day/5-date window) on which at least one doctor
+    in the department offering this appointment type has a real,
+    bookable slot -- 'available' means exactly what it means everywhere
+    else in this flow (get_available_slots found one), not merely a
+    doctor being scheduled to work that day."""
+    doctors = get_doctors_offering_appointment_type(
+        cur, department_id, appointment_type_id
+    )
+
+    if not doctors:
+        return []
+
+    available_dates = []
+    start_date = date.today()
+
+    for days_ahead in range(max_days):
+        candidate_date = start_date + timedelta(days=days_ahead)
+
+        for doctor in doctors:
+            slots = get_available_slots(
+                cur,
+                doctor["id"],
+                appointment_type_id,
+                candidate_date,
+                department_id=department_id,
+            )
+            if slots:
+                available_dates.append(candidate_date)
+                break
+
+        if len(available_dates) == max_dates:
+            break
+
+    return available_dates
+
+
+def format_available_doctors(doctors_with_slots):
+    """doctors_with_slots is list_doctors_with_slots_for_date()'s return
+    value: [{"id", "name", "slots": [...]}], already filtered to doctors
+    with at least one real slot. Adds the numbered-selection "number"
+    field every other *_options list here already has, and formats each
+    doctor's own slots the same way format_slot_options() does for the
+    Doctor-First flow, so SELECT_AVAILABLE_DOCTOR_DATE_FIRST's response
+    shape matches SELECT_DATE's existing "next_step": "SELECT_SLOT"
+    response shape once a doctor is picked."""
+    options = []
+
+    for number, doctor in enumerate(doctors_with_slots, start=1):
+        options.append(
+            {
+                "number": number,
+                "id": doctor["id"],
+                "name": doctor["name"],
+                "slot_count": len(doctor["slots"]),
+                "slots": format_slot_options(doctor["slots"]),
+            }
+        )
+
+    return options
+
+
+def available_doctors_selection_message(doctor_options):
+    if not doctor_options:
+        return "No doctors have availability on this date. Please choose another date."
+
+    lines = ["Doctors available on this date:", ""]
+
+    for option in doctor_options:
+        plural = "slot" if option["slot_count"] == 1 else "slots"
+        lines.append(f"{option['number']}. {option['name']} ({option['slot_count']} {plural} available)")
+
+    lines.extend(["", "Reply with the doctor's number."])
+
+    return "\n".join(lines)
+
+
+def _select_date_or_available_doctors_response(cur, patient, session, error=None):
+    """
+    Shared fallback for both flows whenever a booking interaction needs
+    to send the patient back to date-adjacent selection: Doctor-First
+    returns to SELECT_DATE (pick another date for the doctor already
+    chosen, its existing behavior, unchanged); Date-First returns to
+    SELECT_AVAILABLE_DOCTOR_DATE_FIRST (pick a different doctor for the
+    date already chosen). session["booking_mode"] is what tells these
+    apart -- by this point (SELECT_SLOT/CONFIRM_BOOKING) both flows share
+    an otherwise identical session shape (department_id/doctor_id/
+    appointment_type_id/selected_date all set), so the mode flag is the
+    only way left to know which flow got the patient here. Used by both
+    the explicit "back" command handler and CONFIRM_BOOKING's own
+    change/expired/blocked/already-booked fallbacks -- previously each of
+    those had its own copy of the Doctor-First half of this logic.
+    """
+    if session.get("booking_mode") == "DATE_FIRST":
+        selected_date = session["selected_date"]
+        update_session(
+            cur=cur,
+            session_id=session["id"],
+            step="SELECT_AVAILABLE_DOCTOR_DATE_FIRST",
+            department_id=session["department_id"],
+            doctor_id=None,
+            appointment_type_id=session["appointment_type_id"],
+            selected_date=selected_date,
+            selected_start_at=None,
+            selected_appointment_id=None,
+            booking_mode="DATE_FIRST",
+        )
+
+        doctors_with_slots = list_doctors_with_slots_for_date(
+            cur,
+            session["department_id"],
+            session["appointment_type_id"],
+            selected_date,
+        )
+        doctor_options = format_available_doctors(doctors_with_slots)
+
+        response = {
+            "patient": patient,
+            "date": selected_date.isoformat(),
+            "next_step": "SELECT_AVAILABLE_DOCTOR_DATE_FIRST",
+            "doctors": doctor_options,
+            "message": available_doctors_selection_message(doctor_options),
+            "navigation": {
+                "back": {"id": "BACK", "label": "Back"},
+                "main_menu": {"id": "MAIN_MENU", "label": "Main Menu"},
+            },
+        }
+    else:
+        doctor_id = session["doctor_id"]
+        appointment_type_id = session["appointment_type_id"]
+        update_session(
+            cur=cur,
+            session_id=session["id"],
+            step="SELECT_DATE",
+            department_id=session["department_id"],
+            doctor_id=doctor_id,
+            appointment_type_id=appointment_type_id,
+            selected_date=None,
+            selected_start_at=None,
+            selected_appointment_id=None,
+        )
+
+        date_options = format_date_options(
+            get_available_dates(cur, doctor_id, appointment_type_id)
+        )
+
+        response = {
+            "patient": patient,
+            "next_step": "SELECT_DATE",
+            "date_options": date_options,
+            "message": date_selection_message(date_options),
+            "navigation": {
+                "back": {"id": "BACK", "label": "Back"},
+                "main_menu": {"id": "MAIN_MENU", "label": "Main Menu"},
+            },
+        }
+
+    if error:
+        response["error"] = error
+
+    return response
 
 
 def get_upcoming_booked_appointments(cur, patient_id: int):
@@ -845,7 +1051,7 @@ def booking(request: BookingRequest):
                     update_session(
                         cur=cur,
                         session_id=session["id"],
-                        step="SELECT_DEPARTMENT",
+                        step="SELECT_BOOKING_MODE",
                         department_id=None,
                         doctor_id=None,
                         appointment_type_id=None,
@@ -854,12 +1060,10 @@ def booking(request: BookingRequest):
                         selected_appointment_id=None,
                     )
 
-                    departments = get_departments(cur)
-
                     return {
                         "patient": patient,
-                        "next_step": "SELECT_DEPARTMENT",
-                        "departments": departments,
+                        "next_step": "SELECT_BOOKING_MODE",
+                        "message": booking_mode_selection_message(),
                     }
 
                 if message == "2":
@@ -931,6 +1135,31 @@ def booking(request: BookingRequest):
                 # ---------------------------------------------------------
 
                 if current_step == "SELECT_DEPARTMENT":
+                    # Back target changed from MAIN_MENU to
+                    # SELECT_BOOKING_MODE: the mode fork is now the step
+                    # between them (see the "1"/"book" handler above).
+                    update_session(
+                        cur=cur,
+                        session_id=session["id"],
+                        step="SELECT_BOOKING_MODE",
+                        department_id=None,
+                        doctor_id=None,
+                        appointment_type_id=None,
+                        selected_date=None,
+                        selected_start_at=None,
+                        selected_appointment_id=None,
+                    )
+                    return {
+                        "patient": patient,
+                        "next_step": "SELECT_BOOKING_MODE",
+                        "navigation": {
+                            "back": {"id": "BACK", "label": "Back"},
+                            "main_menu": {"id": "MAIN_MENU", "label": "Main Menu"},
+                        },
+                        "message": booking_mode_selection_message(),
+                    }
+
+                if current_step == "SELECT_BOOKING_MODE":
                     update_session(
                         cur=cur,
                         session_id=session["id"],
@@ -950,6 +1179,108 @@ def booking(request: BookingRequest):
                             "main_menu": {"id": "MAIN_MENU", "label": "Main Menu"},
                         },
                         "message": main_menu_message(),
+                    }
+
+                if current_step == "SELECT_DEPARTMENT_DATE_FIRST":
+                    update_session(
+                        cur=cur,
+                        session_id=session["id"],
+                        step="SELECT_BOOKING_MODE",
+                        department_id=None,
+                        doctor_id=None,
+                        appointment_type_id=None,
+                        selected_date=None,
+                        selected_start_at=None,
+                        selected_appointment_id=None,
+                    )
+                    return {
+                        "patient": patient,
+                        "next_step": "SELECT_BOOKING_MODE",
+                        "navigation": {
+                            "back": {"id": "BACK", "label": "Back"},
+                            "main_menu": {"id": "MAIN_MENU", "label": "Main Menu"},
+                        },
+                        "message": booking_mode_selection_message(),
+                    }
+
+                if current_step == "SELECT_APPOINTMENT_TYPE_DATE_FIRST":
+                    department_id = session["department_id"]
+                    update_session(
+                        cur=cur,
+                        session_id=session["id"],
+                        step="SELECT_DEPARTMENT_DATE_FIRST",
+                        department_id=None,
+                        doctor_id=None,
+                        appointment_type_id=None,
+                        selected_date=None,
+                        selected_start_at=None,
+                        selected_appointment_id=None,
+                        booking_mode="DATE_FIRST",
+                    )
+                    return {
+                        "patient": patient,
+                        "next_step": "SELECT_DEPARTMENT_DATE_FIRST",
+                        "departments": get_departments(cur),
+                        "navigation": {
+                            "back": {"id": "BACK", "label": "Back"},
+                            "main_menu": {"id": "MAIN_MENU", "label": "Main Menu"},
+                        },
+                    }
+
+                if current_step == "SELECT_DATE_DATE_FIRST":
+                    department_id = session["department_id"]
+                    update_session(
+                        cur=cur,
+                        session_id=session["id"],
+                        step="SELECT_APPOINTMENT_TYPE_DATE_FIRST",
+                        department_id=department_id,
+                        doctor_id=None,
+                        appointment_type_id=None,
+                        selected_date=None,
+                        selected_start_at=None,
+                        selected_appointment_id=None,
+                        booking_mode="DATE_FIRST",
+                    )
+                    return {
+                        "patient": patient,
+                        "department_id": department_id,
+                        "next_step": "SELECT_APPOINTMENT_TYPE_DATE_FIRST",
+                        "appointment_types": get_appointment_types_for_department(cur, department_id),
+                        "navigation": {
+                            "back": {"id": "BACK", "label": "Back"},
+                            "main_menu": {"id": "MAIN_MENU", "label": "Main Menu"},
+                        },
+                    }
+
+                if current_step == "SELECT_AVAILABLE_DOCTOR_DATE_FIRST":
+                    department_id = session["department_id"]
+                    appointment_type_id = session["appointment_type_id"]
+                    update_session(
+                        cur=cur,
+                        session_id=session["id"],
+                        step="SELECT_DATE_DATE_FIRST",
+                        department_id=department_id,
+                        doctor_id=None,
+                        appointment_type_id=appointment_type_id,
+                        selected_date=None,
+                        selected_start_at=None,
+                        selected_appointment_id=None,
+                        booking_mode="DATE_FIRST",
+                    )
+                    date_options = format_date_options(
+                        get_available_dates_for_department(cur, department_id, appointment_type_id)
+                    )
+                    return {
+                        "patient": patient,
+                        "department_id": department_id,
+                        "appointment_type_id": appointment_type_id,
+                        "next_step": "SELECT_DATE_DATE_FIRST",
+                        "date_options": date_options,
+                        "message": date_selection_message(date_options),
+                        "navigation": {
+                            "back": {"id": "BACK", "label": "Back"},
+                            "main_menu": {"id": "MAIN_MENU", "label": "Main Menu"},
+                        },
                     }
 
                 if current_step == "SELECT_DOCTOR":
@@ -1024,34 +1355,7 @@ def booking(request: BookingRequest):
                     }
 
                 if current_step == "SELECT_SLOT":
-                    doctor_id = session["doctor_id"]
-                    appointment_type_id = session["appointment_type_id"]
-                    update_session(
-                        cur=cur,
-                        session_id=session["id"],
-                        step="SELECT_DATE",
-                        department_id=session["department_id"],
-                        doctor_id=doctor_id,
-                        appointment_type_id=appointment_type_id,
-                        selected_date=None,
-                        selected_start_at=None,
-                        selected_appointment_id=None,
-                    )
-                    date_options = format_date_options(
-                        get_available_dates(cur, doctor_id, appointment_type_id)
-                    )
-                    return {
-                        "patient": patient,
-                        "doctor_id": doctor_id,
-                        "appointment_type_id": appointment_type_id,
-                        "next_step": "SELECT_DATE",
-                        "date_options": date_options,
-                        "message": date_selection_message(date_options),
-                        "navigation": {
-                            "back": {"id": "BACK", "label": "Back"},
-                            "main_menu": {"id": "MAIN_MENU", "label": "Main Menu"},
-                        },
-                    }
+                    return _select_date_or_available_doctors_response(cur, patient, session)
 
                 if current_step == "CONFIRM_BOOKING":
                     doctor_id = session["doctor_id"]
@@ -1061,31 +1365,12 @@ def booking(request: BookingRequest):
                         cur, doctor_id, appointment_type_id, selected_date
                     )
                     if not slots:
-                        update_session(
-                            cur=cur,
-                            session_id=session["id"],
-                            step="SELECT_DATE",
-                            department_id=session["department_id"],
-                            doctor_id=doctor_id,
-                            appointment_type_id=appointment_type_id,
-                            selected_date=None,
-                            selected_start_at=None,
-                            selected_appointment_id=None,
+                        return _select_date_or_available_doctors_response(
+                            cur,
+                            patient,
+                            session,
+                            error="No appointments are available on this date. Please choose another date.",
                         )
-                        date_options = format_date_options(
-                            get_available_dates(cur, doctor_id, appointment_type_id)
-                        )
-                        return {
-                            "patient": patient,
-                            "next_step": "SELECT_DATE",
-                            "error": "No appointments are available on this date. Please choose another date.",
-                            "date_options": date_options,
-                            "message": date_selection_message(date_options),
-                            "navigation": {
-                                "back": {"id": "BACK", "label": "Back"},
-                                "main_menu": {"id": "MAIN_MENU", "label": "Main Menu"},
-                            },
-                        }
 
                     update_session(
                         cur=cur,
@@ -1097,6 +1382,7 @@ def booking(request: BookingRequest):
                         selected_date=selected_date,
                         selected_start_at=None,
                         selected_appointment_id=None,
+                        booking_mode=session.get("booking_mode"),
                     )
                     slot_options = format_slot_options(slots)
                     return {
@@ -2347,6 +2633,367 @@ def booking(request: BookingRequest):
                     }
 
             # =============================================================
+            # SELECT BOOKING MODE (Doctor-First vs Date-First)
+            # =============================================================
+            # The fork inserted between "Book Appointment" and Department
+            # selection. Both options land on the SAME SELECT_DEPARTMENT-
+            # family step and the SAME get_departments() listing --
+            # Department itself is identical content in both flows; only
+            # which step it's stored as (and therefore what comes next)
+            # differs.
+
+            if session["step"] == "SELECT_BOOKING_MODE":
+
+                if message == "1":
+                    update_session(
+                        cur=cur,
+                        session_id=session["id"],
+                        step="SELECT_DEPARTMENT",
+                        department_id=None,
+                        doctor_id=None,
+                        appointment_type_id=None,
+                        selected_date=None,
+                        selected_start_at=None,
+                    )
+
+                    return {
+                        "patient": patient,
+                        "next_step": "SELECT_DEPARTMENT",
+                        "departments": get_departments(cur),
+                    }
+
+                if message == "2":
+                    update_session(
+                        cur=cur,
+                        session_id=session["id"],
+                        step="SELECT_DEPARTMENT_DATE_FIRST",
+                        department_id=None,
+                        doctor_id=None,
+                        appointment_type_id=None,
+                        selected_date=None,
+                        selected_start_at=None,
+                        booking_mode="DATE_FIRST",
+                    )
+
+                    return {
+                        "patient": patient,
+                        "next_step": "SELECT_DEPARTMENT_DATE_FIRST",
+                        "departments": get_departments(cur),
+                    }
+
+                return {
+                    "patient": patient,
+                    "next_step": "SELECT_BOOKING_MODE",
+                    "error": "Please reply 1 or 2.",
+                    "message": booking_mode_selection_message(),
+                }
+
+            # =============================================================
+            # SELECT DEPARTMENT (Date-First)
+            # =============================================================
+            # Same department listing/validation as Doctor-First's
+            # SELECT_DEPARTMENT below -- the only difference is what
+            # comes next: Appointment Type before any doctor is chosen,
+            # not a doctor list.
+
+            if session["step"] == "SELECT_DEPARTMENT_DATE_FIRST":
+
+                if not message.isdigit():
+                    return {
+                        "patient": patient,
+                        "next_step": "SELECT_DEPARTMENT_DATE_FIRST",
+                        "error": "Please select a valid department number.",
+                        "departments": get_departments(cur),
+                    }
+
+                department_number = int(message)
+                departments = get_departments(cur)
+
+                if (
+                    department_number < 1
+                    or department_number > len(departments)
+                ):
+                    return {
+                        "patient": patient,
+                        "next_step": "SELECT_DEPARTMENT_DATE_FIRST",
+                        "error": "Please select a valid department number.",
+                        "departments": departments,
+                    }
+
+                department = departments[department_number - 1]
+
+                appointment_types = get_appointment_types_for_department(
+                    cur, department["id"]
+                )
+
+                if not appointment_types:
+                    return {
+                        "patient": patient,
+                        "department": department,
+                        "next_step": "SELECT_DEPARTMENT_DATE_FIRST",
+                        "error": "No appointment types are currently available in this department.",
+                        "departments": departments,
+                    }
+
+                update_session(
+                    cur=cur,
+                    session_id=session["id"],
+                    step="SELECT_APPOINTMENT_TYPE_DATE_FIRST",
+                    department_id=department["id"],
+                    doctor_id=None,
+                    appointment_type_id=None,
+                    selected_date=None,
+                    selected_start_at=None,
+                    booking_mode="DATE_FIRST",
+                )
+
+                return {
+                    "patient": patient,
+                    "department": department,
+                    "next_step": "SELECT_APPOINTMENT_TYPE_DATE_FIRST",
+                    "appointment_types": appointment_types,
+                }
+
+            # =============================================================
+            # SELECT APPOINTMENT TYPE (Date-First)
+            # =============================================================
+            # Appointment Type MUST stay before Date -- duration is
+            # per doctor+type (doctor_appointment_types.duration_minutes),
+            # and every slot calculation downstream needs it.
+
+            if session["step"] == "SELECT_APPOINTMENT_TYPE_DATE_FIRST":
+
+                department_id = session["department_id"]
+                appointment_types = get_appointment_types_for_department(
+                    cur, department_id
+                )
+
+                if not message.isdigit():
+                    return {
+                        "patient": patient,
+                        "department_id": department_id,
+                        "next_step": "SELECT_APPOINTMENT_TYPE_DATE_FIRST",
+                        "error": "Please select a valid appointment type number.",
+                        "appointment_types": appointment_types,
+                    }
+
+                appointment_type_number = int(message)
+
+                if (
+                    appointment_type_number < 1
+                    or appointment_type_number > len(appointment_types)
+                ):
+                    return {
+                        "patient": patient,
+                        "department_id": department_id,
+                        "next_step": "SELECT_APPOINTMENT_TYPE_DATE_FIRST",
+                        "error": "Please select a valid appointment type number.",
+                        "appointment_types": appointment_types,
+                    }
+
+                appointment_type = appointment_types[appointment_type_number - 1]
+
+                update_session(
+                    cur=cur,
+                    session_id=session["id"],
+                    step="SELECT_DATE_DATE_FIRST",
+                    department_id=department_id,
+                    doctor_id=None,
+                    appointment_type_id=appointment_type["id"],
+                    selected_date=None,
+                    selected_start_at=None,
+                    booking_mode="DATE_FIRST",
+                )
+
+                date_options = format_date_options(
+                    get_available_dates_for_department(
+                        cur, department_id, appointment_type["id"]
+                    )
+                )
+
+                return {
+                    "patient": patient,
+                    "department_id": department_id,
+                    "appointment_type": appointment_type,
+                    "next_step": "SELECT_DATE_DATE_FIRST",
+                    "date_options": date_options,
+                    "message": date_selection_message(date_options),
+                }
+
+            # =============================================================
+            # SELECT DATE (Date-First)
+            # =============================================================
+            # Aggregate calendar: a date is offered only if at least one
+            # doctor in the department offering this appointment type has
+            # a real slot on it (list_available_dates_for_department /
+            # get_available_dates_for_department, both built on the exact
+            # same get_available_slots() the Doctor-First calendar uses).
+
+            if session["step"] == "SELECT_DATE_DATE_FIRST":
+
+                department_id = session["department_id"]
+                appointment_type_id = session["appointment_type_id"]
+
+                available_dates = get_available_dates_for_department(
+                    cur, department_id, appointment_type_id
+                )
+                date_options = format_date_options(available_dates)
+
+                if not message.isdigit():
+                    return {
+                        "patient": patient,
+                        "department_id": department_id,
+                        "appointment_type_id": appointment_type_id,
+                        "next_step": "SELECT_DATE_DATE_FIRST",
+                        "error": "Please select a valid date number.",
+                        "date_options": date_options,
+                        "message": date_selection_message(date_options),
+                    }
+
+                date_number = int(message)
+
+                if (
+                    date_number < 1
+                    or date_number > len(available_dates)
+                ):
+                    return {
+                        "patient": patient,
+                        "department_id": department_id,
+                        "appointment_type_id": appointment_type_id,
+                        "next_step": "SELECT_DATE_DATE_FIRST",
+                        "error": "Please select a valid date number.",
+                        "date_options": date_options,
+                        "message": date_selection_message(date_options),
+                    }
+
+                selected_date = available_dates[date_number - 1]
+
+                doctors_with_slots = list_doctors_with_slots_for_date(
+                    cur, department_id, appointment_type_id, selected_date
+                )
+
+                if not doctors_with_slots:
+                    # Graceful no-availability handling (not a blank/dead
+                    # end): re-show the date list rather than a page with
+                    # nothing selectable, same as Doctor-First's
+                    # equivalent "No appointments are available on this
+                    # date" case just below.
+                    available_dates = get_available_dates_for_department(
+                        cur, department_id, appointment_type_id
+                    )
+                    date_options = format_date_options(available_dates)
+
+                    return {
+                        "patient": patient,
+                        "department_id": department_id,
+                        "appointment_type_id": appointment_type_id,
+                        "date": selected_date.isoformat(),
+                        "next_step": "SELECT_DATE_DATE_FIRST",
+                        "error": "No doctors have availability on this date. Please choose another date.",
+                        "date_options": date_options,
+                        "message": date_selection_message(date_options),
+                    }
+
+                update_session(
+                    cur=cur,
+                    session_id=session["id"],
+                    step="SELECT_AVAILABLE_DOCTOR_DATE_FIRST",
+                    department_id=department_id,
+                    doctor_id=None,
+                    appointment_type_id=appointment_type_id,
+                    selected_date=selected_date,
+                    selected_start_at=None,
+                    booking_mode="DATE_FIRST",
+                )
+
+                doctor_options = format_available_doctors(doctors_with_slots)
+
+                return {
+                    "patient": patient,
+                    "department_id": department_id,
+                    "appointment_type_id": appointment_type_id,
+                    "date": selected_date.isoformat(),
+                    "next_step": "SELECT_AVAILABLE_DOCTOR_DATE_FIRST",
+                    "doctors": doctor_options,
+                    "message": available_doctors_selection_message(doctor_options),
+                }
+
+            # =============================================================
+            # SELECT AVAILABLE DOCTOR (Date-First)
+            # =============================================================
+            # Picking a doctor here converges onto the existing SELECT_SLOT
+            # step, unchanged -- department_id/doctor_id/appointment_type_
+            # id/selected_date are now set exactly as Doctor-First would
+            # have set them, so SELECT_SLOT's own logic (re-fetch slots,
+            # validate, move to CONFIRM_BOOKING) needs no Date-First-
+            # specific branch at all. booking_mode="DATE_FIRST" is carried
+            # forward explicitly so SELECT_SLOT's "back" and CONFIRM_
+            # BOOKING's fallbacks know to return here rather than to
+            # SELECT_DATE (see _select_date_or_available_doctors_response).
+
+            if session["step"] == "SELECT_AVAILABLE_DOCTOR_DATE_FIRST":
+
+                department_id = session["department_id"]
+                appointment_type_id = session["appointment_type_id"]
+                selected_date = session["selected_date"]
+
+                doctors_with_slots = list_doctors_with_slots_for_date(
+                    cur, department_id, appointment_type_id, selected_date
+                )
+                doctor_options = format_available_doctors(doctors_with_slots)
+
+                if not message.isdigit():
+                    return {
+                        "patient": patient,
+                        "date": selected_date.isoformat(),
+                        "next_step": "SELECT_AVAILABLE_DOCTOR_DATE_FIRST",
+                        "error": "Please select a valid doctor number.",
+                        "doctors": doctor_options,
+                        "message": available_doctors_selection_message(doctor_options),
+                    }
+
+                doctor_number = int(message)
+
+                if (
+                    doctor_number < 1
+                    or doctor_number > len(doctors_with_slots)
+                ):
+                    return {
+                        "patient": patient,
+                        "date": selected_date.isoformat(),
+                        "next_step": "SELECT_AVAILABLE_DOCTOR_DATE_FIRST",
+                        "error": "Please select a valid doctor number.",
+                        "doctors": doctor_options,
+                        "message": available_doctors_selection_message(doctor_options),
+                    }
+
+                chosen_doctor = doctors_with_slots[doctor_number - 1]
+
+                update_session(
+                    cur=cur,
+                    session_id=session["id"],
+                    step="SELECT_SLOT",
+                    department_id=department_id,
+                    doctor_id=chosen_doctor["id"],
+                    appointment_type_id=appointment_type_id,
+                    selected_date=selected_date,
+                    selected_start_at=None,
+                    booking_mode="DATE_FIRST",
+                )
+
+                slot_options = format_slot_options(chosen_doctor["slots"])
+
+                return {
+                    "patient": patient,
+                    "doctor_id": chosen_doctor["id"],
+                    "appointment_type_id": appointment_type_id,
+                    "date": selected_date.isoformat(),
+                    "next_step": "SELECT_SLOT",
+                    "slots": slot_options,
+                    "message": slot_selection_message(slot_options),
+                }
+
+            # =============================================================
             # 6. SELECT DEPARTMENT
             # =============================================================
 
@@ -3079,6 +3726,13 @@ def booking(request: BookingRequest):
                     appointment_type_id=session["appointment_type_id"],
                     selected_date=session["selected_date"],
                     selected_start_at=selected_start_at,
+                    # Carry booking_mode forward -- SELECT_SLOT is a
+                    # shared step reached from both flows, so this must
+                    # not silently reset it to NULL (which would make
+                    # CONFIRM_BOOKING's change/expired/blocked/occupied
+                    # fallbacks wrongly treat a Date-First booking as
+                    # Doctor-First). See migrations/0013.
+                    booking_mode=session.get("booking_mode"),
                 )
 
                 appointment_type = get_appointment_type_for_doctor(
@@ -3119,30 +3773,7 @@ def booking(request: BookingRequest):
             if session["step"] == "CONFIRM_BOOKING":
 
                 if message == "2":
-                    update_session(
-                        cur=cur,
-                        session_id=session["id"],
-                        step="SELECT_DATE",
-                        department_id=session["department_id"],
-                        doctor_id=session["doctor_id"],
-                        appointment_type_id=session["appointment_type_id"],
-                        selected_date=None,
-                        selected_start_at=None,
-                    )
-
-                    available_dates = get_available_dates(
-                        cur,
-                        session["doctor_id"],
-                        session["appointment_type_id"],
-                    )
-                    date_options = format_date_options(available_dates)
-
-                    return {
-                        "patient": patient,
-                        "next_step": "SELECT_DATE",
-                        "date_options": date_options,
-                        "message": date_selection_message(date_options),
-                    }
+                    return _select_date_or_available_doctors_response(cur, patient, session)
 
                 if message != "1":
                     return {
@@ -3159,31 +3790,12 @@ def booking(request: BookingRequest):
                 # ---------------------------------------------------------
 
                 if session["selected_start_at"] is None:
-                    update_session(
-                        cur=cur,
-                        session_id=session["id"],
-                        step="SELECT_DATE",
-                        department_id=session["department_id"],
-                        doctor_id=session["doctor_id"],
-                        appointment_type_id=session["appointment_type_id"],
-                        selected_date=None,
-                        selected_start_at=None,
-                    )
-
-                    available_dates = get_available_dates(
+                    return _select_date_or_available_doctors_response(
                         cur,
-                        session["doctor_id"],
-                        session["appointment_type_id"],
+                        patient,
+                        session,
+                        error="Your booking session expired. Please select a date again.",
                     )
-                    date_options = format_date_options(available_dates)
-
-                    return {
-                        "patient": patient,
-                        "next_step": "SELECT_DATE",
-                        "error": "Your booking session expired. Please select a date again.",
-                        "date_options": date_options,
-                        "message": date_selection_message(date_options),
-                    }
 
                 appointment_type = get_appointment_type_for_doctor(
                     cur,
@@ -3265,31 +3877,12 @@ def booking(request: BookingRequest):
                         break
 
                 if blocked:
-                    update_session(
-                        cur=cur,
-                        session_id=session["id"],
-                        step="SELECT_DATE",
-                        department_id=session["department_id"],
-                        doctor_id=session["doctor_id"],
-                        appointment_type_id=session["appointment_type_id"],
-                        selected_date=None,
-                        selected_start_at=None,
-                    )
-
-                    available_dates = get_available_dates(
+                    return _select_date_or_available_doctors_response(
                         cur,
-                        session["doctor_id"],
-                        session["appointment_type_id"],
+                        patient,
+                        session,
+                        error="That slot is no longer available because the doctor is unavailable. Please choose another date or slot.",
                     )
-                    date_options = format_date_options(available_dates)
-
-                    return {
-                        "patient": patient,
-                        "next_step": "SELECT_DATE",
-                        "error": "That slot is no longer available because the doctor is unavailable. Please choose another date or slot.",
-                        "date_options": date_options,
-                        "message": date_selection_message(date_options),
-                    }
 
                 # ---------------------------------------------------------
                 # Serialize booking attempts for this doctor.
@@ -3345,31 +3938,12 @@ def booking(request: BookingRequest):
                         break
 
                 if occupied:
-                    update_session(
-                        cur=cur,
-                        session_id=session["id"],
-                        step="SELECT_DATE",
-                        department_id=session["department_id"],
-                        doctor_id=session["doctor_id"],
-                        appointment_type_id=session["appointment_type_id"],
-                        selected_date=None,
-                        selected_start_at=None,
-                    )
-
-                    available_dates = get_available_dates(
+                    return _select_date_or_available_doctors_response(
                         cur,
-                        session["doctor_id"],
-                        session["appointment_type_id"],
+                        patient,
+                        session,
+                        error="That slot was just booked by someone else. Please choose another date or slot.",
                     )
-                    date_options = format_date_options(available_dates)
-
-                    return {
-                        "patient": patient,
-                        "next_step": "SELECT_DATE",
-                        "error": "That slot was just booked by someone else. Please choose another date or slot.",
-                        "date_options": date_options,
-                        "message": date_selection_message(date_options),
-                    }
 
                 # ---------------------------------------------------------
                 # Create appointment.
@@ -3434,31 +4008,12 @@ def booking(request: BookingRequest):
                         f"normally prevent reaching this point -- backstop triggered)"
                     )
 
-                    update_session(
-                        cur=cur,
-                        session_id=session["id"],
-                        step="SELECT_DATE",
-                        department_id=session["department_id"],
-                        doctor_id=session["doctor_id"],
-                        appointment_type_id=session["appointment_type_id"],
-                        selected_date=None,
-                        selected_start_at=None,
-                    )
-
-                    available_dates = get_available_dates(
+                    return _select_date_or_available_doctors_response(
                         cur,
-                        session["doctor_id"],
-                        session["appointment_type_id"],
+                        patient,
+                        session,
+                        error="That slot was just booked by someone else. Please choose another date or slot.",
                     )
-                    date_options = format_date_options(available_dates)
-
-                    return {
-                        "patient": patient,
-                        "next_step": "SELECT_DATE",
-                        "error": "That slot was just booked by someone else. Please choose another date or slot.",
-                        "date_options": date_options,
-                        "message": date_selection_message(date_options),
-                    }
 
                 row = cur.fetchone()
 

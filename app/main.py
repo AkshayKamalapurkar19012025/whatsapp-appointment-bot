@@ -22,6 +22,9 @@ from app.api.availability import router as availability_router
 from app.api.patients import router as patients_router
 from app.api.appointments import router as appointments_router
 from app.api.department_doctors import router as department_doctors_router
+from app.api.department_appointment_types import (
+    router as department_appointment_types_router,
+)
 from app.api.booking import router as booking_router
 from app.api.doctor_appointment_types import (
     router as doctor_appointment_types_router,
@@ -170,6 +173,11 @@ app.include_router(
 
 app.include_router(
     department_doctors_router,
+    prefix="/api",
+)
+
+app.include_router(
+    department_appointment_types_router,
     prefix="/api",
 )
 

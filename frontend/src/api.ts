@@ -12,6 +12,7 @@ import type {
   DoctorBlockEntry,
   DoctorQueue,
   DoctorScheduleEntry,
+  DoctorWithSlots,
   MyAppointmentsResponse,
   Patient,
   Staff,
@@ -155,6 +156,17 @@ export function listAppointmentTypesForDoctor(doctorId: number): Promise<Appoint
   return request(`/doctors/${doctorId}/appointment-types`)
 }
 
+// Date-First flow only: appointment types offered by ANY doctor in the
+// department, needed before a doctor is chosen -- unlike
+// listAppointmentTypesForDoctor above (Doctor-First, doctor already
+// known). No duration_minutes here: duration is per doctor+type, only
+// meaningful once a specific doctor is known (same as Doctor-First).
+export function listAppointmentTypesForDepartment(
+  departmentId: number,
+): Promise<AppointmentTypeSummary[]> {
+  return request(`/departments/${departmentId}/appointment-types`)
+}
+
 // -- Availability / booking -----------------------------------------------
 
 export function getCalendarMonth(
@@ -192,6 +204,42 @@ export function getSlotsForDate(
       ...(departmentId !== undefined ? { department_id: departmentId } : {}),
     },
   })
+}
+
+// Date-First's aggregate month calendar: same response shape as
+// getCalendarMonth above (a per-day boolean map), but "available" means
+// ANY doctor in the department offering this appointment type has a
+// real slot -- no doctor_id is known yet at this step.
+export function getDepartmentCalendarMonth(
+  departmentId: number,
+  appointmentTypeId: number,
+  year: number,
+  month: number,
+): Promise<CalendarMonth> {
+  const params = new URLSearchParams({
+    department_id: String(departmentId),
+    appointment_type_id: String(appointmentTypeId),
+    year: String(year),
+    month: String(month),
+  })
+  return request(`/web/calendar/department?${params.toString()}`)
+}
+
+// Date-First's per-date doctor list: every doctor in the department
+// offering this appointment type with at least one real slot on this
+// date, each already carrying their own slots -- a doctor with zero
+// valid slots is never included.
+export function getDoctorsForDate(
+  departmentId: number,
+  appointmentTypeId: number,
+  isoDate: string,
+): Promise<{ doctors: DoctorWithSlots[] }> {
+  const params = new URLSearchParams({
+    department_id: String(departmentId),
+    appointment_type_id: String(appointmentTypeId),
+    selected_date: isoDate,
+  })
+  return request(`/web/availability/by-date?${params.toString()}`)
 }
 
 export function createWebAppointment(

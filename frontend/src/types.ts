@@ -34,6 +34,16 @@ export interface Slot {
   end_at: string
 }
 
+// Date-First flow only: one entry of GET /web/availability/by-date's
+// "doctors" list -- a doctor in the department offering the chosen
+// appointment type, with their own real slots for the chosen date
+// already attached (never present with an empty slots array).
+export interface DoctorWithSlots {
+  id: number
+  name: string
+  slots: Slot[]
+}
+
 export interface CalendarMonth {
   doctor_id: number
   appointment_type_id: number

@@ -3,38 +3,68 @@ import { CheckCircle } from '@phosphor-icons/react'
 import {
   ApiError,
   createWebAppointment,
+  getDoctorsForDate,
   getSlotsForDate,
+  listAppointmentTypesForDepartment,
   listAppointmentTypesForDoctor,
   listDepartments,
   listDoctorsInDepartment,
   logout,
 } from './api'
-import type { AppointmentType, BookedAppointment, Department, Doctor, Slot } from './types'
+import type { BookedAppointment, Department, Doctor, DoctorWithSlots, Slot } from './types'
 import Calendar from './Calendar'
+import DepartmentCalendar from './DepartmentCalendar'
 import SlotGrid from './SlotGrid'
 import { formatDate, formatTime } from './format'
 
+type BookingMode = 'doctor-first' | 'date-first'
+
+// A minimal shape covering both the Doctor-First appointment-type list
+// (app/api/doctor_appointment_types.py's GET, duration_minutes always
+// present -- it's a per-doctor assignment) and the Date-First one
+// (app/services/availability_engine.get_appointment_types_for_department,
+// no duration_minutes -- duration is per doctor+type, not meaningful
+// before a doctor is chosen). One shared "selected type" state can hold
+// either, since every place that reads duration_minutes from it only
+// does so in a Doctor-First-only render branch (see the appointmentType
+// step below) -- everywhere else (booking calls, review labels) only
+// ever needs id/name, which both shapes always have.
+interface SelectableAppointmentType {
+  id: number
+  name: string
+  duration_minutes?: number
+}
+
+// Doctor-First's doctor list already carries active/created_at/
+// created_by (GET /departments/{id}/doctors); Date-First's per-date
+// doctor list (GET /web/availability/by-date) only ever has id/name.
+// The SELECTED doctor is held in this narrower shape since nothing
+// downstream (booking calls, review labels) needs more than that.
+interface SelectableDoctor {
+  id: number
+  name: string
+}
+
 type Step =
+  | 'mode'
   | 'department'
   | 'doctor'
   | 'appointmentType'
   | 'date'
+  | 'availableDoctors'
   | 'slot'
   | 'review'
   | 'confirmation'
 
-// Step order deliberately matches app/api/booking.py's actual WhatsApp
-// flow (Department -> Doctor -> Appointment Type -> Date -> Slot), not
-// the literal Department -> Doctor -> Date -> Slot -> Appointment Type
-// order listed in the WEB P3 prompt text. That literal order isn't
-// achievable as written: slot computation (both here and in WhatsApp)
-// needs appointment_type_id already known, since each type has its own
-// duration and duration determines the slot boundaries -- see
-// app/services/availability_engine.py's get_available_slots signature.
-// Reusing the exact same shared engine (global rule 4: don't duplicate
-// booking logic between Web and WhatsApp) means reusing its real
-// ordering constraint too. Flagged in the WEB P3 report, not a silent
-// deviation.
+// Doctor-First's step order deliberately matches app/api/booking.py's
+// WhatsApp Doctor-First flow (Department -> Doctor -> Appointment Type
+// -> Date -> Slot); Date-First's matches its WhatsApp counterpart too
+// (Department -> Appointment Type -> Date -> Available Doctors -> Slot).
+// Both converge onto the same Slot -> Review -> Confirm tail and the
+// same POST /web/appointments call -- one booking engine, two entry
+// orders, exactly like the WhatsApp side (see app/api/booking.py's
+// _select_date_or_available_doctors_response and its module-level
+// comments for the equivalent server-side design).
 
 export default function BookingFlow({
   patientName,
@@ -45,17 +75,19 @@ export default function BookingFlow({
   onLoggedOut: () => void
   onViewAppointments: () => void
 }) {
-  const [step, setStep] = useState<Step>('department')
+  const [step, setStep] = useState<Step>('mode')
+  const [mode, setMode] = useState<BookingMode | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const [departments, setDepartments] = useState<Department[]>([])
   const [doctors, setDoctors] = useState<Doctor[]>([])
-  const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([])
+  const [appointmentTypes, setAppointmentTypes] = useState<SelectableAppointmentType[]>([])
+  const [availableDoctors, setAvailableDoctors] = useState<DoctorWithSlots[]>([])
   const [slots, setSlots] = useState<Slot[]>([])
 
   const [department, setDepartment] = useState<Department | null>(null)
-  const [doctor, setDoctor] = useState<Doctor | null>(null)
-  const [appointmentType, setAppointmentType] = useState<AppointmentType | null>(null)
+  const [doctor, setDoctor] = useState<SelectableDoctor | null>(null)
+  const [appointmentType, setAppointmentType] = useState<SelectableAppointmentType | null>(null)
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null)
   const [confirmed, setConfirmed] = useState<BookedAppointment | null>(null)
@@ -67,9 +99,24 @@ export default function BookingFlow({
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load departments'))
   }, [])
 
+  function chooseMode(chosen: BookingMode) {
+    setMode(chosen)
+    setError(null)
+    setStep('department')
+  }
+
   function chooseDepartment(d: Department) {
     setDepartment(d)
     setError(null)
+    if (mode === 'date-first') {
+      listAppointmentTypesForDepartment(d.id)
+        .then((result) => {
+          setAppointmentTypes(result)
+          setStep('appointmentType')
+        })
+        .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load appointment types'))
+      return
+    }
     listDoctorsInDepartment(d.id)
       .then((result) => {
         setDoctors(result)
@@ -89,7 +136,7 @@ export default function BookingFlow({
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load appointment types'))
   }
 
-  function chooseAppointmentType(type: AppointmentType) {
+  function chooseAppointmentType(type: SelectableAppointmentType) {
     setAppointmentType(type)
     setError(null)
     setStep('date')
@@ -105,6 +152,25 @@ export default function BookingFlow({
         setStep('slot')
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load time slots'))
+  }
+
+  function chooseDateFirstDate(isoDate: string) {
+    if (!department || !appointmentType) return
+    setSelectedDate(isoDate)
+    setError(null)
+    getDoctorsForDate(department.id, appointmentType.id, isoDate)
+      .then((result) => {
+        setAvailableDoctors(result.doctors)
+        setStep('availableDoctors')
+      })
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load available doctors'))
+  }
+
+  function chooseAvailableDoctor(d: DoctorWithSlots) {
+    setDoctor({ id: d.id, name: d.name })
+    setSlots(d.slots)
+    setError(null)
+    setStep('slot')
   }
 
   function chooseSlot(slot: Slot) {
@@ -137,12 +203,14 @@ export default function BookingFlow({
   }
 
   function startOver() {
-    setStep('department')
+    setStep('mode')
+    setMode(null)
     setDepartment(null)
     setDoctor(null)
     setAppointmentType(null)
     setSelectedDate(null)
     setSelectedSlot(null)
+    setAvailableDoctors([])
     setConfirmed(null)
     setError(null)
   }
@@ -150,6 +218,16 @@ export default function BookingFlow({
   async function handleLogout() {
     await logout().catch(() => undefined)
     onLoggedOut()
+  }
+
+  // Slot-step "back": Doctor-First returns to its own per-doctor
+  // calendar (Date); Date-First returns to Available Doctors (pick a
+  // different doctor for the same date), not the calendar -- the one
+  // place both flows share a step (Slot) but need different "back"
+  // targets, matching app/api/booking.py's SELECT_SLOT back-handler
+  // (_select_date_or_available_doctors_response).
+  function backFromSlot() {
+    setStep(mode === 'date-first' ? 'availableDoctors' : 'date')
   }
 
   return (
@@ -168,6 +246,26 @@ export default function BookingFlow({
 
       {error && <p className="error">{error}</p>}
 
+      {step === 'mode' && (
+        <>
+          <h2>How would you like to find your appointment?</h2>
+          <ul className="option-list">
+            <li>
+              <button type="button" onClick={() => chooseMode('doctor-first')}>
+                Choose a Doctor
+                <span className="option-subtitle">You already know which doctor you'd like to see</span>
+              </button>
+            </li>
+            <li>
+              <button type="button" onClick={() => chooseMode('date-first')}>
+                Find by Date
+                <span className="option-subtitle">See which doctors are available on your preferred date</span>
+              </button>
+            </li>
+          </ul>
+        </>
+      )}
+
       {step === 'department' && (
         <>
           <h2>Choose a department</h2>
@@ -180,6 +278,9 @@ export default function BookingFlow({
               </li>
             ))}
           </ul>
+          <button type="button" className="link" onClick={() => setStep('mode')}>
+            Back
+          </button>
         </>
       )}
 
@@ -208,18 +309,40 @@ export default function BookingFlow({
             {appointmentTypes.map((type) => (
               <li key={type.id}>
                 <button type="button" onClick={() => chooseAppointmentType(type)}>
-                  {type.name} <span className="muted">({type.duration_minutes} min)</span>
+                  {type.name}{' '}
+                  {type.duration_minutes !== undefined && (
+                    <span className="muted">({type.duration_minutes} min)</span>
+                  )}
                 </button>
               </li>
             ))}
           </ul>
-          <button type="button" className="link" onClick={() => setStep('doctor')}>
+          <button
+            type="button"
+            className="link"
+            onClick={() => setStep(mode === 'date-first' ? 'department' : 'doctor')}
+          >
             Back
           </button>
         </>
       )}
 
-      {step === 'date' && doctor && appointmentType && (
+      {step === 'date' && appointmentType && mode === 'date-first' && department && (
+        <>
+          <h2>Choose a date</h2>
+          <p className="muted">Showing every doctor with an opening -- pick a date to see who's available.</p>
+          <DepartmentCalendar
+            departmentId={department.id}
+            appointmentTypeId={appointmentType.id}
+            onSelectDate={chooseDateFirstDate}
+          />
+          <button type="button" className="link" onClick={() => setStep('appointmentType')}>
+            Back
+          </button>
+        </>
+      )}
+
+      {step === 'date' && doctor && appointmentType && mode !== 'date-first' && (
         <>
           <h2>Choose a date</h2>
           <Calendar
@@ -234,11 +357,38 @@ export default function BookingFlow({
         </>
       )}
 
+      {step === 'availableDoctors' && selectedDate && (
+        <>
+          <h2>Doctors available on {formatDate(selectedDate)}</h2>
+          {availableDoctors.length === 0 ? (
+            <p className="calendar-empty-state">
+              No doctors have availability on this date. Please choose another date.
+            </p>
+          ) : (
+            <ul className="option-list">
+              {availableDoctors.map((doc) => (
+                <li key={doc.id}>
+                  <button type="button" onClick={() => chooseAvailableDoctor(doc)}>
+                    {doc.name}{' '}
+                    <span className="muted">
+                      ({doc.slots.length} {doc.slots.length === 1 ? 'slot' : 'slots'} available)
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <button type="button" className="link" onClick={() => setStep('date')}>
+            Back
+          </button>
+        </>
+      )}
+
       {step === 'slot' && selectedDate && (
         <>
           <h2>Choose a time on {formatDate(selectedDate)}</h2>
           <SlotGrid slots={slots} onSelect={chooseSlot} />
-          <button type="button" className="link" onClick={() => setStep('date')}>
+          <button type="button" className="link" onClick={backFromSlot}>
             Back
           </button>
         </>
@@ -262,8 +412,6 @@ export default function BookingFlow({
             <dd>
               {formatTime(selectedSlot.start_at)} – {formatTime(selectedSlot.end_at)}
             </dd>
-            <dt>Duration</dt>
-            <dd>{appointmentType.duration_minutes} minutes</dd>
           </dl>
           <button type="button" onClick={confirmBooking} disabled={busy}>
             {busy ? 'Booking…' : 'Confirm booking'}
