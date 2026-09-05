@@ -457,6 +457,11 @@ def visit_appointment(
                     status_code=409,
                     detail="Only a Confirmed appointment can be marked Visited",
                 )
+            except svc_exc.AppointmentNotStarted:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This appointment has not started yet",
+                )
 
             # Staff-initiated check-in notification (migrations/0012) --
             # tells the patient their queue token number. Not a

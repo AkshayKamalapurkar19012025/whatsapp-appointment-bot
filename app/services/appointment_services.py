@@ -63,6 +63,7 @@ from app.services.exceptions import (
     AlreadyCancelled,
     NotAppointmentOwner,
     InvalidStatusTransition,
+    AppointmentNotStarted,
 )
 
 logger = logging.getLogger(__name__)
@@ -897,7 +898,7 @@ def mark_visited_service(cur, appointment_id: int):
     """
     cur.execute(
         """
-        SELECT a.status, a.doctor_id, d.timezone
+        SELECT a.status, a.doctor_id, d.timezone, a.start_at
         FROM appointments a
         JOIN doctors d ON d.id = a.doctor_id
         WHERE a.id = %s
@@ -911,10 +912,19 @@ def mark_visited_service(cur, appointment_id: int):
     if row is None:
         raise AppointmentNotFound()
 
-    status, doctor_id, doctor_tz = row
+    status, doctor_id, doctor_tz, start_at = row
 
     if status != "CONFIRMED":
         raise InvalidStatusTransition()
+
+    # start_at is TIMESTAMPTZ -- an absolute instant, so comparing it
+    # directly against an aware "now" is correct regardless of which
+    # timezone either side happens to be labeled in (no conversion to
+    # the doctor's local wall-clock time needed, or safe, for this
+    # check -- unlike the token-numbering "which doctor-local day is
+    # this" question below, which does need doctor_tz).
+    if start_at > datetime.now(timezone.utc):
+        raise AppointmentNotStarted()
 
     if not validate_timezone(doctor_tz):
         doctor_tz = "Asia/Kolkata"

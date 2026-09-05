@@ -72,3 +72,19 @@ export function formatTimeOfDay(hhmm: string): string {
   if (hour === 0) hour = 12
   return `${hour}:${minute} ${suffix}`
 }
+
+// Unlike formatDate/formatTime above, this genuinely needs `new Date(...)`
+// -- not for display (nothing here is shown to a user), just to compare
+// two instants. An ISO string carrying its own offset (e.g.
+// "2026-09-07T09:45:00+05:30", exactly what the admin appointments
+// endpoint returns) always parses to the correct instant regardless of
+// the browser's own timezone, so this comparison is safe. This is the
+// UI-side half of the "has this appointment started yet" check --
+// app/services/appointment_services.py's mark_visited_service enforces
+// the same rule server-side (comparing the same instant, not a
+// browser-supplied one), so this is a UX nicety, not the real guard.
+export function hasStarted(isoString: string): boolean {
+  const start = new Date(isoString)
+  if (Number.isNaN(start.getTime())) return false
+  return start.getTime() <= Date.now()
+}

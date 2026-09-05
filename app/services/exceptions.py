@@ -65,6 +65,16 @@ class InvalidStatusTransition(ServiceError):
     pass
 
 
+class AppointmentNotStarted(ServiceError):
+    """Raised by mark_visited_service when the appointment's status
+    allows the transition (it's Confirmed) but its scheduled start_at is
+    still in the future -- a patient can't be checked in for a visit
+    that hasn't begun yet. Deliberately distinct from
+    InvalidStatusTransition: the status itself is fine, it's just too
+    early."""
+    pass
+
+
 # ---------------------------------------------------------------------
 # Patient authentication (WEB P2) -- see app/services/patient_auth.py.
 # ---------------------------------------------------------------------
