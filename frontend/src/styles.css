@@ -1055,6 +1055,39 @@ a.link.danger {
   gap: var(--space-3);
 }
 
+/* The rest of a doctor card's compact summary (below the avatar/name
+   header) -- years of experience + key qualification on one muted
+   line, featured education location on another. Deliberately just
+   these two lines: the full profile (complete education history, etc.)
+   lives one click away in DoctorProfileSection.tsx, not here. */
+.doctor-card-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--space-2);
+}
+
+.doctor-card-meta {
+  font-size: 0.82rem;
+}
+
+.doctor-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+.doctor-card-view-profile {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
 /* Professional square/circular photo presentation, and the fallback
    avatar shown in its place -- shared by the admin doctor grid, the
    patient-facing compact booking cards, and the View Profile modal
@@ -1073,6 +1106,58 @@ a.link.danger {
   background: var(--color-surface-hover);
   color: var(--color-text-muted);
   flex-shrink: 0;
+}
+
+/* Doctor create/edit form (DoctorsPanel.tsx's "Add doctor" form,
+   DoctorProfileSection.tsx's profile-edit and add-education forms) --
+   a dedicated grid rather than reusing the generic .inline-form flex
+   row every other admin panel's filter/quick-add bar uses. A flex row
+   of 5+ fields stretches into one long horizontal strip on a wide
+   screen and wraps unpredictably on a narrow one; this instead lays
+   fields out as a responsive 2-column grid, with .doctor-form-full
+   for anything that should span the full width (the name field, a
+   textarea-like field, or the action row) and .doctor-form-section for
+   a labelled group of related fields (e.g. "Education & Training"'s
+   own add-entry fields, kept visually distinct from the scalar profile
+   fields above them). Deliberately capped at max-width so fields don't
+   stretch edge-to-edge on a wide monitor either. */
+.doctor-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-3) var(--space-4);
+  margin: var(--space-3) 0;
+  max-width: 760px;
+}
+
+.doctor-form-grid .inline-label {
+  width: 100%;
+}
+
+.doctor-form-grid input,
+.doctor-form-grid select {
+  width: 100%;
+}
+
+.doctor-form-full {
+  grid-column: 1 / -1;
+}
+
+.doctor-form-section-title {
+  grid-column: 1 / -1;
+  margin: var(--space-2) 0 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+.doctor-form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-1);
 }
 
 /* Admin "Profile" tab (DoctorProfileSection.tsx): photo upload row and
@@ -1731,34 +1816,42 @@ a.link.danger {
 
 .confirmation .state-icon {
   opacity: 1;
+  margin-bottom: var(--space-3);
 }
 
 .confirmation .summary {
   margin-bottom: var(--space-4);
 }
 
-/* The "confirmation SMS sent" line -- a small success-toned notice
-   instead of plain floating .muted text, so it reads as part of the
-   confirmation rather than an afterthought sitting between the summary
-   and the actions below it. */
+/* The "SMS sent" line -- was plain floating .muted text, easy to miss
+   and indistinguishable from any other secondary copy on the page.
+   Styled as a small success-toned notice (same success colour as the
+   confirmation checkmark above it) so it reads as part of the
+   confirmation itself, not an afterthought. */
 .confirmation-notice {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin: 0 0 var(--space-5);
+  margin: 0 0 var(--space-4);
   padding: var(--space-3) var(--space-4);
   background: var(--color-success-soft);
+  border-radius: var(--radius-md);
   color: var(--color-success);
-  border-radius: var(--radius-sm);
-  font-size: 0.88rem;
+  font-size: 0.85rem;
   font-weight: 500;
 }
 
-/* Book another appointment (primary) / View my appointments (secondary)
-   -- explicitly separated and spaced, and the primary action gets .btn
-   directly rather than relying on ".card > button:not(.link)" (which
-   only matches a button one level below .card -- this one sits inside
-   .confirmation, one level deeper, so it never actually matched). */
+.confirmation-notice svg {
+  flex-shrink: 0;
+}
+
+/* Book another appointment (primary, full-width via .btn) stacked
+   above View my appointments (secondary, a plain text link) with
+   deliberate spacing between them -- previously two bare <button>s
+   with no wrapping container, one of them missing its .btn styling
+   entirely (a plain button one level too deep for the existing ".card
+   > button" selector to reach), which is why they rendered as
+   unstyled, touching text instead of two distinct actions. */
 .confirmation-actions {
   display: flex;
   flex-direction: column;
@@ -1767,7 +1860,7 @@ a.link.danger {
 }
 
 .confirmation-actions .link {
-  margin: 0;
+  margin-top: 0;
 }
 
 /* ===========================================================
@@ -2557,16 +2650,51 @@ a.link.danger {
 
 .doctor-profile-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-4);
-  margin-bottom: var(--space-4);
+  margin-bottom: var(--space-2);
   padding-right: var(--space-5);
 }
 
-.doctor-profile-header h2 {
-  margin: 0 0 4px;
+.doctor-profile-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 4px;
+  min-width: 0;
 }
 
-.doctor-profile-header p {
+.doctor-profile-header h2 {
   margin: 0;
+}
+
+.doctor-profile-specialization {
+  margin: 2px 0 0;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--color-primary-hover);
+}
+
+.doctor-profile-meta {
+  margin: 2px 0 0;
+}
+
+.doctor-profile-section-divider {
+  margin: var(--space-4) 0;
+  border: none;
+  border-top: 1px solid var(--color-border);
+}
+
+/* A smaller, muted, uppercase label rather than a full h3 -- Education
+   & Training is deliberately the modal's secondary section, visually
+   subordinate to the header identity block above it (see this file's
+   own PR for why: the profile was reading as an "education popup"
+   with an empty-looking header). */
+.doctor-profile-section-label {
+  margin: 0 0 var(--space-3);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
 }

@@ -58,48 +58,56 @@ export default function DoctorProfileModal({
 
         {profile && (
           <>
+            {/* Header: everything that identifies this doctor at a glance
+                (photo, name, specialization, sub-specialization,
+                experience, key qualifications) -- the part of the
+                profile a patient actually decides on, so it comes first
+                and reads as a complete identity block, not a name over
+                an empty page with a data table below it. */}
             <div className="doctor-profile-header">
               <DoctorAvatar photoUrl={profile.photo_url} name={profile.name} size={88} />
-              <div>
+              <div className="doctor-profile-identity">
                 <h2>{profile.name}</h2>
                 {profile.specialization && (
-                  <p className="muted">
+                  <p className="doctor-profile-specialization">
                     {profile.specialization}
-                    {profile.sub_specialization ? ` (${profile.sub_specialization})` : ''}
+                    {profile.sub_specialization ? ` · ${profile.sub_specialization}` : ''}
+                  </p>
+                )}
+                {(profile.years_of_experience !== null || profile.qualifications) && (
+                  <p className="muted doctor-profile-meta">
+                    {[
+                      profile.years_of_experience !== null
+                        ? `${profile.years_of_experience} ${profile.years_of_experience === 1 ? 'year' : 'years'} experience`
+                        : null,
+                      profile.qualifications,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
                   </p>
                 )}
               </div>
             </div>
 
-            {(profile.qualifications || profile.years_of_experience !== null) && (
-              <dl className="summary">
-                {profile.qualifications && (
-                  <>
-                    <dt>Qualifications</dt>
-                    <dd>{profile.qualifications}</dd>
-                  </>
-                )}
-                {profile.years_of_experience !== null && (
-                  <>
-                    <dt>Experience</dt>
-                    <dd>
-                      {profile.years_of_experience} {profile.years_of_experience === 1 ? 'year' : 'years'}
-                    </dd>
-                  </>
-                )}
-              </dl>
-            )}
-
-            <h3>Education &amp; Training</h3>
+            {/* Education & Training: lower priority than the header
+                above (per the product decision this modal was flagged
+                for -- a profile, not an education-only popup), so it's
+                visually secondary: a divider, a smaller uppercase
+                section label, and the same compact per-entry line the
+                admin Profile tab already uses, including which entry (if
+                any) is the doctor's chosen featured one. */}
+            <hr className="doctor-profile-section-divider" />
+            <h3 className="doctor-profile-section-label">Education &amp; Training</h3>
             {profile.education.length === 0 ? (
-              <p className="muted">No education details on record.</p>
+              <p className="muted">No education details have been added yet.</p>
             ) : (
               <ul className="education-list">
                 {profile.education.map((entry) => (
-                  <li key={entry.id} className="education-entry">
+                  <li key={entry.id} className={entry.is_primary ? 'education-entry featured' : 'education-entry'}>
                     <div>
                       <strong>{entry.qualification}</strong> — {entry.institution}, {entry.city},{' '}
                       {entry.country} ({entry.completion_year})
+                      {entry.is_primary && <span className="pill role-admin">Featured</span>}
                     </div>
                   </li>
                 ))}

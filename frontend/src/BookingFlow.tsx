@@ -519,7 +519,7 @@ export default function BookingFlow({
             <dd>{confirmed.duration_minutes} minutes</dd>
           </dl>
           <p className="confirmation-notice">
-            <ChatCircleText size={16} weight="fill" aria-hidden="true" />
+            <ChatCircleText size={18} weight="fill" aria-hidden="true" />
             A confirmation SMS has been sent to your registered number.
           </p>
           <div className="confirmation-actions">

@@ -88,3 +88,22 @@ export function hasStarted(isoString: string): boolean {
   if (Number.isNaN(start.getTime())) return false
   return start.getTime() <= Date.now()
 }
+
+// "N years experience · MBBS, MD (Cardiology)" -- the one-line summary
+// shown on every compact doctor card (DoctorCard.tsx's patient-facing
+// selection cards, and the admin Doctors grid), so both places read
+// the same two fields the same way instead of two near-identical
+// inline implementations drifting apart. null/empty parts are dropped,
+// and the whole thing is null (render nothing) if neither is set.
+export function doctorSummaryLine(doctor: {
+  years_of_experience: number | null
+  qualifications: string | null
+}): string | null {
+  const parts = [
+    doctor.years_of_experience !== null
+      ? `${doctor.years_of_experience} ${doctor.years_of_experience === 1 ? 'year' : 'years'} experience`
+      : null,
+    doctor.qualifications,
+  ].filter((part): part is string => Boolean(part))
+  return parts.length > 0 ? parts.join(' · ') : null
+}
