@@ -147,9 +147,11 @@ export default function MyAppointments({
   return (
     <div className="card">
       <div className="topbar">
-        <span>Hi, {patientName}</span>
-        <div>
+        <div className="topbar-greeting">
+          <span>Hi, {patientName}</span>
           <LiveClock />
+        </div>
+        <div className="topbar-actions">
           <button type="button" className="link" onClick={onBookNew}>
             Book an appointment
           </button>

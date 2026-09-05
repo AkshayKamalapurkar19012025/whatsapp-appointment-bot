@@ -564,8 +564,10 @@ a.link.danger {
 
 .topbar {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
+  gap: var(--space-3);
   margin-bottom: var(--space-5);
   padding-bottom: var(--space-4);
   border-bottom: 1px solid var(--color-border);
@@ -581,19 +583,38 @@ a.link.danger {
   margin: 0;
 }
 
-.topbar > div {
+/* Left cluster: who you are + what time it is, read together as one
+   line of context (matches the "greeting + live status" header pattern
+   on booking sites like Zocdoc/Practo, rather than mixing the clock in
+   with the account action links on the right). */
+.topbar-greeting {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
+  gap: var(--space-3);
+  flex-wrap: wrap;
   row-gap: var(--space-2);
+}
+
+/* Right cluster: account actions only -- exactly two short links, so
+   this never needs to wrap onto a ragged second line. */
+.topbar-actions {
+  display: flex;
+  align-items: center;
   gap: var(--space-4);
+  flex-shrink: 0;
 }
 
 .live-clock {
-  color: var(--color-text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--color-primary-soft);
+  color: var(--color-text-secondary);
   font-variant-numeric: tabular-nums;
-  font-size: 0.85rem;
+  font-size: 0.78rem;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -703,12 +724,12 @@ a.link.danger {
     flex: 1;
   }
 
-  /* At very narrow widths, even the whole controls group (clock + nav
-     links, which already wraps internally -- see .topbar > div above)
-     may not fit next to a long greeting -- let it drop to its own row. */
+  /* At very narrow widths the actions cluster (My appointments / Log
+     out) may not fit next to the greeting+clock cluster on one line --
+     .topbar already wraps (see above), this just tightens the row gap
+     when it does. */
   .topbar {
-    flex-wrap: wrap;
-    row-gap: var(--space-2);
+    row-gap: var(--space-3);
   }
 }
 

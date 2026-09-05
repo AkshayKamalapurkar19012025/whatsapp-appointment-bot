@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Clock } from '@phosphor-icons/react'
 
 // The viewer's own device clock, not the server's -- deliberately not an
 // API call. Useful for spotting a timezone mismatch between what a
@@ -19,6 +20,7 @@ export default function LiveClock() {
 
   return (
     <span className="live-clock" title={`Your device's local time (${zone})`}>
+      <Clock size={13} weight="bold" aria-hidden="true" />
       {time}
     </span>
   )
