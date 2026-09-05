@@ -7,13 +7,30 @@ import psycopg
 
 from app.api.staff_auth import get_current_staff, require_role
 from app.db.connection import get_connection
+from app.services.availability_engine import DOCTOR_SUMMARY_SELECT_SQL, DOCTOR_SUMMARY_JOIN_SQL, build_doctor_summary
 from app.utils.timezone import convert_to_timezone, validate_timezone
 
 router = APIRouter(prefix="/doctors", tags=["Doctors"])
 
 
 class DoctorCreate(BaseModel):
+    """
+    Also reused, unchanged, as the body shape for PUT /{doctor_id}
+    (update_doctor) -- both creation and edit require the exact same
+    fields, per the product decision that specialization is required
+    going forward. Existing doctors created before this change simply
+    have specialization=NULL until an admin edits them through this same
+    model -- no backfill migration, no separate "legacy doctor" shape.
+    """
+
     name: str = Field(min_length=1, max_length=150)
+    specialization: str = Field(min_length=1, max_length=150)
+    sub_specialization: str | None = Field(default=None, max_length=150)
+    # Headline summary (e.g. "MBBS, MD (Cardiology)") -- the compact
+    # booking card's "key qualification" line. Distinct from the
+    # per-entry `qualification` recorded on each doctor_education row.
+    qualifications: str | None = Field(default=None, max_length=255)
+    years_of_experience: int | None = Field(default=None, ge=0, le=80)
 
     @field_validator("name")
     @classmethod
@@ -25,16 +42,87 @@ class DoctorCreate(BaseModel):
 
         return value
 
+    @field_validator("specialization")
+    @classmethod
+    def validate_specialization(cls, value: str) -> str:
+        value = value.strip()
+
+        if not value:
+            raise ValueError("Specialization cannot be empty")
+
+        return value
+
+    @field_validator("sub_specialization", "qualifications")
+    @classmethod
+    def clean_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        value = value.strip()
+        return value or None
+
+
+class DoctorEducationCreate(BaseModel):
+    """
+    One Education & Training entry. All fields required -- an entry with
+    a missing institution or year is not meaningful, so this is always
+    inserted all-or-nothing (see migrations/0014_doctor_profile.sql).
+    Never carries is_primary: an entry is created as non-featured and is
+    only ever promoted via POST .../education/{id}/feature, so "at most
+    one featured entry" only ever needs handling in one place.
+    """
+
+    qualification: str = Field(min_length=1, max_length=150)
+    institution: str = Field(min_length=1, max_length=200)
+    city: str = Field(min_length=1, max_length=100)
+    country: str = Field(min_length=1, max_length=100)
+    completion_year: int
+
+    @field_validator("qualification", "institution", "city", "country")
+    @classmethod
+    def clean_required_text(cls, value: str) -> str:
+        value = value.strip()
+
+        if not value:
+            raise ValueError("This field cannot be empty")
+
+        return value
+
+    @field_validator("completion_year")
+    @classmethod
+    def validate_completion_year(cls, value: int) -> int:
+        current_year = datetime.now().year
+
+        if value < 1950 or value > current_year:
+            raise ValueError(f"Completion year must be between 1950 and {current_year}")
+
+        return value
+
+
+def _education_entry_dict(row, doctor_id: int) -> dict:
+    return {
+        "id": row[0],
+        "doctor_id": doctor_id,
+        "qualification": row[1],
+        "institution": row[2],
+        "city": row[3],
+        "country": row[4],
+        "completion_year": row[5],
+        "is_primary": row[6],
+    }
+
 
 @router.get("")
 def get_doctors():
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
-                SELECT d.id, d.name, d.active, d.created_at, s.username
+                f"""
+                SELECT d.id, d.name, d.active, d.created_at, s.username,
+                       {DOCTOR_SUMMARY_SELECT_SQL}
                 FROM doctors d
                 LEFT JOIN staff s ON s.id = d.created_by
+                {DOCTOR_SUMMARY_JOIN_SQL}
                 WHERE d.active = TRUE
                 ORDER BY d.name
                 """
@@ -48,6 +136,7 @@ def get_doctors():
             "active": row[2],
             "created_at": row[3].isoformat(),
             "created_by": row[4],
+            **{k: v for k, v in build_doctor_summary(row[0], row[1], row[5:]).items() if k not in ("id", "name")},
         }
         for row in rows
     ]
@@ -63,11 +152,22 @@ def create_doctor(
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO doctors (name, created_by)
-                    VALUES (%s, %s)
-                    RETURNING id, name, active, created_at
+                    INSERT INTO doctors (
+                        name, specialization, sub_specialization,
+                        qualifications, years_of_experience, created_by
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING id, name, active, created_at, specialization,
+                              sub_specialization, qualifications, years_of_experience, photo_url
                     """,
-                    (doctor.name, admin["id"]),
+                    (
+                        doctor.name,
+                        doctor.specialization,
+                        doctor.sub_specialization,
+                        doctor.qualifications,
+                        doctor.years_of_experience,
+                        admin["id"],
+                    ),
                 )
                 row = cur.fetchone()
 
@@ -77,6 +177,17 @@ def create_doctor(
             "active": row[2],
             "created_at": row[3].isoformat(),
             "created_by": admin["username"],
+            "specialization": row[4],
+            "sub_specialization": row[5],
+            "qualifications": row[6],
+            "years_of_experience": row[7],
+            "photo_url": row[8],
+            # A brand-new doctor cannot have a featured doctor_education
+            # entry yet (there's nowhere it could have come from) --
+            # explicit rather than omitted, so this response matches the
+            # same DoctorProfileSummary shape every listing endpoint
+            # returns (see build_doctor_summary()), not one field short.
+            "education_location": None,
         }
 
     except psycopg.errors.UniqueViolation:
@@ -84,6 +195,261 @@ def create_doctor(
             status_code=409,
             detail="Doctor already exists",
         )
+
+
+@router.put("/{doctor_id}")
+def update_doctor(
+    doctor_id: int,
+    doctor: DoctorCreate,
+    admin: dict = Depends(require_role("ADMIN")),
+):
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE doctors
+                    SET name = %s,
+                        specialization = %s,
+                        sub_specialization = %s,
+                        qualifications = %s,
+                        years_of_experience = %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                      AND active = TRUE
+                    RETURNING id, name, active, created_at, specialization,
+                              sub_specialization, qualifications, years_of_experience, photo_url
+                    """,
+                    (
+                        doctor.name,
+                        doctor.specialization,
+                        doctor.sub_specialization,
+                        doctor.qualifications,
+                        doctor.years_of_experience,
+                        doctor_id,
+                    ),
+                )
+                row = cur.fetchone()
+
+                if row is None:
+                    raise HTTPException(status_code=404, detail="Doctor not found")
+
+        return {
+            "id": row[0],
+            "name": row[1],
+            "active": row[2],
+            "created_at": row[3].isoformat(),
+            "specialization": row[4],
+            "sub_specialization": row[5],
+            "qualifications": row[6],
+            "years_of_experience": row[7],
+            "photo_url": row[8],
+        }
+
+    except psycopg.errors.UniqueViolation:
+        raise HTTPException(
+            status_code=409,
+            detail="Doctor already exists",
+        )
+
+
+def get_doctor_profile_and_education(cur, doctor_id: int) -> dict | None:
+    """
+    The full profile + complete education history -- unlike every
+    doctor-listing query elsewhere in this module (which only ever
+    computes the compact summary fields via build_doctor_summary()),
+    this is what "View Profile" fetches on demand, on both channels:
+    GET /{doctor_id} below (web) and app/api/booking.py's WhatsApp
+    "PROFILE <number>" side-channel reply both call this same function,
+    so the two channels can never drift onto different profile data.
+
+    Returns None if no such active doctor exists -- callers decide how
+    to surface that (an HTTP 404 for the web route, a plain WhatsApp
+    reply for the side-channel).
+    """
+    cur.execute(
+        """
+        SELECT id, name, active, created_at, specialization,
+               sub_specialization, qualifications, years_of_experience, photo_url
+        FROM doctors
+        WHERE id = %s
+          AND active = TRUE
+        """,
+        (doctor_id,),
+    )
+    row = cur.fetchone()
+
+    if row is None:
+        return None
+
+    cur.execute(
+        """
+        SELECT id, qualification, institution, city, country, completion_year, is_primary
+        FROM doctor_education
+        WHERE doctor_id = %s
+        ORDER BY completion_year DESC, id
+        """,
+        (doctor_id,),
+    )
+    education_rows = cur.fetchall()
+
+    return {
+        "id": row[0],
+        "name": row[1],
+        "active": row[2],
+        "created_at": row[3].isoformat(),
+        "specialization": row[4],
+        "sub_specialization": row[5],
+        "qualifications": row[6],
+        "years_of_experience": row[7],
+        "photo_url": row[8],
+        "education": [_education_entry_dict(e, doctor_id) for e in education_rows],
+    }
+
+
+@router.get("/{doctor_id}")
+def get_doctor_profile(doctor_id: int):
+    """
+    Deliberately unauthenticated, matching GET /{doctor_id}/departments
+    below: patients viewing a doctor's profile mid-booking are not staff.
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            profile = get_doctor_profile_and_education(cur, doctor_id)
+
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Doctor not found")
+
+    return profile
+
+
+@router.post("/{doctor_id}/education")
+def add_doctor_education(
+    doctor_id: int,
+    entry: DoctorEducationCreate,
+    admin: dict = Depends(require_role("ADMIN")),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM doctors WHERE id = %s AND active = TRUE",
+                (doctor_id,),
+            )
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=404, detail="Doctor not found")
+
+            cur.execute(
+                """
+                INSERT INTO doctor_education (
+                    doctor_id, qualification, institution, city, country, completion_year
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id, qualification, institution, city, country, completion_year, is_primary
+                """,
+                (
+                    doctor_id,
+                    entry.qualification,
+                    entry.institution,
+                    entry.city,
+                    entry.country,
+                    entry.completion_year,
+                ),
+            )
+            row = cur.fetchone()
+
+    return _education_entry_dict(row, doctor_id)
+
+
+@router.delete("/{doctor_id}/education/{education_id}")
+def remove_doctor_education(
+    doctor_id: int,
+    education_id: int,
+    admin: dict = Depends(require_role("ADMIN")),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM doctor_education
+                WHERE id = %s
+                  AND doctor_id = %s
+                RETURNING id
+                """,
+                (education_id, doctor_id),
+            )
+            removed = cur.fetchone()
+
+    if removed is None:
+        raise HTTPException(status_code=404, detail="Education entry not found")
+
+    return {"id": education_id, "doctor_id": doctor_id, "message": "Education entry removed"}
+
+
+@router.post("/{doctor_id}/education/{education_id}/feature")
+def feature_doctor_education(
+    doctor_id: int,
+    education_id: int,
+    admin: dict = Depends(require_role("ADMIN")),
+):
+    """
+    Marks this entry as the one shown on the compact booking card's
+    education/training line, first clearing whatever entry (if any) was
+    previously featured for this doctor. The partial unique index
+    (migrations/0014_doctor_profile.sql) guarantees at most one survives
+    regardless, but clearing the old one first here means the API path
+    never actually hits that constraint.
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM doctor_education WHERE id = %s AND doctor_id = %s",
+                (education_id, doctor_id),
+            )
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=404, detail="Education entry not found")
+
+            cur.execute(
+                "UPDATE doctor_education SET is_primary = FALSE WHERE doctor_id = %s AND is_primary = TRUE",
+                (doctor_id,),
+            )
+            cur.execute(
+                """
+                UPDATE doctor_education
+                SET is_primary = TRUE
+                WHERE id = %s
+                RETURNING id, qualification, institution, city, country, completion_year, is_primary
+                """,
+                (education_id,),
+            )
+            row = cur.fetchone()
+
+    return _education_entry_dict(row, doctor_id)
+
+
+@router.delete("/{doctor_id}/education/{education_id}/feature")
+def unfeature_doctor_education(
+    doctor_id: int,
+    education_id: int,
+    admin: dict = Depends(require_role("ADMIN")),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE doctor_education
+                SET is_primary = FALSE
+                WHERE id = %s
+                  AND doctor_id = %s
+                RETURNING id, qualification, institution, city, country, completion_year, is_primary
+                """,
+                (education_id, doctor_id),
+            )
+            row = cur.fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Education entry not found")
+
+    return _education_entry_dict(row, doctor_id)
 
 
 @router.get("/{doctor_id}/departments")

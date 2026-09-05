@@ -30,6 +30,9 @@ htmlcov/
 *.sqlite3
 *.db
 
+# Uploaded media (doctor profile photos, see app/config.py's MEDIA_ROOT)
+/media/
+
 # Editor / backup files
 *.save
 app/api/booking backup.py

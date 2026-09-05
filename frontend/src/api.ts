@@ -10,6 +10,8 @@ import type {
   Department,
   Doctor,
   DoctorBlockEntry,
+  DoctorEducationEntry,
+  DoctorProfile,
   DoctorQueue,
   DoctorScheduleEntry,
   DoctorWithSlots,
@@ -140,6 +142,12 @@ export function getMe(): Promise<Patient> {
 
 export function logout(): Promise<{ message: string }> {
   return request('/auth/patient/logout', { method: 'POST', auth: true })
+}
+
+// -- App-wide display config ---------------------------------------------
+
+export function getAppConfig(): Promise<{ default_timezone: string }> {
+  return request('/app-config')
 }
 
 // -- Reference data (departments/doctors/appointment types) --------------
@@ -356,12 +364,140 @@ export function listAllDoctors(): Promise<Doctor[]> {
   return request('/doctors')
 }
 
-export function createDoctor(name: string): Promise<Doctor> {
-  return request('/doctors', { method: 'POST', auth: 'staff', body: { name } })
+// The body shape for both POST /doctors (create) and PUT /doctors/{id}
+// (update) -- app/api/doctors.py's DoctorCreate is reused unchanged for
+// both, so this mirrors that on the frontend too, rather than two
+// near-identical types drifting apart.
+export interface DoctorProfileInput {
+  name: string
+  specialization: string
+  sub_specialization?: string | null
+  qualifications?: string | null
+  years_of_experience?: number | null
+}
+
+// Its response also carries created_by (this admin's own username) and
+// an always-null education_location (a brand-new doctor can't have a
+// featured education entry yet) -- together a full Doctor shape, unlike
+// updateDoctor/getDoctorProfile below which return the plainer
+// DoctorProfile (no created_by, since editing/viewing doesn't need it).
+export function createDoctor(payload: DoctorProfileInput): Promise<Doctor> {
+  return request('/doctors', { method: 'POST', auth: 'staff', body: payload })
+}
+
+export function updateDoctor(doctorId: number, payload: DoctorProfileInput): Promise<DoctorProfile> {
+  return request(`/doctors/${doctorId}`, { method: 'PUT', auth: 'staff', body: payload })
+}
+
+// Unauthenticated -- also used by the patient-facing "View Profile"
+// experience mid-booking (BookingFlow.tsx), not just the admin panel.
+export function getDoctorProfile(doctorId: number): Promise<DoctorProfile> {
+  return request(`/doctors/${doctorId}`)
 }
 
 export function getDoctorDepartments(doctorId: number): Promise<Department[]> {
   return request(`/doctors/${doctorId}/departments`)
+}
+
+// -- WEB P11-style: doctor Education & Training entries (ADMIN only) -------
+
+export interface DoctorEducationInput {
+  qualification: string
+  institution: string
+  city: string
+  country: string
+  completion_year: number
+}
+
+export function addDoctorEducation(
+  doctorId: number,
+  entry: DoctorEducationInput,
+): Promise<DoctorEducationEntry> {
+  return request(`/doctors/${doctorId}/education`, {
+    method: 'POST',
+    auth: 'staff',
+    body: entry,
+  })
+}
+
+export function removeDoctorEducation(
+  doctorId: number,
+  educationId: number,
+): Promise<{ id: number; doctor_id: number; message: string }> {
+  return request(`/doctors/${doctorId}/education/${educationId}`, {
+    method: 'DELETE',
+    auth: 'staff',
+  })
+}
+
+// Marks this entry as the one compact booking cards show as
+// "education_location" -- unmarking whatever entry (if any) was
+// previously featured, per "only one education entry per doctor can be
+// featured" (see migrations/0014_doctor_profile.sql's partial unique
+// index).
+export function featureDoctorEducation(
+  doctorId: number,
+  educationId: number,
+): Promise<DoctorEducationEntry> {
+  return request(`/doctors/${doctorId}/education/${educationId}/feature`, {
+    method: 'POST',
+    auth: 'staff',
+  })
+}
+
+export function unfeatureDoctorEducation(
+  doctorId: number,
+  educationId: number,
+): Promise<DoctorEducationEntry> {
+  return request(`/doctors/${doctorId}/education/${educationId}/feature`, {
+    method: 'DELETE',
+    auth: 'staff',
+  })
+}
+
+// -- Doctor profile photo (ADMIN only) --------------------------------------
+// Multipart upload, unlike every other admin write above -- bypasses the
+// shared request() helper (which always JSON-encodes) and talks to
+// fetch directly, since a File body needs FormData with no explicit
+// Content-Type (the browser sets its own multipart boundary).
+
+export async function uploadDoctorPhoto(
+  doctorId: number,
+  file: File,
+): Promise<{ doctor_id: number; photo_url: string }> {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const headers: Record<string, string> = {}
+  const token = getStaffToken()
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+
+  const response = await fetch(`/api/doctors/${doctorId}/photo`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  })
+
+  if (!response.ok) {
+    let detail = response.statusText
+    try {
+      const errorBody = await response.json()
+      detail = errorBody.detail ?? detail
+    } catch {
+      // Non-JSON error body -- fall back to statusText.
+    }
+    throw new ApiError(response.status, detail)
+  }
+
+  return response.json()
+}
+
+export function removeDoctorPhoto(
+  doctorId: number,
+): Promise<{ doctor_id: number; photo_url: null }> {
+  return request(`/doctors/${doctorId}/photo`, { method: 'DELETE', auth: 'staff' })
 }
 
 export function getDoctorQueue(doctorId: number): Promise<DoctorQueue> {

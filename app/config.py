@@ -9,6 +9,7 @@ override that default when explicitly provided (e.g. in production).
 """
 
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -51,6 +52,28 @@ DATABASE_URL = _build_default_database_url()
 # deployment; override via environment for larger-scale usage.
 DB_POOL_MIN_SIZE = int(os.environ.get("DB_POOL_MIN_SIZE", "1"))
 DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", "10"))
+
+# The clinic's own IANA timezone, used only for display purposes where no
+# specific doctor is in context yet (e.g. the patient site's header clock).
+# Deliberately separate from the per-doctor `doctors.timezone` column and
+# its "Asia/Kolkata" fallback scattered across app/api/booking.py,
+# app/services/appointment_services.py, etc. (see app/utils/timezone.py's
+# get_doctor_timezone) -- this does not change any of that existing
+# booking/availability timezone handling, it only gives the frontend a
+# single, non-hardcoded value to render a clock with before any doctor has
+# been chosen.
+DEFAULT_TIMEZONE = os.environ.get("DEFAULT_TIMEZONE", "Asia/Kolkata")
+
+# Local-disk root for uploaded media (currently just doctor profile
+# photos, app/api/doctor_photo.py). Matches this app's existing
+# single-instance deployment assumption (see DB_POOL_MAX_SIZE's comment
+# above) -- there is no object-storage (S3-style) integration anywhere
+# in this project, so storing files on disk and serving them via a
+# FastAPI StaticFiles mount (app/main.py) is the smallest change
+# consistent with what already exists. Override via env for a real
+# deployment (e.g. a mounted volume) -- defaults to a gitignored `media/`
+# directory next to the project root for local dev.
+MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", str(Path(__file__).resolve().parent.parent / "media")))
 
 # Defaults to "development" so local setups and tests work unchanged with
 # nothing set. A real deployment MUST set ENVIRONMENT=production -- this

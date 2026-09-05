@@ -43,7 +43,9 @@ def test_get_doctors_offering_appointment_type_excludes_doctor_without_it(client
     # seeded appointment type -- must not appear as a candidate for it.
     admin_headers = create_admin_and_get_headers(db_connection)
     doctor_b = client.post(
-        "/api/doctors", json={"name": "Dr. Does Not Offer It"}, headers=admin_headers
+        "/api/doctors",
+        json={"name": "Dr. Does Not Offer It", "specialization": "General Medicine"},
+        headers=admin_headers,
     ).json()
     client.post(
         f"/api/doctors/{doctor_b['id']}/departments/{seeded['department_id']}",
@@ -95,7 +97,9 @@ def test_get_appointment_types_for_department_unions_across_doctors(client, db_c
 
     admin_headers = create_admin_and_get_headers(db_connection)
     doctor_b = client.post(
-        "/api/doctors", json={"name": "Dr. Type B"}, headers=admin_headers
+        "/api/doctors",
+        json={"name": "Dr. Type B", "specialization": "General Medicine"},
+        headers=admin_headers,
     ).json()
     client.post(
         f"/api/doctors/{doctor_b['id']}/departments/{seeded['department_id']}",

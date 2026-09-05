@@ -18,3 +18,11 @@ python-dotenv==1.2.3
 # the actively maintained Python binding (unlike passlib, which is in
 # maintenance mode).
 argon2-cffi==23.1.0
+
+# Doctor profile photo upload (multipart form parsing is a required peer
+# dependency for FastAPI's UploadFile, not bundled by fastapi itself) and
+# server-side image validation/normalization (real format/dimension
+# checks via decoding, not trusting the client's claimed content-type;
+# re-encoding strips EXIF and lets us downscale oversized uploads).
+python-multipart==0.0.20
+Pillow==11.1.0

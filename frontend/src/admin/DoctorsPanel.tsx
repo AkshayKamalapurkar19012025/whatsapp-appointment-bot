@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Stethoscope } from '@phosphor-icons/react'
 import { ApiError, createDoctor, listAllDoctors, listDepartments, listDoctorsInDepartment } from '../api'
 import type { Department, Doctor } from '../types'
+import DoctorAvatar from '../DoctorAvatar'
 import { formatDateTime } from '../format'
 import { useStaggerReveal } from '../useStaggerReveal'
 import DoctorDetail from './DoctorDetail'
@@ -16,6 +17,10 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
   const [doctors, setDoctors] = useState<Doctor[]>([])
   const [groups, setGroups] = useState<DoctorGroup[]>([])
   const [name, setName] = useState('')
+  const [specialization, setSpecialization] = useState('')
+  const [subSpecialization, setSubSpecialization] = useState('')
+  const [qualifications, setQualifications] = useState('')
+  const [yearsOfExperience, setYearsOfExperience] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -61,8 +66,18 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
     setError(null)
     setBusy(true)
     try {
-      const created = await createDoctor(name)
+      const created = await createDoctor({
+        name,
+        specialization,
+        sub_specialization: subSpecialization || undefined,
+        qualifications: qualifications || undefined,
+        years_of_experience: yearsOfExperience ? Number(yearsOfExperience) : undefined,
+      })
       setName('')
+      setSpecialization('')
+      setSubSpecialization('')
+      setQualifications('')
+      setYearsOfExperience('')
       load()
       setSelectedDoctor(created)
     } catch (err) {
@@ -78,21 +93,55 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
       {error && <p className="error">{error}</p>}
 
       {isAdmin && (
-        <form className="inline-form" onSubmit={handleCreate}>
-          <input
-            placeholder="New doctor name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-          />
+        <form className="inline-form wrap" onSubmit={handleCreate}>
+          <label className="inline-label">
+            Name
+            <input
+              placeholder="Dr. Jane Doe"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
+          </label>
+          <label className="inline-label">
+            Specialization
+            <input
+              placeholder="Cardiology"
+              value={specialization}
+              onChange={(e) => setSpecialization(e.target.value)}
+              required
+            />
+          </label>
+          <label className="inline-label">
+            Sub-specialization <span className="muted">(optional)</span>
+            <input
+              placeholder="Interventional Cardiology"
+              value={subSpecialization}
+              onChange={(e) => setSubSpecialization(e.target.value)}
+            />
+          </label>
+          <label className="inline-label">
+            Qualifications <span className="muted">(optional)</span>
+            <input
+              placeholder="MBBS, MD (Cardiology)"
+              value={qualifications}
+              onChange={(e) => setQualifications(e.target.value)}
+            />
+          </label>
+          <label className="inline-label">
+            Years of experience <span className="muted">(optional)</span>
+            <input
+              type="number"
+              min={0}
+              max={80}
+              placeholder="10"
+              value={yearsOfExperience}
+              onChange={(e) => setYearsOfExperience(e.target.value)}
+            />
+          </label>
           <button type="submit" style={{ width: 'auto' }} disabled={busy}>
             {busy ? 'Saving…' : 'Save'}
           </button>
-          {name && (
-            <button type="button" className="btn-secondary btn" style={{ width: 'auto' }} onClick={() => setName('')}>
-              Cancel
-            </button>
-          )}
         </form>
       )}
 
@@ -124,7 +173,13 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
                     className={selectedDoctor?.id === d.id ? 'doctor-card selected' : 'doctor-card'}
                     onClick={() => setSelectedDoctor(d)}
                   >
-                    <span>{d.name}</span>
+                    <span className="doctor-card-header">
+                      <DoctorAvatar photoUrl={d.photo_url} name={d.name} size={36} />
+                      <span>
+                        <span>{d.name}</span>
+                        {d.specialization && <span className="option-subtitle">{d.specialization}</span>}
+                      </span>
+                    </span>
                     <span className="muted doctor-added-meta">
                       Added {formatDateTime(d.created_at)}
                       {d.created_by ? ` by ${d.created_by}` : ''}

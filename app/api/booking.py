@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta, timezone
 from functools import wraps
 import logging
+import re
 
 import psycopg
 from fastapi import APIRouter
@@ -21,7 +22,11 @@ from app.services.availability_engine import (
     get_appointment_types_for_department,
     get_doctors_offering_appointment_type,
     list_doctors_with_slots_for_date,
+    build_doctor_summary,
+    DOCTOR_SUMMARY_SELECT_SQL,
+    DOCTOR_SUMMARY_JOIN_SQL,
 )
+from app.api.doctors import get_doctor_profile_and_education
 from app.services.appointment_services import reschedule_appointment_service
 from app.services.exceptions import (
     AppointmentNotFound,
@@ -99,13 +104,15 @@ def get_departments(cur):
 
 def get_doctors_for_department(cur, department_id: int):
     cur.execute(
-        """
+        f"""
         SELECT
             d.id,
-            d.name
+            d.name,
+            {DOCTOR_SUMMARY_SELECT_SQL}
         FROM doctor_departments dd
         JOIN doctors d
             ON d.id = dd.doctor_id
+        {DOCTOR_SUMMARY_JOIN_SQL}
         WHERE dd.department_id = %s
           AND d.active = TRUE
         ORDER BY d.name
@@ -113,15 +120,7 @@ def get_doctors_for_department(cur, department_id: int):
         (department_id,),
     )
 
-    rows = cur.fetchall()
-
-    return [
-        {
-            "id": row[0],
-            "name": row[1],
-        }
-        for row in rows
-    ]
+    return [build_doctor_summary(row[0], row[1], row[2:]) for row in cur.fetchall()]
 
 
 # -------------------------------------------------------------------------
@@ -542,13 +541,16 @@ def get_available_dates_for_department(
 
 def format_available_doctors(doctors_with_slots):
     """doctors_with_slots is list_doctors_with_slots_for_date()'s return
-    value: [{"id", "name", "slots": [...]}], already filtered to doctors
-    with at least one real slot. Adds the numbered-selection "number"
-    field every other *_options list here already has, and formats each
-    doctor's own slots the same way format_slot_options() does for the
-    Doctor-First flow, so SELECT_AVAILABLE_DOCTOR_DATE_FIRST's response
-    shape matches SELECT_DATE's existing "next_step": "SELECT_SLOT"
-    response shape once a doctor is picked."""
+    value: [{"id", "name", ...compact profile fields, "slots": [...]}],
+    already filtered to doctors with at least one real slot. Adds the
+    numbered-selection "number" field every other *_options list here
+    already has, and formats each doctor's own slots the same way
+    format_slot_options() does for the Doctor-First flow, so
+    SELECT_AVAILABLE_DOCTOR_DATE_FIRST's response shape matches
+    SELECT_DATE's existing "next_step": "SELECT_SLOT" response shape
+    once a doctor is picked. The compact profile fields are carried
+    straight through unchanged -- see doctor_summary_line() for how the
+    accompanying text message renders them."""
     options = []
 
     for number, doctor in enumerate(doctors_with_slots, start=1):
@@ -557,12 +559,38 @@ def format_available_doctors(doctors_with_slots):
                 "number": number,
                 "id": doctor["id"],
                 "name": doctor["name"],
+                "specialization": doctor.get("specialization"),
+                "years_of_experience": doctor.get("years_of_experience"),
+                "qualifications": doctor.get("qualifications"),
+                "education_location": doctor.get("education_location"),
                 "slot_count": len(doctor["slots"]),
                 "slots": format_slot_options(doctor["slots"]),
             }
         )
 
     return options
+
+
+def doctor_summary_line(doctor):
+    """
+    A short "Specialization, N yrs exp" fragment appended after a
+    doctor's name in WhatsApp listings -- the channel's equivalent of
+    the web compact card's specialization/experience fields. Omits
+    whatever piece is missing rather than showing a blank, since
+    specialization/years_of_experience are only guaranteed present for
+    doctors created after this feature (existing doctors have neither
+    until an admin edits their profile).
+    """
+    parts = []
+
+    if doctor.get("specialization"):
+        parts.append(doctor["specialization"])
+
+    years = doctor.get("years_of_experience")
+    if years is not None:
+        parts.append(f"{years} yr{'s' if years != 1 else ''} exp")
+
+    return ", ".join(parts)
 
 
 def available_doctors_selection_message(doctor_options):
@@ -573,11 +601,94 @@ def available_doctors_selection_message(doctor_options):
 
     for option in doctor_options:
         plural = "slot" if option["slot_count"] == 1 else "slots"
-        lines.append(f"{option['number']}. {option['name']} ({option['slot_count']} {plural} available)")
+        summary = doctor_summary_line(option)
+        suffix = f" -- {summary}" if summary else ""
+        lines.append(f"{option['number']}. {option['name']}{suffix} ({option['slot_count']} {plural} available)")
 
-    lines.extend(["", "Reply with the doctor's number."])
+    lines.extend(
+        [
+            "",
+            "Reply with the doctor's number, or PROFILE <number> to view their full profile.",
+        ]
+    )
 
     return "\n".join(lines)
+
+
+def format_doctor_profile_message(profile):
+    """
+    Renders the same full-profile data GET /doctors/{id} returns
+    (app/api/doctors.py's get_doctor_profile_and_education) as a plain
+    text block for the WhatsApp "PROFILE <number>" side-channel reply
+    (see try_build_doctor_profile_reply below). Never sends a photo --
+    WhatsApp deliberately stays text-only for doctor info, per product
+    decision; photo_url is simply not read here.
+    """
+    lines = [profile["name"]]
+
+    specialization_line = profile.get("specialization") or ""
+    if profile.get("sub_specialization"):
+        specialization_line = f"{specialization_line} ({profile['sub_specialization']})".strip()
+    if specialization_line:
+        lines.append(specialization_line)
+
+    if profile.get("qualifications"):
+        lines.append(profile["qualifications"])
+
+    years = profile.get("years_of_experience")
+    if years is not None:
+        lines.append(f"{years} year{'s' if years != 1 else ''} of experience")
+
+    education = profile.get("education") or []
+    if education:
+        lines.append("")
+        lines.append("Education & Training:")
+        for entry in education:
+            lines.append(
+                f"- {entry['qualification']}, {entry['institution']}, "
+                f"{entry['city']}, {entry['country']} ({entry['completion_year']})"
+            )
+
+    lines.append("")
+    lines.append("Reply with the doctor's number to continue booking.")
+
+    return "\n".join(lines)
+
+
+_PROFILE_COMMAND_PATTERN = re.compile(r"^profile\s+(\d+)$", re.IGNORECASE)
+
+
+def try_build_doctor_profile_reply(cur, message, numbered_doctors):
+    """
+    numbered_doctors is whatever list this step just showed the patient
+    (get_doctors_for_department()'s or list_doctors_with_slots_for_date()'s
+    return value, in the same order the "number" the patient would reply
+    with refers to) -- 1-based, matching every other numbered-selection
+    list in this file.
+
+    Returns the formatted profile text if `message` is a "PROFILE <n>"
+    command for a valid n, else None. Deliberately a pure lookup with no
+    update_session call anywhere near it: the two call sites below both
+    return this text alongside the *unchanged* current step's own
+    listing, so asking to view a profile never advances, resets, or
+    otherwise perturbs the booking session -- satisfying "an optional
+    way to view more profile information, without adding unnecessary
+    booking states."
+    """
+    match = _PROFILE_COMMAND_PATTERN.match(message.strip())
+    if not match:
+        return None
+
+    number = int(match.group(1))
+    if number < 1 or number > len(numbered_doctors):
+        return None
+
+    doctor_id = numbered_doctors[number - 1]["id"]
+    profile = get_doctor_profile_and_education(cur, doctor_id)
+    if profile is None:
+        return None
+
+    return format_doctor_profile_message(profile)
 
 
 def _select_date_or_available_doctors_response(cur, patient, session, error=None):
@@ -2943,6 +3054,16 @@ def booking(request: BookingRequest):
                 doctor_options = format_available_doctors(doctors_with_slots)
 
                 if not message.isdigit():
+                    profile_reply = try_build_doctor_profile_reply(cur, message, doctors_with_slots)
+                    if profile_reply is not None:
+                        return {
+                            "patient": patient,
+                            "date": selected_date.isoformat(),
+                            "next_step": "SELECT_AVAILABLE_DOCTOR_DATE_FIRST",
+                            "doctors": doctor_options,
+                            "message": profile_reply,
+                        }
+
                     return {
                         "patient": patient,
                         "date": selected_date.isoformat(),
@@ -3069,6 +3190,16 @@ def booking(request: BookingRequest):
                         cur,
                         session["department_id"],
                     )
+
+                    profile_reply = try_build_doctor_profile_reply(cur, message, doctors)
+                    if profile_reply is not None:
+                        return {
+                            "patient": patient,
+                            "department_id": session["department_id"],
+                            "next_step": "SELECT_DOCTOR",
+                            "doctors": doctors,
+                            "message": profile_reply,
+                        }
 
                     return {
                         "patient": patient,

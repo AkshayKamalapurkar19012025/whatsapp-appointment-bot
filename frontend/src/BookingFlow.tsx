@@ -14,6 +14,9 @@ import {
 import type { BookedAppointment, Department, Doctor, DoctorWithSlots, Slot } from './types'
 import Calendar from './Calendar'
 import DepartmentCalendar from './DepartmentCalendar'
+import DoctorCard from './DoctorCard'
+import DoctorProfileModal from './DoctorProfileModal'
+import LiveClock from './LiveClock'
 import SlotGrid from './SlotGrid'
 import { formatDate, formatTime } from './format'
 
@@ -92,6 +95,11 @@ export default function BookingFlow({
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null)
   const [confirmed, setConfirmed] = useState<BookedAppointment | null>(null)
   const [busy, setBusy] = useState(false)
+  // "View Profile" from a compact doctor card (DoctorCard.tsx) -- an
+  // overlay on top of whichever step is currently showing, not a Step
+  // of its own, so closing it never changes where the patient is in
+  // the booking flow.
+  const [viewingProfileDoctorId, setViewingProfileDoctorId] = useState<number | null>(null)
 
   useEffect(() => {
     listDepartments()
@@ -234,13 +242,16 @@ export default function BookingFlow({
     <div className="card">
       <div className="topbar">
         <span>Hi, {patientName}</span>
-        <div>
-          <button type="button" className="link" onClick={onViewAppointments}>
-            My appointments
-          </button>
-          <button type="button" className="link" onClick={handleLogout}>
-            Log out
-          </button>
+        <div className="topbar-right">
+          <LiveClock />
+          <div className="topbar-actions">
+            <button type="button" className="link" onClick={onViewAppointments}>
+              My appointments
+            </button>
+            <button type="button" className="link" onClick={handleLogout}>
+              Log out
+            </button>
+          </div>
         </div>
       </div>
 
@@ -278,9 +289,14 @@ export default function BookingFlow({
               </li>
             ))}
           </ul>
-          <button type="button" className="link" onClick={() => setStep('mode')}>
-            Back
-          </button>
+          <div className="step-actions">
+            <button type="button" className="link" onClick={() => setStep('mode')}>
+              Back
+            </button>
+            <button type="button" className="link" onClick={startOver}>
+              Main Menu
+            </button>
+          </div>
         </>
       )}
 
@@ -289,16 +305,22 @@ export default function BookingFlow({
           <h2>Choose a doctor</h2>
           <ul className="option-list">
             {doctors.map((doc) => (
-              <li key={doc.id}>
-                <button type="button" onClick={() => chooseDoctor(doc)}>
-                  {doc.name}
-                </button>
-              </li>
+              <DoctorCard
+                key={doc.id}
+                doctor={doc}
+                onSelect={() => chooseDoctor(doc)}
+                onViewProfile={() => setViewingProfileDoctorId(doc.id)}
+              />
             ))}
           </ul>
-          <button type="button" className="link" onClick={() => setStep('department')}>
-            Back
-          </button>
+          <div className="step-actions">
+            <button type="button" className="link" onClick={() => setStep('department')}>
+              Back
+            </button>
+            <button type="button" className="link" onClick={startOver}>
+              Main Menu
+            </button>
+          </div>
         </>
       )}
 
@@ -317,13 +339,18 @@ export default function BookingFlow({
               </li>
             ))}
           </ul>
-          <button
-            type="button"
-            className="link"
-            onClick={() => setStep(mode === 'date-first' ? 'department' : 'doctor')}
-          >
-            Back
-          </button>
+          <div className="step-actions">
+            <button
+              type="button"
+              className="link"
+              onClick={() => setStep(mode === 'date-first' ? 'department' : 'doctor')}
+            >
+              Back
+            </button>
+            <button type="button" className="link" onClick={startOver}>
+              Main Menu
+            </button>
+          </div>
         </>
       )}
 
@@ -336,9 +363,14 @@ export default function BookingFlow({
             appointmentTypeId={appointmentType.id}
             onSelectDate={chooseDateFirstDate}
           />
-          <button type="button" className="link" onClick={() => setStep('appointmentType')}>
-            Back
-          </button>
+          <div className="step-actions">
+            <button type="button" className="link" onClick={() => setStep('appointmentType')}>
+              Back
+            </button>
+            <button type="button" className="link" onClick={startOver}>
+              Main Menu
+            </button>
+          </div>
         </>
       )}
 
@@ -351,9 +383,14 @@ export default function BookingFlow({
             departmentId={department?.id}
             onSelectDate={chooseDate}
           />
-          <button type="button" className="link" onClick={() => setStep('appointmentType')}>
-            Back
-          </button>
+          <div className="step-actions">
+            <button type="button" className="link" onClick={() => setStep('appointmentType')}>
+              Back
+            </button>
+            <button type="button" className="link" onClick={startOver}>
+              Main Menu
+            </button>
+          </div>
         </>
       )}
 
@@ -367,20 +404,28 @@ export default function BookingFlow({
           ) : (
             <ul className="option-list">
               {availableDoctors.map((doc) => (
-                <li key={doc.id}>
-                  <button type="button" onClick={() => chooseAvailableDoctor(doc)}>
-                    {doc.name}{' '}
-                    <span className="muted">
-                      ({doc.slots.length} {doc.slots.length === 1 ? 'slot' : 'slots'} available)
+                <DoctorCard
+                  key={doc.id}
+                  doctor={doc}
+                  extra={
+                    <span className="muted doctor-option-meta">
+                      {doc.slots.length} {doc.slots.length === 1 ? 'slot' : 'slots'} available
                     </span>
-                  </button>
-                </li>
+                  }
+                  onSelect={() => chooseAvailableDoctor(doc)}
+                  onViewProfile={() => setViewingProfileDoctorId(doc.id)}
+                />
               ))}
             </ul>
           )}
-          <button type="button" className="link" onClick={() => setStep('date')}>
-            Back
-          </button>
+          <div className="step-actions">
+            <button type="button" className="link" onClick={() => setStep('date')}>
+              Back
+            </button>
+            <button type="button" className="link" onClick={startOver}>
+              Main Menu
+            </button>
+          </div>
         </>
       )}
 
@@ -388,9 +433,14 @@ export default function BookingFlow({
         <>
           <h2>Choose a time on {formatDate(selectedDate)}</h2>
           <SlotGrid slots={slots} onSelect={chooseSlot} />
-          <button type="button" className="link" onClick={backFromSlot}>
-            Back
-          </button>
+          <div className="step-actions">
+            <button type="button" className="link" onClick={backFromSlot}>
+              Back
+            </button>
+            <button type="button" className="link" onClick={startOver}>
+              Main Menu
+            </button>
+          </div>
         </>
       )}
 
@@ -416,9 +466,14 @@ export default function BookingFlow({
           <button type="button" onClick={confirmBooking} disabled={busy}>
             {busy ? 'Booking…' : 'Confirm booking'}
           </button>
-          <button type="button" className="link" onClick={() => setStep('slot')}>
-            Back
-          </button>
+          <div className="step-actions">
+            <button type="button" className="link" onClick={() => setStep('slot')}>
+              Back
+            </button>
+            <button type="button" className="link" onClick={startOver}>
+              Main Menu
+            </button>
+          </div>
         </>
       )}
 
@@ -459,6 +514,13 @@ export default function BookingFlow({
             View my appointments
           </button>
         </div>
+      )}
+
+      {viewingProfileDoctorId !== null && (
+        <DoctorProfileModal
+          doctorId={viewingProfileDoctorId}
+          onClose={() => setViewingProfileDoctorId(null)}
+        />
       )}
     </div>
   )

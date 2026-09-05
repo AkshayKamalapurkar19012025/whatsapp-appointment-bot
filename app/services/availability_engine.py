@@ -45,6 +45,75 @@ logger = logging.getLogger(__name__)
 BOOKING_WINDOW_EXTRA_MONTHS = 3
 
 
+# -------------------------------------------------------------------------
+# Doctor profile summary (compact card fields)
+# -------------------------------------------------------------------------
+#
+# Shared by every doctor-listing query on both booking flows and both
+# channels (app/api/department_doctors.py's Web Doctor-First listing,
+# app/api/booking.py's WhatsApp Doctor-First listing, and this module's
+# own Date-First aggregation below) so the "compact card" field set --
+# specialization, years_of_experience, qualifications, and an optional
+# education/training location -- is computed identically everywhere,
+# rather than four near-copies drifting apart. Deliberately never the
+# full profile or full education history; that is only ever returned by
+# GET /doctors/{id} (app/api/doctors.py), fetched on demand for "View
+# Profile".
+#
+# education_location comes from the one doctor_education row (if any)
+# the admin has explicitly marked is_primary -- never auto-derived from
+# the most recent completion_year. The partial unique index in
+# migrations/0014_doctor_profile.sql guarantees at most one such row per
+# doctor, so this LEFT JOIN can never fan out a doctor into duplicate
+# rows.
+DOCTOR_SUMMARY_SELECT_SQL = """
+    d.specialization,
+    d.years_of_experience,
+    d.qualifications,
+    d.photo_url,
+    de.institution,
+    de.city,
+    de.country
+"""
+
+DOCTOR_SUMMARY_JOIN_SQL = """
+    LEFT JOIN doctor_education de
+        ON de.doctor_id = d.id
+       AND de.is_primary = TRUE
+"""
+
+
+def build_doctor_summary(doctor_id, name, summary_row) -> dict:
+    """
+    summary_row is the 7 columns selected by DOCTOR_SUMMARY_SELECT_SQL,
+    in that order: (specialization, years_of_experience, qualifications,
+    photo_url, education_institution, education_city, education_country).
+    """
+    (
+        specialization,
+        years_of_experience,
+        qualifications,
+        photo_url,
+        education_institution,
+        education_city,
+        education_country,
+    ) = summary_row
+
+    education_location = None
+    if education_institution and education_city and education_country:
+        education_location = f"{education_institution}, {education_city}, {education_country}"
+
+    return {
+        "id": doctor_id,
+        "name": name,
+        "specialization": specialization,
+        "years_of_experience": years_of_experience,
+        "qualifications": qualifications,
+        "photo_url": photo_url,
+        "education_location": education_location,
+    }
+
+
 def get_appointment_type_for_doctor(
     cur,
     doctor_id: int,
@@ -389,10 +458,11 @@ def get_doctors_offering_appointment_type(
     not just later when their slot count happens to be zero.
     """
     cur.execute(
-        """
+        f"""
         SELECT DISTINCT
             d.id,
-            d.name
+            d.name,
+            {DOCTOR_SUMMARY_SELECT_SQL}
         FROM doctor_departments dd
         JOIN doctors d
             ON d.id = dd.doctor_id
@@ -400,6 +470,7 @@ def get_doctors_offering_appointment_type(
             ON dat.doctor_id = d.id
            AND dat.appointment_type_id = %s
            AND dat.active = TRUE
+        {DOCTOR_SUMMARY_JOIN_SQL}
         WHERE dd.department_id = %s
           AND d.active = TRUE
         ORDER BY d.name
@@ -407,7 +478,7 @@ def get_doctors_offering_appointment_type(
         (appointment_type_id, department_id),
     )
 
-    return [{"id": row[0], "name": row[1]} for row in cur.fetchall()]
+    return [build_doctor_summary(row[0], row[1], row[2:]) for row in cur.fetchall()]
 
 
 def get_appointment_types_for_department(cur, department_id: int):
@@ -509,10 +580,11 @@ def list_doctors_with_slots_for_date(
     slots for this date/type is omitted entirely (never returned with an
     empty slots list), so callers never need to filter again.
 
-    Returns [{"id", "name", "slots": [...]}, ...], ordered by doctor
-    name. Each doctor's slots are exactly what get_available_slots()
-    already returns for that doctor -- no new slot-shape or duration
-    logic here.
+    Returns [{"id", "name", ...compact profile summary fields, "slots":
+    [...]}, ...] -- see build_doctor_summary()'s docstring for the
+    summary fields -- ordered by doctor name. Each doctor's slots are
+    exactly what get_available_slots() already returns for that doctor
+    -- no new slot-shape or duration logic here.
     """
     doctors = get_doctors_offering_appointment_type(
         cur, department_id, appointment_type_id
@@ -528,13 +600,7 @@ def list_doctors_with_slots_for_date(
             department_id=department_id,
         )
         if slots:
-            results.append(
-                {
-                    "id": doctor["id"],
-                    "name": doctor["name"],
-                    "slots": slots,
-                }
-            )
+            results.append({**doctor, "slots": slots})
 
     return results
 

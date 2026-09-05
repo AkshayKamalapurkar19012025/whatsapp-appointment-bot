@@ -35,6 +35,14 @@ export default defineConfig({
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
+      // Uploaded doctor profile photos (app/main.py's StaticFiles mount,
+      // app/config.py's MEDIA_ROOT) -- same dev-time same-origin
+      // convenience as /api above, so an <img src="/media/..."> URL
+      // returned by the API actually resolves against this dev server.
+      '/media': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
     },
   },
 })

@@ -4,11 +4,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
-from app.config import ALLOWED_ORIGINS
+from app.config import ALLOWED_ORIGINS, MEDIA_ROOT
 from app.db.connection import open_pool, close_pool
 from app.logging_config import configure_logging, new_request_id, request_id_var
 from app.api.health import router as health_router
+from app.api.app_config import router as app_config_router
 from app.api.dashboard import router as dashboard_router
 from app.api.patient_auth import router as patient_auth_router
 from app.api.staff_auth import router as staff_auth_router
@@ -16,6 +18,7 @@ from app.api.patient_booking import router as patient_booking_router
 from app.api.appointment_types import router as appointment_types_router
 from app.api.departments import router as departments_router
 from app.api.doctors import router as doctors_router
+from app.api.doctor_photo import router as doctor_photo_router
 from app.api.doctor_schedule import router as doctor_schedule_router
 from app.api.doctor_blocks import router as doctor_blocks_router
 from app.api.availability import router as availability_router
@@ -107,6 +110,11 @@ app.include_router(
 )
 
 app.include_router(
+    app_config_router,
+    prefix="/api",
+)
+
+app.include_router(
     dashboard_router,
     prefix="/api",
 )
@@ -138,6 +146,11 @@ app.include_router(
 
 app.include_router(
     doctors_router,
+    prefix="/api",
+)
+
+app.include_router(
+    doctor_photo_router,
     prefix="/api",
 )
 
@@ -190,3 +203,12 @@ app.include_router(
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+
+# Serves uploaded doctor profile photos (app/api/doctor_photo.py) straight
+# off local disk -- see app/config.py's MEDIA_ROOT docstring for why this
+# is disk-backed rather than object storage. StaticFiles requires the
+# directory to already exist at mount time, hence the mkdir; the /doctors
+# subdirectory itself is created lazily by the first upload.
+MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
+app.mount("/media", StaticFiles(directory=MEDIA_ROOT), name="media")

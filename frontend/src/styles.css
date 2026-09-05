@@ -478,6 +478,18 @@ a.link.danger {
   color: var(--color-danger);
 }
 
+/* Groups a step's "Back" link with a "Main Menu" escape hatch (jumps
+   straight to the mode-choice screen via startOver(), instead of
+   clicking Back repeatedly through every prior step). Both children are
+   already .link buttons with their own margin-top, so this only needs
+   to lay them out side by side with breathing room between them. */
+.step-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
 .error {
   color: var(--color-danger);
   background: var(--color-danger-soft);
@@ -552,8 +564,10 @@ a.link.danger {
 
 .topbar {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
+  gap: var(--space-3);
   margin-bottom: var(--space-5);
   padding-bottom: var(--space-4);
   border-bottom: 1px solid var(--color-border);
@@ -569,10 +583,37 @@ a.link.danger {
   margin: 0;
 }
 
-.topbar > div {
+/* Right-hand column: current date/time on top, account action links
+   directly below it -- both right-aligned, stacked so neither ever
+   competes with the other for the same row (the earlier version mixed
+   the clock into the same row as the action links, which wrapped
+   unevenly at narrow widths). */
+.topbar-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.topbar-actions {
   display: flex;
   align-items: center;
   gap: var(--space-4);
+}
+
+.live-clock {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--color-primary-soft);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 /* ===========================================================
@@ -680,6 +721,14 @@ a.link.danger {
   .appointment-actions button {
     flex: 1;
   }
+
+  /* At very narrow widths the actions cluster (My appointments / Log
+     out) may not fit next to the greeting+clock cluster on one line --
+     .topbar already wraps (see above), this just tightens the row gap
+     when it does. */
+  .topbar {
+    row-gap: var(--space-3);
+  }
 }
 
 /* ===========================================================
@@ -720,6 +769,52 @@ a.link.danger {
   border-color: var(--color-primary);
   background: var(--color-primary-soft);
   box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+/* Compact doctor-selection card (DoctorCard.tsx) -- a two-part <li>:
+   the selectable card itself (avatar + name + compact profile fields),
+   and a small "View Profile" link below it. The link needs an explicit
+   override since ".option-list button" above would otherwise style it
+   as a full bordered option card, not a subtle text link. */
+.doctor-option {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.doctor-option-select {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.doctor-option-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.doctor-option-name {
+  font-weight: 600;
+}
+
+.doctor-option-meta {
+  font-size: 0.85rem;
+}
+
+.option-list .doctor-option-view-profile {
+  width: auto;
+  align-self: flex-start;
+  border: none;
+  background: none;
+  padding: 0 0 0 calc(48px + var(--space-3));
+  font-size: 0.85rem;
+}
+
+.option-list .doctor-option-view-profile:hover {
+  border: none;
+  background: none;
 }
 
 /* A two-line option (a title plus an explanatory line, e.g. the
@@ -792,6 +887,101 @@ a.link.danger {
   border-color: var(--color-primary);
   background: var(--color-primary-soft);
   box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+.doctor-card-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* Professional square/circular photo presentation, and the fallback
+   avatar shown in its place -- shared by the admin doctor grid, the
+   patient-facing compact booking cards, and the View Profile modal
+   (frontend/src/DoctorAvatar.tsx). */
+.doctor-avatar {
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.doctor-avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+/* Admin "Profile" tab (DoctorProfileSection.tsx): photo upload row and
+   the Education & Training list. */
+.doctor-profile-photo-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.doctor-profile-photo-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.doctor-photo-upload-label {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.doctor-photo-upload-label input[type='file'] {
+  /* Visually hidden but still keyboard/screen-reader operable via the
+     wrapping <label>, rather than display:none which some assistive
+     tech skips entirely. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+}
+
+.education-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.education-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  flex-wrap: wrap;
+}
+
+.education-entry.featured {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.education-entry .pill {
+  margin-left: var(--space-2);
+}
+
+.education-entry-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
 }
 
 /* ===========================================================
@@ -1995,4 +2185,66 @@ a.link.danger {
     flex-wrap: wrap;
     gap: var(--space-4);
   }
+}
+
+/* ===========================================================
+   Doctor profile modal (DoctorProfileModal.tsx) -- "View Profile"
+   from a compact booking card, shown as an overlay on top of the
+   current booking step rather than a route change or a new Step in
+   BookingFlow.tsx's state machine, so closing it returns the patient
+   to exactly where they were.
+   =========================================================== */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 20, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  z-index: 1000;
+}
+
+.modal-panel {
+  position: relative;
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+  max-width: 480px;
+  width: 100%;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.modal-close {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  padding: var(--space-2);
+  display: inline-flex;
+}
+
+.modal-close:hover {
+  color: var(--color-text);
+}
+
+.doctor-profile-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+  padding-right: var(--space-5);
+}
+
+.doctor-profile-header h2 {
+  margin: 0 0 4px;
+}
+
+.doctor-profile-header p {
+  margin: 0;
 }
