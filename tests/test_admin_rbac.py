@@ -91,6 +91,21 @@ def _admin_only_write_calls(ids):
             f"/api/doctors/{ids['doctor_id']}/appointment-types/{ids['appointment_type_id']}",
             None,
         ),
+        (
+            "put",
+            f"/api/departments/{ids['department_id']}",
+            {"name": "RBAC Renamed Department"},
+        ),
+        (
+            "put",
+            f"/api/appointment-types/{ids['appointment_type_id']}",
+            {"name": "RBAC Renamed Type"},
+        ),
+        # Last two: soft-delete the department and the appointment type,
+        # so nothing after this in the list may depend on either still
+        # being active.
+        ("delete", f"/api/departments/{ids['department_id']}", None),
+        ("delete", f"/api/appointment-types/{ids['appointment_type_id']}", None),
     ]
 
 
