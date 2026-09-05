@@ -47,6 +47,28 @@ records 0001 as applied so `scripts/migrate.py` can take over normally
 from 0002 onward. It does not drop, recreate, or modify any existing
 row.
 
+## A database whose appointments.status is a native ENUM, not TEXT
+
+A database reconciled via `scripts/reconcile_pre_0001_baseline.sql` (see
+above) keeps its pre-existing `appointment_status` ENUM type for
+`appointments.status` rather than converting it to 0001's TEXT --
+verified compatible with the app under the original two-value model,
+`{BOOKED, CANCELLED}`.
+
+`migrations/0011_appointment_lifecycle_statuses.sql` introduces four new
+status literals (`PENDING`, `CONFIRMED`, `REJECTED`, `VISITED`,
+`COMPLETED`) and assumes a TEXT column that accepts any string. Against
+the enum-typed column above, its first statement fails:
+`invalid input value for enum appointment_status: "CONFIRMED"`, since
+the enum type was never taught those values.
+
+If you hit that error, run `scripts/reconcile_enum_status_pre_0011.sql`
+once (it only adds enum values -- no data, rows, or the column's type
+are touched), then re-run `python scripts/migrate.py` to continue from
+0011 onward as normal. If your `status` column is TEXT (checked via
+`SELECT typname FROM pg_type WHERE typname = 'appointment_status';`
+returning no row), you will never hit this and don't need that script.
+
 ## What this does *not* handle
 
 - **Provisioning** the Postgres role/database themselves. That's a
