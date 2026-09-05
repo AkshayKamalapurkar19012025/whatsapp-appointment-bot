@@ -76,11 +76,16 @@ ALLOWED_ORIGINS = [
     if origin.strip()
 ]
 
-# Real SMS delivery for patient OTP codes, via Twilio (see
-# app/services/sms_provider.py). All three must be set for real SMS to be
-# attempted -- with any of them unset (the default), OTP delivery stays on
-# the pre-existing mock_sms_outbox path used by local dev/tests, and no
-# Twilio API call is ever made.
-TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
-TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
-TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER", "")
+# Real SMS delivery for patient OTP codes, via Authkey.io (see
+# app/services/sms_provider.py) -- an India-focused SMS/OTP provider,
+# chosen over Twilio since this app's phone numbers default to +91 (see
+# app/utils/phone.py). AUTHKEY_API_KEY and AUTHKEY_TEMPLATE_ID must both
+# be set for real SMS to be attempted -- with either unset (the default),
+# OTP delivery stays on the pre-existing mock_sms_outbox path used by
+# local dev/tests, and no Authkey API call is ever made.
+AUTHKEY_API_KEY = os.environ.get("AUTHKEY_API_KEY", "")
+# The DLT-approved OTP template ID from your Authkey dashboard (their
+# `sid` parameter) -- not a free-text message, see sms_provider.py's
+# module docstring for why.
+AUTHKEY_TEMPLATE_ID = os.environ.get("AUTHKEY_TEMPLATE_ID", "")
+AUTHKEY_COUNTRY_CODE = os.environ.get("AUTHKEY_COUNTRY_CODE", "91")
