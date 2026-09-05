@@ -26,7 +26,7 @@ import {
   visitAdminAppointment,
 } from '../api'
 import type { AdminAppointment, AppointmentTypeSummary, Doctor, Patient, Slot } from '../types'
-import { formatDate, formatTime } from '../format'
+import { formatDate, formatTime, hasStarted } from '../format'
 import AdminSlotPicker from './AdminSlotPicker'
 
 // Radix Select.Item disallows an empty-string value (it's reserved
@@ -400,7 +400,7 @@ export default function AppointmentsPanel({
                           </button>
                         </>
                       )}
-                      {a.status === 'CONFIRMED' && (
+                      {a.status === 'CONFIRMED' && hasStarted(a.start_at) && (
                         <button
                           type="button"
                           className="link"
@@ -411,6 +411,9 @@ export default function AppointmentsPanel({
                         >
                           Mark visited
                         </button>
+                      )}
+                      {a.status === 'CONFIRMED' && !hasStarted(a.start_at) && (
+                        <span className="muted">Not started yet</span>
                       )}
                       {a.status === 'VISITED' && (
                         <button

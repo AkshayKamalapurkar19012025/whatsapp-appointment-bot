@@ -14,7 +14,7 @@ only from PENDING, reject only from PENDING, visit only from CONFIRMED,
 complete only from VISITED -- rejecting everything else with 409.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone as dt_timezone
 
 from tests.helpers import create_admin_and_get_headers, create_staff_and_get_headers, seed_basic_doctor
 
@@ -163,9 +163,30 @@ def test_reject_confirmed_appointment_is_409(client, db_connection):
 # ---------------------------------------------------------------------
 
 
+def _set_start_at(db_connection, appointment_id: int, start_at: datetime, end_at: datetime) -> None:
+    """Directly rewrite an appointment's scheduled start/end -- same
+    direct-DB-manipulation pattern as test_reschedule_service.py and
+    test_exclusion_constraint.py, used here because _seed_and_book
+    deliberately books 10 days out (see its own comment) and the tests
+    below need to control exactly how far in the past/future start_at
+    is relative to "now" at assertion time, which the booking API
+    itself has no lever for."""
+    with db_connection.cursor() as cur:
+        cur.execute(
+            "UPDATE appointments SET start_at = %s, end_at = %s WHERE id = %s",
+            (start_at, end_at, appointment_id),
+        )
+    db_connection.commit()
+
+
 def test_visit_confirmed_appointment_succeeds(client, db_connection):
     ctx = _seed_and_book(client, db_connection, "Dr. Visit Normal")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
+
+    # _seed_and_book books 10 days out -- move start_at into the past so
+    # this exercises the ordinary "appointment already started" case.
+    past_start = datetime.now(dt_timezone.utc) - timedelta(hours=1)
+    _set_start_at(db_connection, ctx["appointment"]["id"], past_start, past_start + timedelta(minutes=30))
 
     response = client.post(
         f"/api/appointments/{ctx['appointment']['id']}/visit", headers=ctx["admin_headers"]
@@ -183,6 +204,111 @@ def test_visit_pending_appointment_is_409(client, db_connection):
     assert response.status_code == 409
 
 
+def test_visit_future_confirmed_appointment_is_409(client, db_connection):
+    # _seed_and_book already books 10 days out, so this appointment
+    # hasn't started -- no start_at manipulation needed.
+    ctx = _seed_and_book(client, db_connection, "Dr. Visit Future")
+    client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
+
+    response = client.post(
+        f"/api/appointments/{ctx['appointment']['id']}/visit", headers=ctx["admin_headers"]
+    )
+    assert response.status_code == 409
+    assert "not started" in response.json()["detail"].lower()
+
+    with db_connection.cursor() as cur:
+        cur.execute("SELECT status FROM appointments WHERE id = %s", (ctx["appointment"]["id"],))
+        assert cur.fetchone()[0] == "CONFIRMED", "a rejected visit attempt must not change status"
+
+
+def test_visit_appointment_a_minute_before_start_is_409(client, db_connection):
+    # Boundary case: still-future by a small margin, not merely "far in
+    # the future" -- proves the check compares real instants, not dates.
+    ctx = _seed_and_book(client, db_connection, "Dr. Visit Boundary Future")
+    client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
+
+    future_start = datetime.now(dt_timezone.utc) + timedelta(minutes=1)
+    _set_start_at(db_connection, ctx["appointment"]["id"], future_start, future_start + timedelta(minutes=30))
+
+    response = client.post(
+        f"/api/appointments/{ctx['appointment']['id']}/visit", headers=ctx["admin_headers"]
+    )
+    assert response.status_code == 409
+
+
+def test_visit_appointment_just_after_start_succeeds(client, db_connection):
+    # Boundary case: just started, not "long past" -- the other half of
+    # the same instant-comparison proof as the test above.
+    ctx = _seed_and_book(client, db_connection, "Dr. Visit Boundary Past")
+    client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
+
+    just_started = datetime.now(dt_timezone.utc) - timedelta(seconds=5)
+    _set_start_at(db_connection, ctx["appointment"]["id"], just_started, just_started + timedelta(minutes=30))
+
+    response = client.post(
+        f"/api/appointments/{ctx['appointment']['id']}/visit", headers=ctx["admin_headers"]
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "VISITED"
+
+
+def test_visit_same_local_day_but_still_future_slot_is_409(client, db_connection):
+    # Guards against a naive "is it today (doctor-local)" check standing
+    # in for a real instant comparison: this appointment's start_at is
+    # later on the *same* doctor-local calendar day, several hours from
+    # now -- a date-only check would wrongly treat "today" as startable
+    # regardless of time-of-day. seed_basic_doctor's default timezone is
+    # Asia/Kolkata (UTC+5:30), deliberately not UTC, so this also proves
+    # the comparison isn't accidentally UTC-datebound either.
+    ctx = _seed_and_book(client, db_connection, "Dr. Visit Same Day Future")
+    client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
+
+    doctor_tz = dt_timezone(timedelta(hours=5, minutes=30))
+    now_local = datetime.now(doctor_tz)
+    later_today = now_local.replace(hour=23, minute=0, second=0, microsecond=0)
+    if later_today <= now_local:
+        later_today = now_local + timedelta(hours=1)
+    _set_start_at(db_connection, ctx["appointment"]["id"], later_today, later_today + timedelta(minutes=30))
+
+    response = client.post(
+        f"/api/appointments/{ctx['appointment']['id']}/visit", headers=ctx["admin_headers"]
+    )
+    assert response.status_code == 409
+
+
+def test_visit_cancelled_appointment_is_409(client, db_connection):
+    ctx = _seed_and_book(client, db_connection, "Dr. Visit Cancelled")
+    client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
+    client.delete(f"/api/appointments/{ctx['appointment']['id']}", headers=ctx["admin_headers"])
+
+    with db_connection.cursor() as cur:
+        cur.execute("SELECT status FROM appointments WHERE id = %s", (ctx["appointment"]["id"],))
+        assert cur.fetchone()[0] == "CANCELLED"
+
+    response = client.post(
+        f"/api/appointments/{ctx['appointment']['id']}/visit", headers=ctx["admin_headers"]
+    )
+    assert response.status_code == 409
+
+
+def test_visit_already_visited_appointment_is_409(client, db_connection):
+    ctx = _seed_and_book(client, db_connection, "Dr. Visit Twice")
+    client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
+
+    past_start = datetime.now(dt_timezone.utc) - timedelta(hours=1)
+    _set_start_at(db_connection, ctx["appointment"]["id"], past_start, past_start + timedelta(minutes=30))
+
+    first = client.post(
+        f"/api/appointments/{ctx['appointment']['id']}/visit", headers=ctx["admin_headers"]
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        f"/api/appointments/{ctx['appointment']['id']}/visit", headers=ctx["admin_headers"]
+    )
+    assert second.status_code == 409
+
+
 # ---------------------------------------------------------------------
 # Complete
 # ---------------------------------------------------------------------
@@ -191,6 +317,12 @@ def test_visit_pending_appointment_is_409(client, db_connection):
 def test_complete_visited_appointment_succeeds(client, db_connection):
     ctx = _seed_and_book(client, db_connection, "Dr. Complete Normal")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
+
+    # _seed_and_book books 10 days out -- move start_at into the past so
+    # /visit (now gated on the appointment having started) succeeds.
+    past_start = datetime.now(dt_timezone.utc) - timedelta(hours=1)
+    _set_start_at(db_connection, ctx["appointment"]["id"], past_start, past_start + timedelta(minutes=30))
+
     client.post(f"/api/appointments/{ctx['appointment']['id']}/visit", headers=ctx["admin_headers"])
 
     response = client.post(

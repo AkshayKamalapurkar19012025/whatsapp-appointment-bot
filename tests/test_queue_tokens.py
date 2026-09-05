@@ -6,7 +6,7 @@ local day, plus GET /api/doctors/{id}/queue (the "now serving" view)
 and the staff-triggered CHECK_IN mock notification.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone as dt_timezone
 
 from tests.helpers import create_admin_and_get_headers, create_staff_and_get_headers, seed_basic_doctor
 
@@ -18,7 +18,23 @@ def _next_weekday(from_date: date | None = None) -> date:
     return d
 
 
-def _book_and_confirm(client, admin_headers, seeded, patient_name, phone_suffix, hour=9):
+def _set_start_at(db_connection, appointment_id: int, start_at: datetime, end_at: datetime) -> None:
+    """Direct-DB rewrite of an appointment's scheduled start/end -- same
+    pattern as test_appointment_lifecycle.py's own helper of the same
+    name. Needed here because _book_and_confirm books 10 days out (see
+    its own comment) but /visit now requires the appointment to have
+    started; token *ordering* in these tests depends on the order
+    /visit is called, not on start_at, so shifting it into the past
+    here doesn't affect what any of these tests are actually checking."""
+    with db_connection.cursor() as cur:
+        cur.execute(
+            "UPDATE appointments SET start_at = %s, end_at = %s WHERE id = %s",
+            (start_at, end_at, appointment_id),
+        )
+    db_connection.commit()
+
+
+def _book_and_confirm(client, db_connection, admin_headers, seeded, patient_name, phone_suffix, hour=9):
     # Distinct `hour` per call within the same test/doctor -- these
     # calls often book the same doctor for the same day (that's the
     # point, for token-ordering tests), so they need non-overlapping
@@ -40,6 +56,17 @@ def _book_and_confirm(client, admin_headers, seeded, patient_name, phone_suffix,
         headers=admin_headers,
     ).json()
     client.post(f"/api/appointments/{created['id']}/confirm", headers=admin_headers)
+
+    # /visit now requires the appointment to have started -- move it
+    # into the recent past. Spaced an hour apart per `hour` (rather than
+    # collapsed onto one instant), still well within "the past" (a full
+    # day back, at most), so same-doctor appointments from different
+    # `hour` calls don't overlap and trip the EXCLUDE constraint the way
+    # they'd have to avoid at their *original* booking time too.
+    anchor = datetime.now(dt_timezone.utc) - timedelta(days=1)
+    past_start = anchor + timedelta(hours=hour)
+    _set_start_at(db_connection, created["id"], past_start, past_start + timedelta(minutes=30))
+
     return {"patient": patient, "appointment_id": created["id"]}
 
 
@@ -50,8 +77,8 @@ def test_visit_assigns_sequential_token_numbers_per_doctor(client, db_connection
         department_name="Token A Dept", appointment_type_name="Token A Type",
     )
 
-    a = _book_and_confirm(client, admin_headers, seeded, "Token Patient 1", 30000001, hour=9)
-    b = _book_and_confirm(client, admin_headers, seeded, "Token Patient 2", 30000002, hour=10)
+    a = _book_and_confirm(client, db_connection, admin_headers, seeded, "Token Patient 1", 30000001, hour=9)
+    b = _book_and_confirm(client, db_connection, admin_headers, seeded, "Token Patient 2", 30000002, hour=10)
 
     visit_a = client.post(f"/api/appointments/{a['appointment_id']}/visit", headers=admin_headers)
     visit_b = client.post(f"/api/appointments/{b['appointment_id']}/visit", headers=admin_headers)
@@ -74,8 +101,8 @@ def test_token_numbers_are_independent_per_doctor(client, db_connection):
         department_name="Token B2 Dept", appointment_type_name="Token B2 Type",
     )
 
-    first_for_a = _book_and_confirm(client, admin_headers, seeded_a, "Token Patient 3", 30000003)
-    first_for_b = _book_and_confirm(client, admin_headers, seeded_b, "Token Patient 4", 30000004)
+    first_for_a = _book_and_confirm(client, db_connection, admin_headers, seeded_a, "Token Patient 3", 30000003)
+    first_for_b = _book_and_confirm(client, db_connection, admin_headers, seeded_b, "Token Patient 4", 30000004)
 
     visit_a = client.post(f"/api/appointments/{first_for_a['appointment_id']}/visit", headers=admin_headers)
     visit_b = client.post(f"/api/appointments/{first_for_b['appointment_id']}/visit", headers=admin_headers)
@@ -92,7 +119,7 @@ def test_visit_sends_check_in_notification_with_token_number(client, db_connecti
         client, db_connection, doctor_name="Dr. Token Notify",
         department_name="Token Notify Dept", appointment_type_name="Token Notify Type",
     )
-    booked = _book_and_confirm(client, admin_headers, seeded, "Token Notify Patient", 30000005)
+    booked = _book_and_confirm(client, db_connection, admin_headers, seeded, "Token Notify Patient", 30000005)
     number = "+919930000005"
 
     response = client.post(f"/api/appointments/{booked['appointment_id']}/visit", headers=admin_headers)
@@ -178,9 +205,9 @@ def test_queue_splits_now_serving_waiting_and_completed(client, db_connection):
         department_name="Queue Split Dept", appointment_type_name="Queue Split Type",
     )
 
-    p1 = _book_and_confirm(client, admin_headers, seeded, "Queue Patient 1", 30000007, hour=9)
-    p2 = _book_and_confirm(client, admin_headers, seeded, "Queue Patient 2", 30000008, hour=10)
-    p3 = _book_and_confirm(client, admin_headers, seeded, "Queue Patient 3", 30000009, hour=11)
+    p1 = _book_and_confirm(client, db_connection, admin_headers, seeded, "Queue Patient 1", 30000007, hour=9)
+    p2 = _book_and_confirm(client, db_connection, admin_headers, seeded, "Queue Patient 2", 30000008, hour=10)
+    p3 = _book_and_confirm(client, db_connection, admin_headers, seeded, "Queue Patient 3", 30000009, hour=11)
 
     # Token order: p1 -> #1, p2 -> #2, p3 -> #3.
     client.post(f"/api/appointments/{p1['appointment_id']}/visit", headers=admin_headers)
@@ -215,7 +242,7 @@ def test_queue_visited_at_is_doctor_local_time_not_utc(client, db_connection):
         department_name="Queue TZ Dept", appointment_type_name="Queue TZ Type",
         timezone="America/New_York",
     )
-    booked = _book_and_confirm(client, admin_headers, seeded, "Queue TZ Patient", 30000011)
+    booked = _book_and_confirm(client, db_connection, admin_headers, seeded, "Queue TZ Patient", 30000011)
 
     before = dt.datetime.now(ZoneInfo("America/New_York"))
     client.post(f"/api/appointments/{booked['appointment_id']}/visit", headers=admin_headers)
@@ -279,6 +306,12 @@ def test_web_my_appointments_includes_token_number_once_checked_in(client, db_co
     ).json()
     upcoming_entry = next(a for a in listing_before["upcoming"] if a["id"] == created["id"])
     assert upcoming_entry["token_number"] is None
+
+    # /visit now requires the appointment to have started -- move it
+    # into the past *after* the "upcoming" assertion above (which needs
+    # it still in the future) and before checking in.
+    past_start = datetime.now(dt_timezone.utc) - timedelta(hours=1)
+    _set_start_at(db_connection, created["id"], past_start, past_start + timedelta(minutes=30))
 
     client.post(f"/api/appointments/{created['id']}/visit", headers=admin_headers)
 
