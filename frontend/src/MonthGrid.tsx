@@ -1,4 +1,5 @@
 import { isoDateOnly } from './format'
+import { useClinicToday } from './useClinicToday'
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -37,6 +38,7 @@ export default function MonthGrid({
   prevDisabled,
   nextDisabled,
   showLegend = true,
+  selectedDate = null,
 }: {
   year: number
   month: number
@@ -56,7 +58,20 @@ export default function MonthGrid({
   // availability legend there would misleadingly imply doctor
   // availability that was never computed.
   showLegend?: boolean
+  // The currently-chosen date (if any), highlighted distinctly from a
+  // merely-available one. Only meaningful for a caller whose calendar
+  // and its downstream slot picker stay visible together after picking
+  // a date (AdminSlotPicker.tsx) -- the patient booking flow advances
+  // past the calendar entirely on selection, so it never has a
+  // "selected but still looking at the calendar" state to show and
+  // simply omits this prop.
+  selectedDate?: string | null
 }) {
+  // The clinic's own current date (not the viewer's device date) --
+  // display-only, for the "Today" ring below; never the source of
+  // truth for which dates are actually bookable (that's `dates`
+  // itself, computed server-side per doctor's own timezone).
+  const today = useClinicToday()
   const totalDays = daysInMonth(year, month)
   const leadingBlanks = firstWeekdayColumn(year, month)
   const cells: Array<{ day: number; iso: string } | null> = []
@@ -97,12 +112,25 @@ export default function MonthGrid({
           {cells.map((cell, index) => {
             if (cell === null) return <div key={`blank-${index}`} className="calendar-day empty" />
             const available = dates[cell.iso] === true
+            const isSelected = selectedDate === cell.iso
+            const isToday = today === cell.iso
+            const classNames = [
+              'calendar-day',
+              available ? 'available' : 'unavailable',
+              isSelected && 'selected',
+              isToday && 'today',
+            ]
+              .filter(Boolean)
+              .join(' ')
             return (
               <button
                 key={cell.iso}
                 type="button"
-                className={`calendar-day${available ? ' available' : ' unavailable'}`}
+                className={classNames}
                 disabled={!available}
+                aria-current={isToday ? 'date' : undefined}
+                aria-pressed={isSelected}
+                title={isToday ? 'Today' : undefined}
                 onClick={() => onSelectDate(cell.iso)}
               >
                 {cell.day}
@@ -124,6 +152,12 @@ export default function MonthGrid({
         <p className="calendar-legend">
           <span className="legend-swatch unavailable" /> Unavailable
           <span className="legend-swatch available" /> Available
+          {selectedDate !== null && (
+            <>
+              <span className="legend-swatch selected" /> Selected
+            </>
+          )}
+          <span className="legend-swatch today" /> Today
         </p>
       )}
     </div>

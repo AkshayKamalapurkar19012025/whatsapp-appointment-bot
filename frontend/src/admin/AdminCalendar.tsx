@@ -12,10 +12,12 @@ export default function AdminCalendar({
   doctorId,
   appointmentTypeId,
   onSelectDate,
+  selectedDate,
 }: {
   doctorId: number
   appointmentTypeId: number
   onSelectDate: (isoDate: string) => void
+  selectedDate?: string | null
 }) {
   const today = new Date()
   const [year, setYear] = useState(today.getFullYear())
@@ -73,6 +75,7 @@ export default function AdminCalendar({
       onNextMonth={goNext}
       prevDisabled={isCurrentMonth}
       nextDisabled={false}
+      selectedDate={selectedDate}
     />
   )
 }

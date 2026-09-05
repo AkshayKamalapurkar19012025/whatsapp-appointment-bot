@@ -101,7 +101,12 @@ def test_availability_endpoint_handles_overnight_schedule(client, db_connection)
         duration_minutes=30,
     )
 
-    candidate = date.today()
+    # Starts from tomorrow, not today: if this happened to land on
+    # today and today's Wednesday, get_available_slots' now-time-of-day
+    # filtering (see the "past dates/times" fix) could clip the
+    # expected 22:00-02:00 overnight slots depending what time the
+    # suite runs, well before this is a Wednesday at all.
+    candidate = date.today() + timedelta(days=1)
     while (candidate.weekday() + 1) != 3:
         candidate += timedelta(days=1)
 
@@ -152,7 +157,13 @@ def test_list_available_dates_in_range(client, db_connection):
         schedule_days=(1, 2, 3, 4, 5),
     )
 
-    start = date.today()
+    # Starts tomorrow, not today: get_available_slots now also filters
+    # out a day's slots once the doctor's local clock has passed their
+    # schedule's end_time (see the "past dates/times" fix), so "today"
+    # would make this test's weekday-only expectation flaky depending
+    # on what time of day the suite happens to run. Tomorrow onward
+    # isn't affected by the current time, only by weekday.
+    start = date.today() + timedelta(days=1)
     end = start + timedelta(days=9)
 
     with db_connection.cursor() as cur:

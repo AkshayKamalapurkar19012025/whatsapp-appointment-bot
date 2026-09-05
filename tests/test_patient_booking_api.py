@@ -48,6 +48,15 @@ def test_calendar_returns_per_day_availability_matching_schedule(client, db_conn
         weekday = d.weekday() + 1
         if d < today:
             assert is_available is False, f"{iso_date} is in the past, must be unavailable"
+        elif d == today:
+            # Deliberately not asserted -- get_available_slots also
+            # filters out a day's slots once the doctor's local clock
+            # has passed schedule end_time (see the "past dates/times"
+            # fix), so whether today itself still has open slots
+            # depends on what time of day the suite runs, not just its
+            # weekday. Every other date here is unaffected (always in
+            # the future).
+            continue
         else:
             expected = weekday in (1, 2, 3, 4, 5)
             assert is_available is expected, f"{iso_date}: expected {expected}, got {is_available}"

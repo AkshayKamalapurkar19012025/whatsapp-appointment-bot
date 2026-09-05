@@ -3,7 +3,7 @@ import { ApiError, getSlotsForDate } from '../api'
 import type { Slot } from '../types'
 import SlotGrid from '../SlotGrid'
 import AdminCalendar from './AdminCalendar'
-import { formatDate } from '../format'
+import { formatDate, formatTime } from '../format'
 
 // Replaces the old free-form <input type="datetime-local"> this panel
 // used for both "book on behalf of a patient" and "reschedule" -- that
@@ -70,15 +70,24 @@ export default function AdminSlotPicker({
     <div className="admin-slot-picker">
       <div className="slot-picker-context">
         <span className="pill duration-pill">{durationMinutes} min appointment</span>
-        {date && (
+        {date && !loading && (
           <span className="muted">
-            {slots.length} slot{slots.length === 1 ? '' : 's'} open on {formatDate(date)}
+            {selectedSlot
+              ? `Selected ${formatTime(selectedSlot.start_at)} on ${formatDate(date)}`
+              : slots.length > 0
+                ? `${slots.length} slot${slots.length === 1 ? '' : 's'} open on ${formatDate(date)} -- pick one below.`
+                : `No open slots on ${formatDate(date)} -- pick another date.`}
           </span>
         )}
       </div>
 
       <div className="admin-slot-picker-body">
-        <AdminCalendar doctorId={doctorId} appointmentTypeId={appointmentTypeId} onSelectDate={setDate} />
+        <AdminCalendar
+          doctorId={doctorId}
+          appointmentTypeId={appointmentTypeId}
+          onSelectDate={setDate}
+          selectedDate={date || null}
+        />
 
         <div className="admin-slot-picker-slots">
           {error && <p className="error">{error}</p>}
@@ -91,7 +100,7 @@ export default function AdminSlotPicker({
               emptyMessage="The doctor has no open slots on this date -- try another date."
             />
           ) : (
-            <p className="muted">Pick a teal (open) day on the calendar to see its time slots.</p>
+            <p className="muted">Pick an available date on the calendar to see its time slots.</p>
           )}
         </div>
       </div>
