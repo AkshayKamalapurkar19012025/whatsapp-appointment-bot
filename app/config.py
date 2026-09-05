@@ -89,3 +89,16 @@ AUTHKEY_API_KEY = os.environ.get("AUTHKEY_API_KEY", "")
 # module docstring for why.
 AUTHKEY_TEMPLATE_ID = os.environ.get("AUTHKEY_TEMPLATE_ID", "")
 AUTHKEY_COUNTRY_CODE = os.environ.get("AUTHKEY_COUNTRY_CODE", "91")
+
+# Optional testing bypass: when set (and never in production, see below),
+# this exact code is accepted as valid for ANY patient's OTP verification,
+# in addition to the real per-number code. Lets someone testing over a
+# tunnel/public URL who can't reach *_dev_lookup (e.g. it's disabled, or
+# they're just not comfortable with curl) log in with a fixed code you
+# tell them out of band, without needing real SMS delivery configured.
+# Empty by default (disabled) -- must be set explicitly to opt in.
+#
+# Hard-disabled whenever ENVIRONMENT=production, regardless of this
+# variable's value -- accepting a fixed, widely-known code for any phone
+# number would otherwise let anyone log in as any patient.
+TEST_STATIC_OTP = os.environ.get("TEST_STATIC_OTP", "") if ENVIRONMENT != "production" else ""
