@@ -28,8 +28,8 @@ export default function PatientTopBar({
         {subtitle && <span className="muted topbar-greeting-sub">{subtitle}</span>}
       </div>
       <div className="topbar-right">
-        <LiveClock />
         <div className="topbar-actions">{actions}</div>
+        <LiveClock />
       </div>
     </div>
   )

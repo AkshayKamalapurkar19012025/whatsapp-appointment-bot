@@ -604,17 +604,20 @@ a.link.danger {
   font-size: 0.82rem;
 }
 
-/* Right-hand column: current date/time on top, account action links
-   directly below it -- both right-aligned, stacked so neither ever
-   competes with the other for the same row (the earlier version mixed
-   the clock into the same row as the action links, which wrapped
-   unevenly at narrow widths). */
+/* Right-hand column: account action links on top, current date/time
+   directly below them -- both right-aligned. `margin-left: auto`
+   (rather than relying on the parent's `justify-content: space-between`)
+   is what keeps this column pinned to the right edge even when it wraps
+   onto its own line at narrow widths: space-between only distributes
+   space *between* items sharing a line, so a lone wrapped item would
+   otherwise collapse back to the left. */
 .topbar-right {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: var(--space-2);
+  gap: 4px;
   flex-shrink: 0;
+  margin-left: auto;
 }
 
 .topbar-actions {
@@ -623,17 +626,29 @@ a.link.danger {
   gap: var(--space-4);
 }
 
+/* Log out is a real but secondary action next to My appointments / Book
+   an appointment -- always the second link passed to PatientTopBar in
+   both its callers, so it's singled out here rather than needing a
+   dedicated prop. */
+.topbar-actions .link:last-child {
+  color: var(--color-text-muted);
+}
+
+.topbar-actions .link:last-child:hover {
+  color: var(--color-text-secondary);
+}
+
+/* Deliberately not a pill/badge here -- this is secondary, supporting
+   information under the action links, not something that should draw
+   the eye the way a coloured badge would. */
 .live-clock {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: var(--color-primary-soft);
-  color: var(--color-text-secondary);
+  gap: 4px;
+  color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
   font-size: 0.78rem;
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -743,10 +758,9 @@ a.link.danger {
     flex: 1;
   }
 
-  /* At very narrow widths the actions cluster (My appointments / Log
-     out) may not fit next to the greeting+clock cluster on one line --
-     .topbar already wraps (see above), this just tightens the row gap
-     when it does. */
+  /* At very narrow widths the actions+clock column may not fit next to
+     the greeting on one line -- .topbar already wraps (see above), this
+     just tightens the row gap when it does. */
   .topbar {
     row-gap: var(--space-3);
   }
