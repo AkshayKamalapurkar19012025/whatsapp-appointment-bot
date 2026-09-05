@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { CalendarCheck, ChatCircleDots, UserCircle } from '@phosphor-icons/react'
+import { CalendarCheck, ChatCircleDots, Check, UserCircle } from '@phosphor-icons/react'
 import { ApiError, requestOtp, setToken, verifyOtp } from './api'
+import OtpInput from './OtpInput'
 import PhoneInput from './PhoneInput'
 
 type Stage = 'number' | 'otp' | 'register'
@@ -108,8 +109,11 @@ export default function LoginFlow({ onLoggedIn }: { onLoggedIn: () => void }) {
             key={step.label}
             className={`login-step${index === currentStepIndex ? ' current' : ''}${index < currentStepIndex ? ' done' : ''}`}
           >
-            <span className="login-step-dot" />
-            {step.label}
+            <span className="login-step-number" aria-hidden="true">
+              {index < currentStepIndex ? <Check size={12} weight="bold" /> : index + 1}
+            </span>
+            <span className="login-step-label">{step.label}</span>
+            {index < STEPS.length - 1 && <span className="login-step-connector" aria-hidden="true" />}
           </div>
         ))}
       </div>
@@ -134,17 +138,12 @@ export default function LoginFlow({ onLoggedIn }: { onLoggedIn: () => void }) {
           }}
         >
           <p>Enter the code sent to {whatsappNumber}</p>
-          <label htmlFor="otp">Verification code</label>
-          <input
-            id="otp"
-            inputMode="numeric"
-            autoFocus
-            value={otp}
-            onChange={(e) => setOtp(e.target.value)}
-            required
-          />
+          <span id="otp-label" className="field-label">
+            Verification code
+          </span>
+          <OtpInput value={otp} onChange={setOtp} autoFocus disabled={busy} />
           {error && <p className="error">{error}</p>}
-          <button type="submit" disabled={busy}>
+          <button type="submit" disabled={busy || otp.length !== 6}>
             {busy ? 'Verifying…' : 'Verify'}
           </button>
 

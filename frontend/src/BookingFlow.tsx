@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { CheckCircle } from '@phosphor-icons/react'
+import { CalendarBlank, CaretRight, ChatCircleText, CheckCircle, UserCircle } from '@phosphor-icons/react'
 import {
   ApiError,
   createWebAppointment,
@@ -13,10 +13,11 @@ import {
 } from './api'
 import type { BookedAppointment, Department, Doctor, DoctorWithSlots, Slot } from './types'
 import Calendar from './Calendar'
+import { departmentIcon } from './departmentIcon'
 import DepartmentCalendar from './DepartmentCalendar'
 import DoctorCard from './DoctorCard'
 import DoctorProfileModal from './DoctorProfileModal'
-import LiveClock from './LiveClock'
+import PatientTopBar from './PatientTopBar'
 import SlotGrid from './SlotGrid'
 import { formatDate, formatTime } from './format'
 
@@ -240,55 +241,68 @@ export default function BookingFlow({
 
   return (
     <div className="card">
-      <div className="topbar">
-        <span>Hi, {patientName}</span>
-        <div className="topbar-right">
-          <LiveClock />
-          <div className="topbar-actions">
+      <PatientTopBar
+        patientName={patientName}
+        subtitle="Book your next appointment in just a few steps."
+        actions={
+          <>
             <button type="button" className="link" onClick={onViewAppointments}>
               My appointments
             </button>
             <button type="button" className="link" onClick={handleLogout}>
               Log out
             </button>
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {error && <p className="error">{error}</p>}
 
       {step === 'mode' && (
         <>
           <h2>How would you like to find your appointment?</h2>
-          <ul className="option-list">
-            <li>
-              <button type="button" onClick={() => chooseMode('doctor-first')}>
-                Choose a Doctor
-                <span className="option-subtitle">You already know which doctor you'd like to see</span>
-              </button>
-            </li>
-            <li>
-              <button type="button" onClick={() => chooseMode('date-first')}>
-                Find by Date
-                <span className="option-subtitle">See which doctors are available on your preferred date</span>
-              </button>
-            </li>
-          </ul>
+          <div className="choice-grid">
+            <button type="button" className="choice-card" onClick={() => chooseMode('doctor-first')}>
+              <span className="choice-card-icon" aria-hidden="true">
+                <UserCircle size={26} weight="duotone" />
+              </span>
+              <span className="choice-card-body">
+                <span className="choice-card-title">Choose a Doctor</span>
+                <span className="choice-card-subtitle">You already know which doctor you'd like to see</span>
+              </span>
+              <CaretRight size={18} className="choice-card-arrow" aria-hidden="true" />
+            </button>
+            <button type="button" className="choice-card" onClick={() => chooseMode('date-first')}>
+              <span className="choice-card-icon" aria-hidden="true">
+                <CalendarBlank size={26} weight="duotone" />
+              </span>
+              <span className="choice-card-body">
+                <span className="choice-card-title">Find by Date</span>
+                <span className="choice-card-subtitle">See which doctors are available on your preferred date</span>
+              </span>
+              <CaretRight size={18} className="choice-card-arrow" aria-hidden="true" />
+            </button>
+          </div>
         </>
       )}
 
       {step === 'department' && (
         <>
           <h2>Choose a department</h2>
-          <ul className="option-list">
-            {departments.map((d) => (
-              <li key={d.id}>
-                <button type="button" onClick={() => chooseDepartment(d)}>
-                  {d.name}
+          <div className="department-grid">
+            {departments.map((d) => {
+              const Icon = departmentIcon(d.name)
+              return (
+                <button key={d.id} type="button" className="department-card" onClick={() => chooseDepartment(d)}>
+                  <span className="department-card-icon" aria-hidden="true">
+                    <Icon size={22} weight="duotone" />
+                  </span>
+                  <span className="department-card-name">{d.name}</span>
+                  <CaretRight size={16} className="department-card-arrow" aria-hidden="true" />
                 </button>
-              </li>
-            ))}
-          </ul>
+              )
+            })}
+          </div>
           <div className="step-actions">
             <button type="button" className="link" onClick={() => setStep('mode')}>
               Back
@@ -504,15 +518,18 @@ export default function BookingFlow({
             <dt>Duration</dt>
             <dd>{confirmed.duration_minutes} minutes</dd>
           </dl>
-          <p className="muted">
+          <p className="confirmation-notice">
+            <ChatCircleText size={16} weight="fill" aria-hidden="true" />
             A confirmation SMS has been sent to your registered number.
           </p>
-          <button type="button" onClick={startOver}>
-            Book another appointment
-          </button>
-          <button type="button" className="link" onClick={onViewAppointments}>
-            View my appointments
-          </button>
+          <div className="confirmation-actions">
+            <button type="button" className="btn" onClick={startOver}>
+              Book another appointment
+            </button>
+            <button type="button" className="link" onClick={onViewAppointments}>
+              View my appointments
+            </button>
+          </div>
         </div>
       )}
 

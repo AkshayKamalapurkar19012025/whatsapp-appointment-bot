@@ -10,7 +10,7 @@ import {
 } from './api'
 import type { MyAppointment, MyAppointmentsResponse, Slot } from './types'
 import Calendar from './Calendar'
-import LiveClock from './LiveClock'
+import PatientTopBar from './PatientTopBar'
 import SlotGrid from './SlotGrid'
 import { formatDate, formatTime } from './format'
 import { useStaggerReveal } from './useStaggerReveal'
@@ -146,20 +146,20 @@ export default function MyAppointments({
 
   return (
     <div className="card">
-      <div className="topbar">
-        <span>Hi, {patientName}</span>
-        <div className="topbar-right">
-          <LiveClock />
-          <div className="topbar-actions">
+      <PatientTopBar
+        patientName={patientName}
+        subtitle="Manage your upcoming and past visits."
+        actions={
+          <>
             <button type="button" className="link" onClick={onBookNew}>
               Book an appointment
             </button>
             <button type="button" className="link" onClick={handleLogout}>
               Log out
             </button>
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {error && <p className="error">{error}</p>}
 
