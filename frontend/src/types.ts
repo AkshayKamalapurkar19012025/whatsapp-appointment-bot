@@ -160,3 +160,12 @@ export interface AdminAppointmentActionResult {
   duration_minutes: number
   appointment_type_name: string
 }
+
+export interface DashboardStats {
+  today_appointments: number
+  upcoming_appointments: number
+  total_appointments: number
+  cancelled_appointments: number
+  total_doctors: number
+  total_patients: number
+}

@@ -5,6 +5,7 @@ import type {
   AppointmentTypeSummary,
   BookedAppointment,
   CalendarMonth,
+  DashboardStats,
   Department,
   Doctor,
   DoctorBlockEntry,
@@ -251,6 +252,12 @@ export function getStaffMe(): Promise<Staff> {
 
 export function staffLogout(): Promise<{ message: string }> {
   return request('/auth/staff/logout', { method: 'POST', auth: 'staff' })
+}
+
+// -- Dashboard ---------------------------------------------------------
+
+export function getDashboardStats(): Promise<DashboardStats> {
+  return request('/dashboard/stats', { auth: 'staff' })
 }
 
 // -- WEB P11: staff accounts (ADMIN only) -----------------------------------
