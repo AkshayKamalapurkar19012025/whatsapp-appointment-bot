@@ -583,6 +583,27 @@ a.link.danger {
   margin: 0;
 }
 
+/* Left-hand column: the greeting is the primary line here (larger,
+   heading font), with an optional short supporting line underneath --
+   the clock/actions on the right stay secondary rather than competing
+   with it for attention. */
+.topbar-greeting {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.topbar-greeting-line {
+  font-family: var(--font-heading);
+  font-size: 1.05rem;
+  color: var(--color-text);
+}
+
+.topbar-greeting-sub {
+  font-size: 0.82rem;
+}
+
 /* Right-hand column: current date/time on top, account action links
    directly below it -- both right-aligned, stacked so neither ever
    competes with the other for the same row (the earlier version mixed
@@ -833,6 +854,145 @@ a.link.danger {
   display: block;
   margin-top: 2px;
   font-weight: 400;
+}
+
+/* ===========================================================
+   Booking-mode choice cards (BookingFlow.tsx's "mode" step) -- two
+   immediately-distinguishable, icon-fronted choices side by side on
+   wider screens, replacing the plain stacked .option-list buttons this
+   step used to share with every other single-column step.
+   =========================================================== */
+
+.choice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.choice-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  text-align: left;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease, transform 0.08s ease;
+}
+
+.choice-card:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  box-shadow: var(--shadow-sm);
+}
+
+.choice-card:active {
+  transform: scale(0.98);
+}
+
+.choice-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-md);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.choice-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.choice-card-title {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.choice-card-subtitle {
+  font-size: 0.82rem;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.choice-card-arrow {
+  margin-left: auto;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.choice-card:hover .choice-card-arrow {
+  transform: translateX(2px);
+  color: var(--color-primary);
+}
+
+/* ===========================================================
+   Department selection cards (BookingFlow.tsx's "department" step) --
+   a compact icon + name grid instead of a stacked list of plain text
+   buttons, scaling to however many departments the clinic has.
+   =========================================================== */
+
+.department-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.department-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  text-align: left;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  font-weight: 500;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease, transform 0.08s ease;
+}
+
+.department-card:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  box-shadow: var(--shadow-sm);
+}
+
+.department-card:active {
+  transform: scale(0.98);
+}
+
+.department-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.department-card-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.department-card-arrow {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
 }
 
 /* ===========================================================
@@ -1454,30 +1614,77 @@ a.link.danger {
   color: var(--color-text-muted);
 }
 
-.login-step-dot {
-  width: 8px;
-  height: 8px;
+.login-step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
-  background: var(--color-border-strong);
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
   flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
-.login-step.done .login-step-dot {
+.login-step.done .login-step-number {
   background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-on-primary);
 }
 
 .login-step.current {
   color: var(--color-text);
 }
 
-.login-step.current .login-step-dot {
-  background: var(--color-primary);
+.login-step.current .login-step-number {
+  background: var(--color-surface);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
   box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+
+/* The line connecting one step's number to the next -- filled in once
+   that step is done, so the strip reads as a single progressing path
+   rather than two unrelated badges sitting side by side. */
+.login-step-connector {
+  width: 28px;
+  height: 2px;
+  background: var(--color-border-strong);
+  border-radius: 1px;
+}
+
+.login-step.done .login-step-connector {
+  background: var(--color-primary);
 }
 
 .login-help-text {
   margin-top: var(--space-2);
   font-size: 0.82rem;
+}
+
+/* ===========================================================
+   OTP digit-box input
+   =========================================================== */
+
+.otp-input {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.otp-input-box {
+  width: 100%;
+  max-width: 48px;
+  aspect-ratio: 1;
+  padding: 0;
+  text-align: center;
+  font-size: 1.25rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 0;
 }
 
 /* ===========================================================
@@ -1604,6 +1811,7 @@ a.link.danger {
 
 .confirmation h2 {
   color: var(--color-success);
+  margin-top: var(--space-2);
 }
 
 .confirmation .state-icon {
