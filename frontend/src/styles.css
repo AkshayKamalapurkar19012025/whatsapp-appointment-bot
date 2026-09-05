@@ -895,6 +895,39 @@ a.link.danger {
   gap: var(--space-3);
 }
 
+/* The rest of a doctor card's compact summary (below the avatar/name
+   header) -- years of experience + key qualification on one muted
+   line, featured education location on another. Deliberately just
+   these two lines: the full profile (complete education history, etc.)
+   lives one click away in DoctorProfileSection.tsx, not here. */
+.doctor-card-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--space-2);
+}
+
+.doctor-card-meta {
+  font-size: 0.82rem;
+}
+
+.doctor-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+.doctor-card-view-profile {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
 /* Professional square/circular photo presentation, and the fallback
    avatar shown in its place -- shared by the admin doctor grid, the
    patient-facing compact booking cards, and the View Profile modal
@@ -913,6 +946,58 @@ a.link.danger {
   background: var(--color-surface-hover);
   color: var(--color-text-muted);
   flex-shrink: 0;
+}
+
+/* Doctor create/edit form (DoctorsPanel.tsx's "Add doctor" form,
+   DoctorProfileSection.tsx's profile-edit and add-education forms) --
+   a dedicated grid rather than reusing the generic .inline-form flex
+   row every other admin panel's filter/quick-add bar uses. A flex row
+   of 5+ fields stretches into one long horizontal strip on a wide
+   screen and wraps unpredictably on a narrow one; this instead lays
+   fields out as a responsive 2-column grid, with .doctor-form-full
+   for anything that should span the full width (the name field, a
+   textarea-like field, or the action row) and .doctor-form-section for
+   a labelled group of related fields (e.g. "Education & Training"'s
+   own add-entry fields, kept visually distinct from the scalar profile
+   fields above them). Deliberately capped at max-width so fields don't
+   stretch edge-to-edge on a wide monitor either. */
+.doctor-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-3) var(--space-4);
+  margin: var(--space-3) 0;
+  max-width: 760px;
+}
+
+.doctor-form-grid .inline-label {
+  width: 100%;
+}
+
+.doctor-form-grid input,
+.doctor-form-grid select {
+  width: 100%;
+}
+
+.doctor-form-full {
+  grid-column: 1 / -1;
+}
+
+.doctor-form-section-title {
+  grid-column: 1 / -1;
+  margin: var(--space-2) 0 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+.doctor-form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-1);
 }
 
 /* Admin "Profile" tab (DoctorProfileSection.tsx): photo upload row and

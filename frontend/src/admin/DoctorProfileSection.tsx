@@ -1,16 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import {
   ApiError,
   addDoctorEducation,
   featureDoctorEducation,
   getDoctorProfile,
+  listDepartments,
   removeDoctorEducation,
   removeDoctorPhoto,
   unfeatureDoctorEducation,
   updateDoctor,
   uploadDoctorPhoto,
 } from '../api'
-import type { Doctor, DoctorEducationEntry, DoctorProfile } from '../types'
+import type { Department, Doctor, DoctorEducationEntry, DoctorProfile } from '../types'
 import DoctorAvatar from '../DoctorAvatar'
 
 // The admin-only "Profile" tab of DoctorDetail.tsx: edit the scalar
@@ -25,8 +26,10 @@ import DoctorAvatar from '../DoctorAvatar'
 // was already long before this tab existed.
 export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean }) {
   const [profile, setProfile] = useState<DoctorProfile | null>(null)
+  const [departments, setDepartments] = useState<Department[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const specializationListId = useId()
 
   const [name, setName] = useState('')
   const [specialization, setSpecialization] = useState('')
@@ -61,6 +64,14 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
   }
 
   useEffect(load, [doctor.id])
+
+  // Same specialization-suggestion source as DoctorsPanel.tsx's create
+  // form -- fetched once here too since this section can be opened
+  // without ever visiting that form first (selecting an existing doctor
+  // straight from the grid).
+  useEffect(() => {
+    listDepartments().then(setDepartments).catch(() => undefined)
+  }, [])
 
   async function handleSaveProfile(e: React.FormEvent) {
     e.preventDefault()
@@ -200,14 +211,24 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
       </div>
 
       {isAdmin ? (
-        <form className="inline-form wrap" onSubmit={handleSaveProfile}>
-          <label className="inline-label">
+        <form className="doctor-form-grid" onSubmit={handleSaveProfile}>
+          <label className="inline-label doctor-form-full">
             Name
             <input value={name} onChange={(e) => setName(e.target.value)} required />
           </label>
           <label className="inline-label">
             Specialization
-            <input value={specialization} onChange={(e) => setSpecialization(e.target.value)} required />
+            <input
+              list={specializationListId}
+              value={specialization}
+              onChange={(e) => setSpecialization(e.target.value)}
+              required
+            />
+            <datalist id={specializationListId}>
+              {departments.map((d) => (
+                <option key={d.id} value={d.name} />
+              ))}
+            </datalist>
           </label>
           <label className="inline-label">
             Sub-specialization <span className="muted">(optional)</span>
@@ -227,9 +248,11 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
               onChange={(e) => setYearsOfExperience(e.target.value)}
             />
           </label>
-          <button type="submit" style={{ width: 'auto' }} disabled={savingProfile}>
-            {savingProfile ? 'Saving…' : 'Save profile'}
-          </button>
+          <div className="doctor-form-actions">
+            <button type="submit" style={{ width: 'auto' }} disabled={savingProfile}>
+              {savingProfile ? 'Saving…' : 'Save profile'}
+            </button>
+          </div>
         </form>
       ) : (
         <dl className="summary">
@@ -270,7 +293,7 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
       )}
 
       {isAdmin && (
-        <form className="inline-form wrap" onSubmit={handleAddEducation}>
+        <form className="doctor-form-grid" onSubmit={handleAddEducation}>
           <label className="inline-label">
             Qualification
             <input
@@ -309,9 +332,11 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
               required
             />
           </label>
-          <button type="submit" style={{ width: 'auto' }} disabled={eduBusy}>
-            {eduBusy ? 'Adding…' : 'Add entry'}
-          </button>
+          <div className="doctor-form-actions">
+            <button type="submit" style={{ width: 'auto' }} disabled={eduBusy}>
+              {eduBusy ? 'Adding…' : 'Add entry'}
+            </button>
+          </div>
         </form>
       )}
     </div>

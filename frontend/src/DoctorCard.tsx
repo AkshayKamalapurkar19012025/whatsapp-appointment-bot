@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import DoctorAvatar from './DoctorAvatar'
+import { doctorSummaryLine } from './format'
 import type { DoctorProfileSummary } from './types'
 
 // The compact doctor-selection card shown during both Doctor-First and
@@ -21,12 +22,7 @@ export default function DoctorCard({
   onSelect: () => void
   onViewProfile: () => void
 }) {
-  const summaryParts = [
-    doctor.years_of_experience !== null
-      ? `${doctor.years_of_experience} ${doctor.years_of_experience === 1 ? 'year' : 'years'} experience`
-      : null,
-    doctor.qualifications,
-  ].filter(Boolean)
+  const summaryLine = doctorSummaryLine(doctor)
 
   return (
     <li className="doctor-option">
@@ -35,7 +31,7 @@ export default function DoctorCard({
         <span className="doctor-option-info">
           <span className="doctor-option-name">{doctor.name}</span>
           {doctor.specialization && <span className="option-subtitle">{doctor.specialization}</span>}
-          {summaryParts.length > 0 && <span className="muted doctor-option-meta">{summaryParts.join(' · ')}</span>}
+          {summaryLine && <span className="muted doctor-option-meta">{summaryLine}</span>}
           {doctor.education_location && (
             <span className="muted doctor-option-meta">{doctor.education_location}</span>
           )}
