@@ -298,7 +298,17 @@ def get_available_slots(
           -- still blocks the slot) counts as occupying it -- see
           -- app/services/appointment_services.py's RELEASED_STATUSES,
           -- the canonical definition this mirrors.
-          AND NOT (status = ANY(ARRAY['CANCELLED', 'REJECTED']))
+          --
+          -- status::text: some databases (reconciled via scripts/
+          -- reconcile_pre_0001_baseline.sql) have appointments.status as
+          -- a native `appointment_status` ENUM rather than 0001's TEXT.
+          -- Comparing that enum directly against an ARRAY[...] literal
+          -- fails ("operator does not exist: appointment_status = text",
+          -- since Postgres resolves an untyped ARRAY literal to text[]
+          -- here, unlike in an IN (...) list). Casting the column to
+          -- text is a no-op for the common TEXT-typed case and fixes
+          -- the enum case, without needing two code paths.
+          AND NOT (status::text = ANY(ARRAY['CANCELLED', 'REJECTED']))
         ORDER BY start_at
         """,
         (

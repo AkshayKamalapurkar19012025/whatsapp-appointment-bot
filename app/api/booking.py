@@ -811,7 +811,10 @@ def get_upcoming_booked_appointments(cur, patient_id: int):
         JOIN appointment_types at
             ON at.id = a.appointment_type_id
         WHERE a.patient_id = %s
-          AND a.status = ANY(%s::text[])
+          -- a.status::text: see availability_engine.py's
+          -- get_available_slots for why (enum-typed
+          -- appointments.status on some databases).
+          AND a.status::text = ANY(%s::text[])
           AND a.start_at > NOW()
         ORDER BY a.start_at
         """,
@@ -2419,7 +2422,10 @@ def booking(request: BookingRequest):
                     SET status = 'CANCELLED', updated_at = NOW()
                     WHERE id = %s
                     AND patient_id = %s
-                    AND status = ANY(%s::text[])
+                    -- status::text: see availability_engine.py's
+                    -- get_available_slots for why (enum-typed
+                    -- appointments.status on some databases).
+                    AND status::text = ANY(%s::text[])
                     RETURNING id, start_at, end_at
                     """,
     (
@@ -4040,7 +4046,10 @@ def booking(request: BookingRequest):
                     WHERE doctor_id = %s
                       AND start_at < %s
                       AND end_at > %s
-                      AND NOT (status = ANY(%s::text[]))
+                      -- status::text: see availability_engine.py's
+                      -- get_available_slots for why (enum-typed
+                      -- appointments.status on some databases).
+                      AND NOT (status::text = ANY(%s::text[]))
                     """,
                     (
                         session["doctor_id"],
