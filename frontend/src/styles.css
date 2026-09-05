@@ -1576,6 +1576,38 @@ a.link.danger {
    guided flow rather than a single bare input.
    =========================================================== */
 
+/* Wraps .card.login-card only -- a soft, healthcare-toned halo bleeding
+   out from behind the card instead of the plain flat page background,
+   scoped to this component alone (isolation: isolate keeps the glow's
+   negative z-index contained to this stacking context, never bleeding
+   behind .page/body or in front of anything else on screen). Exists
+   only while the login screen itself is mounted, so no other screen is
+   affected. */
+.login-shell {
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  max-width: 480px;
+  align-self: flex-start;
+}
+
+.login-shell-glow {
+  position: absolute;
+  inset: -56px;
+  z-index: -1;
+  border-radius: calc(var(--radius-lg) + 56px);
+  background:
+    radial-gradient(circle at 18% 8%, rgba(31, 122, 99, 0.24), transparent 55%),
+    radial-gradient(circle at 88% 20%, rgba(155, 205, 220, 0.4), transparent 55%),
+    radial-gradient(circle at 75% 95%, rgba(251, 200, 160, 0.26), transparent 50%);
+  filter: blur(22px);
+  pointer-events: none;
+}
+
+.login-card {
+  box-shadow: var(--shadow-lg);
+}
+
 .login-card h1 {
   margin-top: 0;
 }
@@ -1584,17 +1616,33 @@ a.link.danger {
   width: 56px;
   height: 56px;
   border-radius: var(--radius-lg);
-  background: var(--color-primary-soft);
+  background: linear-gradient(155deg, var(--color-primary-soft-strong), var(--color-primary-soft));
+  border: 1px solid var(--color-primary-soft-strong);
   color: var(--color-primary);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   margin-bottom: var(--space-4);
+  transition: transform 0.2s ease;
 }
 
 .login-subtitle {
   margin-top: -4px;
   margin-bottom: var(--space-5);
+}
+
+/* Register stage's own heading/subtext (replaces one plain run-on
+   sentence with a friendlier greeting + a clearly secondary supporting
+   line, matching the heading+subtitle hierarchy the rest of this card
+   already uses above). */
+.register-heading {
+  margin: 0 0 var(--space-2);
+  font-size: 1.15rem;
+}
+
+.register-subtext {
+  margin-top: 0;
+  margin-bottom: var(--space-4);
 }
 
 .login-steps {
@@ -1640,10 +1688,10 @@ a.link.danger {
 }
 
 .login-step.current .login-step-number {
-  background: var(--color-surface);
+  background: var(--color-primary);
   border-color: var(--color-primary);
-  color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-soft);
+  color: var(--color-on-primary);
+  box-shadow: 0 0 0 4px var(--color-primary-soft);
 }
 
 /* The line connecting one step's number to the next -- filled in once
