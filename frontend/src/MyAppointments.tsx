@@ -5,7 +5,6 @@ import {
   cancelWebAppointment,
   getMyAppointments,
   getSlotsForDate,
-  logout,
   rescheduleWebAppointment,
 } from './api'
 import type { MyAppointment, MyAppointmentsResponse, Slot } from './types'
@@ -31,11 +30,9 @@ type RescheduleStep = 'date' | 'slot' | 'review' | 'done'
 export default function MyAppointments({
   patientName,
   onLoggedOut,
-  onBookNew,
 }: {
   patientName: string
   onLoggedOut: () => void
-  onBookNew: () => void
 }) {
   const [tab, setTab] = useState<Tab>('upcoming')
   const [data, setData] = useState<MyAppointmentsResponse | null>(null)
@@ -136,30 +133,12 @@ export default function MyAppointments({
     }
   }
 
-  async function handleLogout() {
-    await logout().catch(() => undefined)
-    onLoggedOut()
-  }
-
   const list: MyAppointment[] = data ? data[tab] : []
   const listRef = useStaggerReveal<HTMLUListElement>([list])
 
   return (
     <div className="card">
-      <PatientTopBar
-        patientName={patientName}
-        subtitle="Manage your upcoming and past visits."
-        actions={
-          <>
-            <button type="button" className="link" onClick={onBookNew}>
-              Book an appointment
-            </button>
-            <button type="button" className="link" onClick={handleLogout}>
-              Log out
-            </button>
-          </>
-        }
-      />
+      <PatientTopBar patientName={patientName} subtitle="Manage your upcoming and past visits." />
 
       {error && <p className="error">{error}</p>}
 

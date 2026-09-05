@@ -1,36 +1,35 @@
-import type { ReactNode } from 'react'
+import { CloudSun, Moon, Sun } from '@phosphor-icons/react'
 import LiveClock from './LiveClock'
 
-// The identical header structure BookingFlow.tsx and MyAppointments.tsx
-// each used to build inline (Hi, {name} / LiveClock / action links) --
-// extracted so the greeting hierarchy and clock placement stay in sync
-// across both screens instead of drifting. `subtitle` and `actions` are
-// the only things that differ per screen (a short line under the
-// greeting, and which links sit on the right).
+// The in-card greeting header for BookingFlow.tsx and MyAppointments.tsx
+// -- just the greeting and the clock now. Account navigation (My
+// appointments / Book an appointment / Log out) moved up to the global
+// AppHeader, since it's the same action regardless of which of these
+// two screens is showing, rather than being duplicated in both.
 export default function PatientTopBar({
   patientName,
   subtitle,
-  actions,
 }: {
   patientName: string
   subtitle?: string
-  actions: ReactNode
 }) {
   const hour = new Date().getHours()
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
+  const GreetingIcon = hour < 12 ? Sun : hour < 17 ? CloudSun : Moon
 
   return (
     <div className="topbar">
       <div className="topbar-greeting">
-        <span className="topbar-greeting-line">
-          {greeting}, <strong>{patientName}</strong>
+        <span className="topbar-greeting-icon" aria-hidden="true">
+          <GreetingIcon size={22} weight="duotone" />
         </span>
-        {subtitle && <span className="muted topbar-greeting-sub">{subtitle}</span>}
+        <div className="topbar-greeting-text">
+          <span className="topbar-greeting-line">{greeting},</span>
+          <span className="topbar-greeting-name">{patientName}</span>
+          {subtitle && <span className="muted topbar-greeting-sub">{subtitle}</span>}
+        </div>
       </div>
-      <div className="topbar-right">
-        <LiveClock />
-        <div className="topbar-actions">{actions}</div>
-      </div>
+      <LiveClock />
     </div>
   )
 }
