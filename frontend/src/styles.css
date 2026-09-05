@@ -2312,16 +2312,51 @@ a.link.danger {
 
 .doctor-profile-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-4);
-  margin-bottom: var(--space-4);
+  margin-bottom: var(--space-2);
   padding-right: var(--space-5);
 }
 
-.doctor-profile-header h2 {
-  margin: 0 0 4px;
+.doctor-profile-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 4px;
+  min-width: 0;
 }
 
-.doctor-profile-header p {
+.doctor-profile-header h2 {
   margin: 0;
+}
+
+.doctor-profile-specialization {
+  margin: 2px 0 0;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--color-primary-hover);
+}
+
+.doctor-profile-meta {
+  margin: 2px 0 0;
+}
+
+.doctor-profile-section-divider {
+  margin: var(--space-4) 0;
+  border: none;
+  border-top: 1px solid var(--color-border);
+}
+
+/* A smaller, muted, uppercase label rather than a full h3 -- Education
+   & Training is deliberately the modal's secondary section, visually
+   subordinate to the header identity block above it (see this file's
+   own PR for why: the profile was reading as an "education popup"
+   with an empty-looking header). */
+.doctor-profile-section-label {
+  margin: 0 0 var(--space-3);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
 }
