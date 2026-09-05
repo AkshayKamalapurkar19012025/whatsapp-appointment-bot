@@ -6,6 +6,7 @@ import type {
   BookedAppointment,
   CalendarMonth,
   DashboardStats,
+  DashboardTrends,
   Department,
   Doctor,
   DoctorBlockEntry,
@@ -260,6 +261,10 @@ export function getDashboardStats(): Promise<DashboardStats> {
   return request('/dashboard/stats', { auth: 'staff' })
 }
 
+export function getDashboardTrends(days = 14): Promise<DashboardTrends> {
+  return request(`/dashboard/trends?days=${days}`, { auth: 'staff' })
+}
+
 // -- WEB P11: staff accounts (ADMIN only) -----------------------------------
 
 export function listStaffAccounts(): Promise<StaffAccount[]> {
@@ -496,6 +501,35 @@ export function rescheduleAdminAppointment(
     auth: 'staff',
     body: { new_start_at: newStartAt },
   })
+}
+
+// Lifecycle transitions (migrations/0011_appointment_lifecycle_
+// statuses.sql): PENDING -> CONFIRMED -> VISITED -> COMPLETED, with
+// PENDING -> REJECTED or PENDING/CONFIRMED -> CANCELLED (cancelAdmin
+// Appointment above) as the two "never happened" exits.
+
+export function confirmAdminAppointment(
+  appointmentId: number,
+): Promise<{ id: number; status: string }> {
+  return request(`/appointments/${appointmentId}/confirm`, { method: 'POST', auth: 'staff' })
+}
+
+export function rejectAdminAppointment(
+  appointmentId: number,
+): Promise<{ id: number; status: string }> {
+  return request(`/appointments/${appointmentId}/reject`, { method: 'POST', auth: 'staff' })
+}
+
+export function visitAdminAppointment(
+  appointmentId: number,
+): Promise<{ id: number; status: string }> {
+  return request(`/appointments/${appointmentId}/visit`, { method: 'POST', auth: 'staff' })
+}
+
+export function completeAdminAppointment(
+  appointmentId: number,
+): Promise<{ id: number; status: string }> {
+  return request(`/appointments/${appointmentId}/complete`, { method: 'POST', auth: 'staff' })
 }
 
 // Staff-only month availability for the admin date picker -- unlike

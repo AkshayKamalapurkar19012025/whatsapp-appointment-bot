@@ -224,7 +224,12 @@ def get_available_slots(
         WHERE doctor_id = %s
           AND start_at < %s
           AND end_at > %s
-          AND status <> 'CANCELLED'
+          -- CANCELLED and REJECTED both release the slot; every other
+          -- status (PENDING included, so a request awaiting confirmation
+          -- still blocks the slot) counts as occupying it -- see
+          -- app/services/appointment_services.py's RELEASED_STATUSES,
+          -- the canonical definition this mirrors.
+          AND NOT (status = ANY(ARRAY['CANCELLED', 'REJECTED']))
         ORDER BY start_at
         """,
         (

@@ -15,11 +15,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import {
   ApiError,
   cancelAdminAppointment,
+  completeAdminAppointment,
+  confirmAdminAppointment,
   listAdminAppointments,
   listAllDoctors,
   listAppointmentTypeCatalog,
   listPatients,
+  rejectAdminAppointment,
   rescheduleAdminAppointment,
+  visitAdminAppointment,
 } from '../api'
 import type { AdminAppointment, AppointmentTypeSummary, Doctor, Patient, Slot } from '../types'
 import { formatDate, formatTime } from '../format'
@@ -97,14 +101,20 @@ export default function AppointmentsPanel({
   // client-side over whatever the server-side filters above already
   // narrowed down to -- the whole list is already loaded for this
   // panel, so a second round trip for a substring match or a "still in
-  // the future" check would be pure overhead. "Upcoming" means booked
-  // and not yet started; there's no separate COMPLETED status (see
-  // migrations/0001_baseline_schema.sql), so a past BOOKED appointment
-  // falls out of Upcoming on its own without needing a status change.
+  // the future" check would be pure overhead. "Upcoming" means still
+  // Pending or Confirmed (the two statuses that haven't happened, been
+  // rejected, or been cancelled yet -- see ACTIONABLE_STATUSES in
+  // app/services/appointment_services.py) and not yet started; a past
+  // Pending/Confirmed appointment falls out of Upcoming on its own
+  // without needing a status change.
   const searchNeedle = searchText.trim().toLowerCase()
   const now = Date.now()
   const visibleAppointments = appointments.filter((a) => {
-    if (tab === 'upcoming' && (a.status !== 'BOOKED' || new Date(a.start_at).getTime() < now)) return false
+    if (
+      tab === 'upcoming' &&
+      (!['PENDING', 'CONFIRMED'].includes(a.status) || new Date(a.start_at).getTime() < now)
+    )
+      return false
     if (!searchNeedle) return true
     return (
       a.patient_name.toLowerCase().includes(searchNeedle) || a.whatsapp_number.toLowerCase().includes(searchNeedle)
@@ -117,6 +127,7 @@ export default function AppointmentsPanel({
   // actually reloads.
   const tbodyRef = useStaggerReveal<HTMLTableSectionElement>([appointments])
   const [cancelTarget, setCancelTarget] = useState<AdminAppointment | null>(null)
+  const [lifecycleBusyId, setLifecycleBusyId] = useState<number | null>(null)
 
   async function confirmCancel() {
     if (!cancelTarget) return
@@ -128,6 +139,28 @@ export default function AppointmentsPanel({
       setError(err instanceof ApiError ? err.message : 'Could not cancel the appointment')
     } finally {
       setCancelTarget(null)
+    }
+  }
+
+  // Shared handler for the four one-click lifecycle transitions
+  // (Confirm/Reject/Visit/Complete) -- each is a single-column status
+  // update with no follow-up form, unlike cancel (a confirm dialog) or
+  // reschedule (a slot picker), so a plain busy-while-in-flight button
+  // is enough.
+  async function runLifecycleAction(
+    appointmentId: number,
+    action: (id: number) => Promise<{ id: number; status: string }>,
+    failureMessage: string,
+  ) {
+    setError(null)
+    setLifecycleBusyId(appointmentId)
+    try {
+      await action(appointmentId)
+      load()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : failureMessage)
+    } finally {
+      setLifecycleBusyId(null)
     }
   }
 
@@ -228,8 +261,12 @@ export default function AppointmentsPanel({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={ALL_FILTER_VALUE}>All</SelectItem>
-              <SelectItem value="BOOKED">Booked</SelectItem>
+              <SelectItem value="PENDING">Pending</SelectItem>
+              <SelectItem value="CONFIRMED">Confirmed</SelectItem>
+              <SelectItem value="REJECTED">Rejected</SelectItem>
               <SelectItem value="CANCELLED">Cancelled</SelectItem>
+              <SelectItem value="VISITED">Visited</SelectItem>
+              <SelectItem value="COMPLETED">Completed</SelectItem>
             </SelectContent>
           </Select>
         </label>
@@ -337,22 +374,76 @@ export default function AppointmentsPanel({
                     <span className={`pill status-${a.status.toLowerCase()}`}>{a.status}</span>
                   </td>
                   <td>
-                    {a.status === 'BOOKED' && (
-                      <div style={{ display: 'flex', gap: 12 }}>
+                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                      {a.status === 'PENDING' && (
+                        <>
+                          <button
+                            type="button"
+                            className="link"
+                            disabled={lifecycleBusyId === a.id}
+                            onClick={() =>
+                              runLifecycleAction(a.id, confirmAdminAppointment, 'Could not confirm the appointment')
+                            }
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            type="button"
+                            className="link danger"
+                            disabled={lifecycleBusyId === a.id}
+                            onClick={() =>
+                              runLifecycleAction(a.id, rejectAdminAppointment, 'Could not reject the appointment')
+                            }
+                          >
+                            Reject
+                          </button>
+                        </>
+                      )}
+                      {a.status === 'CONFIRMED' && (
                         <button
                           type="button"
                           className="link"
+                          disabled={lifecycleBusyId === a.id}
                           onClick={() =>
-                            reschedulingId === a.id ? setReschedulingId(null) : startReschedule(a)
+                            runLifecycleAction(a.id, visitAdminAppointment, 'Could not mark the appointment visited')
                           }
                         >
-                          {reschedulingId === a.id ? 'Close' : 'Reschedule'}
+                          Mark visited
                         </button>
-                        <button type="button" className="link danger" onClick={() => setCancelTarget(a)}>
-                          Cancel
+                      )}
+                      {a.status === 'VISITED' && (
+                        <button
+                          type="button"
+                          className="link"
+                          disabled={lifecycleBusyId === a.id}
+                          onClick={() =>
+                            runLifecycleAction(
+                              a.id,
+                              completeAdminAppointment,
+                              'Could not mark the appointment completed',
+                            )
+                          }
+                        >
+                          Mark completed
                         </button>
-                      </div>
-                    )}
+                      )}
+                      {(a.status === 'PENDING' || a.status === 'CONFIRMED') && (
+                        <>
+                          <button
+                            type="button"
+                            className="link"
+                            onClick={() =>
+                              reschedulingId === a.id ? setReschedulingId(null) : startReschedule(a)
+                            }
+                          >
+                            {reschedulingId === a.id ? 'Close' : 'Reschedule'}
+                          </button>
+                          <button type="button" className="link danger" onClick={() => setCancelTarget(a)}>
+                            Cancel
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </td>
                 </tr>
                 {reschedulingId === a.id && reschedulingAppointment && (

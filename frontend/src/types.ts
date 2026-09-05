@@ -165,7 +165,22 @@ export interface DashboardStats {
   today_appointments: number
   upcoming_appointments: number
   total_appointments: number
+  pending_appointments: number
+  confirmed_appointments: number
+  rejected_appointments: number
   cancelled_appointments: number
+  visited_appointments: number
+  completed_appointments: number
   total_doctors: number
   total_patients: number
+}
+
+export interface DashboardTrendPoint {
+  date: string
+  count: number
+}
+
+export interface DashboardTrends {
+  appointments: DashboardTrendPoint[]
+  patients: DashboardTrendPoint[]
 }

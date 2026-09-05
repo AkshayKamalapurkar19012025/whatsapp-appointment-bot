@@ -76,7 +76,7 @@ def test_my_appointments_lists_upcoming_history_and_cancelled(client, db_connect
     )
     assert cancel_response.status_code == 200
 
-    # A "history" appointment (BOOKED, in the past) can't be produced
+    # A "history" appointment (Confirmed, in the past) can't be produced
     # through the web creation endpoint at all -- enforce_booking_window
     # rejects past dates by design. Insert one directly, matching this
     # repo's established pattern for scenarios the API itself can't
@@ -87,7 +87,7 @@ def test_my_appointments_lists_upcoming_history_and_cancelled(client, db_connect
         cur.execute(
             """
             INSERT INTO appointments (doctor_id, patient_id, appointment_type_id, start_at, end_at, status)
-            VALUES (%s, %s, %s, '2020-01-01T09:00:00+05:30', '2020-01-01T09:30:00+05:30', 'BOOKED')
+            VALUES (%s, %s, %s, '2020-01-01T09:00:00+05:30', '2020-01-01T09:30:00+05:30', 'CONFIRMED')
             RETURNING id
             """,
             (seeded["doctor_id"], patient_id, seeded["appointment_type_id"]),
@@ -176,7 +176,7 @@ def test_cancel_web_appointment_rejects_non_owner_as_404(client, db_connection):
 
     with db_connection.cursor() as cur:
         cur.execute("SELECT status FROM appointments WHERE id = %s", (booked["id"],))
-        assert cur.fetchone()[0] == "BOOKED", "a rejected cancel attempt must not touch the appointment"
+        assert cur.fetchone()[0] == "PENDING", "a rejected cancel attempt must not touch the appointment"
 
 
 def test_cancel_web_appointment_rejects_nonexistent(client, db_connection):
@@ -236,7 +236,7 @@ def test_reschedule_web_appointment_normal(client, db_connection):
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "BOOKED"
+    assert body["status"] == "PENDING"
     assert body["doctor_id"] == seeded["doctor_id"]
     assert body["id"] != booked["id"]
 

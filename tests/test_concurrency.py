@@ -107,10 +107,10 @@ def test_simultaneous_whatsapp_bookings_same_slot(client, db_connection):
 
     with db_connection.cursor() as cur:
         cur.execute(
-            "SELECT count(*) FROM appointments WHERE status = 'BOOKED'"
+            "SELECT count(*) FROM appointments WHERE status = 'PENDING'"
         )
         booked_count = cur.fetchone()[0]
-    assert booked_count == 1, f"expected exactly one BOOKED appointment, found {booked_count}"
+    assert booked_count == 1, f"expected exactly one Pending appointment, found {booked_count}"
 
 
 def test_simultaneous_rest_bookings_same_slot(client, db_connection):
@@ -179,11 +179,11 @@ def test_simultaneous_rest_bookings_same_slot(client, db_connection):
 
     with db_connection.cursor() as cur:
         cur.execute(
-            "SELECT count(*) FROM appointments WHERE doctor_id = %s AND status = 'BOOKED'",
+            "SELECT count(*) FROM appointments WHERE doctor_id = %s AND status = 'PENDING'",
             (seeded["doctor_id"],),
         )
         booked_count = cur.fetchone()[0]
-    assert booked_count == 1, f"expected exactly one BOOKED appointment, found {booked_count}"
+    assert booked_count == 1, f"expected exactly one Pending appointment, found {booked_count}"
 
 
 def test_cross_path_concurrent_booking(client, db_connection):
@@ -272,7 +272,7 @@ def test_cross_path_concurrent_booking(client, db_connection):
             cur.execute(
                 """
                 SELECT count(*) FROM appointments
-                WHERE doctor_id = %s AND status = 'BOOKED'
+                WHERE doctor_id = %s AND status = 'PENDING'
                 """,
                 (seeded["doctor_id"],),
             )
@@ -294,7 +294,7 @@ def test_cross_path_concurrent_booking(client, db_connection):
             f"got {outcome}"
         )
         assert booked_count == 1, (
-            f"attempt {attempt}: expected exactly one BOOKED appointment "
+            f"attempt {attempt}: expected exactly one Pending appointment "
             f"for this doctor, found {booked_count}"
         )
 
@@ -315,7 +315,7 @@ def test_concurrent_reschedule_vs_fresh_booking_same_target_slot(client, db_conn
     Patient A reschedules an existing appointment INTO slot Y at the
     same instant Patient B tries to freshly book slot Y directly via
     the REST path. Exactly one must win. If A's reschedule loses, A's
-    ORIGINAL appointment must remain BOOKED and untouched -- a failed
+    ORIGINAL appointment must remain Pending and untouched -- a failed
     reschedule must never lose the original booking (see
     app/api/booking.py's RESCHEDULE_FINAL_CONFIRM comment on why the
     cancel-old + insert-new both happen in one transaction).
@@ -409,7 +409,7 @@ def test_concurrent_reschedule_vs_fresh_booking_same_target_slot(client, db_conn
         original_row = cur.fetchone()
 
         cur.execute(
-            "SELECT count(*) FROM appointments WHERE doctor_id = %s AND status = 'BOOKED'",
+            "SELECT count(*) FROM appointments WHERE doctor_id = %s AND status = 'PENDING'",
             (seeded["doctor_id"],),
         )
         total_booked = cur.fetchone()[0]
@@ -420,7 +420,7 @@ def test_concurrent_reschedule_vs_fresh_booking_same_target_slot(client, db_conn
         assert total_booked == 1  # only the new (rescheduled) appointment
     else:
         # Reschedule lost: the original booking must remain intact, not lost.
-        assert original_row[1] == "BOOKED", (
+        assert original_row[1] == "PENDING", (
             "reschedule lost the race but the ORIGINAL appointment was not "
             "preserved -- this is the exact failure mode the spec forbids"
         )

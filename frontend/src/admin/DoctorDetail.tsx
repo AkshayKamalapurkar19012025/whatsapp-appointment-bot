@@ -148,9 +148,11 @@ export default function DoctorDetail({ doctor, isAdmin }: { doctor: Doctor; isAd
 // -- This doctor's upcoming appointments (ADMIN or STAFF) ---------------
 // Scoped to doctor.id server-side via the same /appointments listing
 // AppointmentsPanel's own Upcoming tab uses; "upcoming" here means the
-// same thing it does there -- booked and not yet started (no separate
-// COMPLETED status, see migrations/0001_baseline_schema.sql, so a past
-// BOOKED appointment falls out of Upcoming on its own).
+// same thing it does there -- still Pending or Confirmed (the two
+// statuses that haven't happened, been rejected, or been cancelled yet)
+// and not yet started. GET /appointments only takes one status value at
+// a time, so both statuses are fetched unfiltered and narrowed
+// client-side, same as AppointmentsPanel's own Upcoming tab does.
 
 function UpcomingAppointmentsSection({ doctor }: { doctor: Doctor }) {
   const [appointments, setAppointments] = useState<AdminAppointment[]>([])
@@ -161,7 +163,7 @@ function UpcomingAppointmentsSection({ doctor }: { doctor: Doctor }) {
   function load() {
     setLoading(true)
     setError(null)
-    listAdminAppointments({ doctor_id: doctor.id, status: 'BOOKED' })
+    listAdminAppointments({ doctor_id: doctor.id })
       .then(setAppointments)
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load appointments'))
       .finally(() => setLoading(false))
@@ -175,6 +177,7 @@ function UpcomingAppointmentsSection({ doctor }: { doctor: Doctor }) {
   // already-stale data looks like on the next real render, never
   // mid-render.
   const upcoming = appointments
+    .filter((a) => a.status === 'PENDING' || a.status === 'CONFIRMED')
     // eslint-disable-next-line react/purity
     .filter((a) => new Date(a.start_at).getTime() >= Date.now())
     .filter(

@@ -89,7 +89,7 @@ def test_reschedule_moves_appointment_to_new_slot_same_doctor_and_type(client, d
         )
     db_connection.commit()
 
-    assert result["status"] == "BOOKED"
+    assert result["status"] == "PENDING"
     assert result["doctor_id"] == seeded["doctor_id"]
     assert result["appointment_type_id"] == seeded["appointment_type_id"]
     assert result["id"] != original["id"]
@@ -99,7 +99,7 @@ def test_reschedule_moves_appointment_to_new_slot_same_doctor_and_type(client, d
         assert cur.fetchone()[0] == "CANCELLED"
         cur.execute("SELECT status, doctor_id FROM appointments WHERE id = %s", (result["id"],))
         row = cur.fetchone()
-        assert row == ("BOOKED", seeded["doctor_id"])
+        assert row == ("PENDING", seeded["doctor_id"])
 
 
 # ---------------------------------------------------------------------
@@ -148,7 +148,7 @@ def test_reschedule_rejects_appointment_belonging_to_another_patient(client, db_
 
     with db_connection.cursor() as cur:
         cur.execute("SELECT status FROM appointments WHERE id = %s", (original["id"],))
-        assert cur.fetchone()[0] == "BOOKED", "a rejected reschedule attempt must not touch the original"
+        assert cur.fetchone()[0] == "PENDING", "a rejected reschedule attempt must not touch the original"
 
 
 def test_reschedule_rejects_already_cancelled_appointment(client, db_connection):
@@ -201,7 +201,7 @@ def test_reschedule_rejects_time_outside_doctor_schedule(client, db_connection):
 
     with db_connection.cursor() as cur:
         cur.execute("SELECT status FROM appointments WHERE id = %s", (original["id"],))
-        assert cur.fetchone()[0] == "BOOKED", "a rejected reschedule must preserve the original appointment"
+        assert cur.fetchone()[0] == "PENDING", "a rejected reschedule must preserve the original appointment"
 
 
 def test_reschedule_rejects_doctor_block_conflict(client, db_connection):
@@ -237,7 +237,7 @@ def test_reschedule_rejects_doctor_block_conflict(client, db_connection):
 
     with db_connection.cursor() as cur:
         cur.execute("SELECT status FROM appointments WHERE id = %s", (original["id"],))
-        assert cur.fetchone()[0] == "BOOKED"
+        assert cur.fetchone()[0] == "PENDING"
 
 
 def test_reschedule_rejects_overlapping_slot(client, db_connection):
@@ -252,7 +252,7 @@ def test_reschedule_rejects_overlapping_slot(client, db_connection):
         cur.execute(
             """
             INSERT INTO appointments (doctor_id, patient_id, appointment_type_id, start_at, end_at, status)
-            VALUES (%s, %s, %s, %s, %s, 'BOOKED')
+            VALUES (%s, %s, %s, %s, %s, 'CONFIRMED')
             """,
             (
                 seeded["doctor_id"],
@@ -276,7 +276,7 @@ def test_reschedule_rejects_overlapping_slot(client, db_connection):
 
     with db_connection.cursor() as cur:
         cur.execute("SELECT status FROM appointments WHERE id = %s", (original["id"],))
-        assert cur.fetchone()[0] == "BOOKED", "a rejected reschedule must preserve the original appointment"
+        assert cur.fetchone()[0] == "PENDING", "a rejected reschedule must preserve the original appointment"
 
 
 def test_reschedule_enforces_booking_window_when_requested(client, db_connection):
@@ -407,7 +407,7 @@ def test_rollback_after_exclusion_violation_restores_cursor_usability(db_connect
         cur.execute(
             """
             INSERT INTO appointments (doctor_id, patient_id, appointment_type_id, start_at, end_at, status)
-            VALUES (%s, %s, %s, '2026-10-20T09:00:00+00:00', '2026-10-20T09:30:00+00:00', 'BOOKED')
+            VALUES (%s, %s, %s, '2026-10-20T09:00:00+00:00', '2026-10-20T09:30:00+00:00', 'CONFIRMED')
             """,
             (doctor_id, patient_a, appointment_type_id),
         )
@@ -422,7 +422,7 @@ def test_rollback_after_exclusion_violation_restores_cursor_usability(db_connect
             cur.execute(
                 """
                 INSERT INTO appointments (doctor_id, patient_id, appointment_type_id, start_at, end_at, status)
-                VALUES (%s, %s, %s, '2026-10-20T09:00:00+00:00', '2026-10-20T09:30:00+00:00', 'BOOKED')
+                VALUES (%s, %s, %s, '2026-10-20T09:00:00+00:00', '2026-10-20T09:30:00+00:00', 'CONFIRMED')
                 """,
                 (doctor_id, patient_b, appointment_type_id),
             )

@@ -143,11 +143,11 @@ def test_list_filters_by_doctor_patient_and_status(client, db_connection):
     ).json()
     assert {a["id"] for a in by_status_cancelled} == {created_a["id"]}
 
-    by_status_booked = client.get(
-        "/api/appointments", params={"status": "BOOKED"}, headers=admin_headers
+    by_status_pending = client.get(
+        "/api/appointments", params={"status": "PENDING"}, headers=admin_headers
     ).json()
-    assert created_a["id"] not in {a["id"] for a in by_status_booked}
-    assert created_b["id"] in {a["id"] for a in by_status_booked}
+    assert created_a["id"] not in {a["id"] for a in by_status_pending}
+    assert created_b["id"] in {a["id"] for a in by_status_pending}
 
 
 def test_list_shows_doctor_local_time_not_utc(client, db_connection):

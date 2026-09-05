@@ -46,7 +46,7 @@ def test_booking_confirmation_notification_is_sent(client, db_connection):
     body = notification.json()
     assert body["kind"] == "BOOKING_CONFIRMATION"
     assert "Dr. Notify Booking" in body["message"]
-    assert "confirmed" in body["message"]
+    assert "awaiting confirmation" in body["message"]
     assert "10:00 AM" in body["message"]
 
 

@@ -229,8 +229,8 @@ def create_web_appointment(
                 patient["whatsapp_number"],
                 KIND_BOOKING_CONFIRMATION,
                 (
-                    f"Your appointment with {doctor_name} on {date_label} at "
-                    f"{time_label} has been confirmed."
+                    f"Your appointment request with {doctor_name} on {date_label} at "
+                    f"{time_label} has been received and is awaiting confirmation."
                 ),
             )
 
@@ -260,7 +260,7 @@ def cancel_web_appointment(
             except (svc_exc.AppointmentNotFound, svc_exc.NotAppointmentOwner):
                 raise HTTPException(status_code=404, detail="Appointment not found")
             except svc_exc.AlreadyCancelled:
-                raise HTTPException(status_code=409, detail="Appointment is already cancelled")
+                raise HTTPException(status_code=409, detail="Appointment can no longer be cancelled")
 
             # WEB P8: mock cancellation notification. cancel_appointment_
             # service's own return doesn't carry display fields (doctor
