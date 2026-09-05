@@ -8,8 +8,8 @@ Flow, per the product spec:
 
 request_otp() issues a 6-digit code, rate-limited per mobile number. It
 always writes the code to mock_sms_outbox (see the note below), and
-additionally sends a real SMS via Twilio when configured -- see
-app/services/sms_provider.py. With no Twilio credentials set, only the
+additionally sends a real SMS via Authkey.io when configured -- see
+app/services/sms_provider.py. With no Authkey credentials set, only the
 mock delivery happens, same as before.
 
 verify_otp() checks the code, then branches:
@@ -54,8 +54,10 @@ isn't built as a general notification abstraction yet (that's WEB P8).
 
 from datetime import datetime, timedelta, timezone
 import hashlib
+import logging
 import secrets
 
+from app import config
 from app.services.exceptions import (
     OtpRateLimited,
     OtpNotFound,
@@ -68,6 +70,8 @@ from app.services.exceptions import (
 )
 from app.services.notifications import KIND_OTP, send_mock_notification
 from app.services.sms_provider import send_otp_sms
+
+logger = logging.getLogger(__name__)
 
 OTP_TTL_MINUTES = 5
 OTP_MAX_VERIFY_ATTEMPTS = 5
@@ -136,7 +140,7 @@ def request_otp(cur, whatsapp_number: str) -> None:
     send_mock_notification(
         cur, whatsapp_number, KIND_OTP, message_body, otp_code=code
     )
-    send_otp_sms(whatsapp_number, message_body)
+    send_otp_sms(whatsapp_number, code)
 
 
 def verify_otp(cur, whatsapp_number: str, code: str, name: str | None = None):
@@ -149,6 +153,15 @@ def verify_otp(cur, whatsapp_number: str, code: str, name: str | None = None):
     OtpLocked / OtpInvalid on a bad code, or RegistrationRequired if the
     code is correct but no patient exists yet and no name was supplied
     (the OTP row is left unconsumed in that case).
+
+    If config.TEST_STATIC_OTP is set (never in production, see
+    app/config.py), that fixed code is also accepted in place of the
+    real per-number code below -- lets someone testing over a tunnel/
+    public URL log in with a code you've told them out of band, without
+    real SMS delivery configured. A request_otp() call still has to have
+    happened first (there must be a pending, unexpired, unconsumed row)
+    -- this only widens *which* code is accepted, not whether one is
+    required.
     """
     cur.execute(
         """
@@ -177,7 +190,20 @@ def verify_otp(cur, whatsapp_number: str, code: str, name: str | None = None):
     if attempt_count >= OTP_MAX_VERIFY_ATTEMPTS:
         raise OtpLocked()
 
-    if _hash_code(code) != code_hash:
+    # Belt-and-suspenders: config.TEST_STATIC_OTP is already forced empty
+    # whenever ENVIRONMENT=production at load time (app/config.py), but
+    # this bypass is sensitive enough to also re-check ENVIRONMENT here
+    # directly, the same defense-in-depth app/api/patient_auth.py's
+    # _dev_lookup endpoint uses for the same reason.
+    is_static_test_code = (
+        config.ENVIRONMENT != "production"
+        and bool(config.TEST_STATIC_OTP)
+        and code == config.TEST_STATIC_OTP
+    )
+
+    if is_static_test_code:
+        logger.info("Patient OTP verified via TEST_STATIC_OTP bypass (non-production only)")
+    elif _hash_code(code) != code_hash:
         cur.execute(
             "UPDATE patient_otp_codes SET attempt_count = attempt_count + 1 WHERE id = %s",
             (otp_id,),

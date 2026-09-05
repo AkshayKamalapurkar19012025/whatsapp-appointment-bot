@@ -240,6 +240,57 @@ def test_me_and_logout_with_valid_session(client):
     assert me_after_logout.status_code == 401
 
 
+def test_static_test_otp_logs_in_any_patient(client, monkeypatch):
+    number = "+919820000011"
+    client.post("/api/auth/patient/otp/request", json={"whatsapp_number": number})
+
+    monkeypatch.setattr(config, "TEST_STATIC_OTP", "424242")
+    try:
+        response = client.post(
+            "/api/auth/patient/otp/verify",
+            json={"whatsapp_number": number, "otp": "424242", "name": "Static OTP Tester"},
+        )
+    finally:
+        monkeypatch.undo()
+
+    assert response.status_code == 200
+    assert response.json()["patient"]["name"] == "Static OTP Tester"
+
+
+def test_static_test_otp_still_requires_a_pending_request(client, monkeypatch):
+    number = "+919820000012"
+
+    monkeypatch.setattr(config, "TEST_STATIC_OTP", "424242")
+    try:
+        response = client.post(
+            "/api/auth/patient/otp/verify",
+            json={"whatsapp_number": number, "otp": "424242", "name": "Whoever"},
+        )
+    finally:
+        monkeypatch.undo()
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "No OTP was requested for this number"
+
+
+def test_static_test_otp_disabled_in_production(client, monkeypatch):
+    number = "+919820000013"
+    client.post("/api/auth/patient/otp/request", json={"whatsapp_number": number})
+
+    monkeypatch.setattr(config, "TEST_STATIC_OTP", "424242")
+    monkeypatch.setattr(config, "ENVIRONMENT", "production")
+    try:
+        response = client.post(
+            "/api/auth/patient/otp/verify",
+            json={"whatsapp_number": number, "otp": "424242", "name": "Whoever"},
+        )
+    finally:
+        monkeypatch.undo()
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid OTP"
+
+
 def test_dev_lookup_disabled_in_production(client, monkeypatch):
     number = "+919820000010"
     client.post("/api/auth/patient/otp/request", json={"whatsapp_number": number})
