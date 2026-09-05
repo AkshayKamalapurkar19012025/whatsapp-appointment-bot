@@ -478,6 +478,18 @@ a.link.danger {
   color: var(--color-danger);
 }
 
+/* Groups a step's "Back" link with a "Main Menu" escape hatch (jumps
+   straight to the mode-choice screen via startOver(), instead of
+   clicking Back repeatedly through every prior step). Both children are
+   already .link buttons with their own margin-top, so this only needs
+   to lay them out side by side with breathing room between them. */
+.step-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
 .error {
   color: var(--color-danger);
   background: var(--color-danger-soft);

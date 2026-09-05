@@ -280,9 +280,14 @@ export default function BookingFlow({
               </li>
             ))}
           </ul>
-          <button type="button" className="link" onClick={() => setStep('mode')}>
-            Back
-          </button>
+          <div className="step-actions">
+            <button type="button" className="link" onClick={() => setStep('mode')}>
+              Back
+            </button>
+            <button type="button" className="link" onClick={startOver}>
+              Main Menu
+            </button>
+          </div>
         </>
       )}
 
@@ -298,9 +303,14 @@ export default function BookingFlow({
               </li>
             ))}
           </ul>
-          <button type="button" className="link" onClick={() => setStep('department')}>
-            Back
-          </button>
+          <div className="step-actions">
+            <button type="button" className="link" onClick={() => setStep('department')}>
+              Back
+            </button>
+            <button type="button" className="link" onClick={startOver}>
+              Main Menu
+            </button>
+          </div>
         </>
       )}
 
@@ -319,13 +329,18 @@ export default function BookingFlow({
               </li>
             ))}
           </ul>
-          <button
-            type="button"
-            className="link"
-            onClick={() => setStep(mode === 'date-first' ? 'department' : 'doctor')}
-          >
-            Back
-          </button>
+          <div className="step-actions">
+            <button
+              type="button"
+              className="link"
+              onClick={() => setStep(mode === 'date-first' ? 'department' : 'doctor')}
+            >
+              Back
+            </button>
+            <button type="button" className="link" onClick={startOver}>
+              Main Menu
+            </button>
+          </div>
         </>
       )}
 
@@ -338,9 +353,14 @@ export default function BookingFlow({
             appointmentTypeId={appointmentType.id}
             onSelectDate={chooseDateFirstDate}
           />
-          <button type="button" className="link" onClick={() => setStep('appointmentType')}>
-            Back
-          </button>
+          <div className="step-actions">
+            <button type="button" className="link" onClick={() => setStep('appointmentType')}>
+              Back
+            </button>
+            <button type="button" className="link" onClick={startOver}>
+              Main Menu
+            </button>
+          </div>
         </>
       )}
 
@@ -353,9 +373,14 @@ export default function BookingFlow({
             departmentId={department?.id}
             onSelectDate={chooseDate}
           />
-          <button type="button" className="link" onClick={() => setStep('appointmentType')}>
-            Back
-          </button>
+          <div className="step-actions">
+            <button type="button" className="link" onClick={() => setStep('appointmentType')}>
+              Back
+            </button>
+            <button type="button" className="link" onClick={startOver}>
+              Main Menu
+            </button>
+          </div>
         </>
       )}
 
@@ -380,9 +405,14 @@ export default function BookingFlow({
               ))}
             </ul>
           )}
-          <button type="button" className="link" onClick={() => setStep('date')}>
-            Back
-          </button>
+          <div className="step-actions">
+            <button type="button" className="link" onClick={() => setStep('date')}>
+              Back
+            </button>
+            <button type="button" className="link" onClick={startOver}>
+              Main Menu
+            </button>
+          </div>
         </>
       )}
 
@@ -390,9 +420,14 @@ export default function BookingFlow({
         <>
           <h2>Choose a time on {formatDate(selectedDate)}</h2>
           <SlotGrid slots={slots} onSelect={chooseSlot} />
-          <button type="button" className="link" onClick={backFromSlot}>
-            Back
-          </button>
+          <div className="step-actions">
+            <button type="button" className="link" onClick={backFromSlot}>
+              Back
+            </button>
+            <button type="button" className="link" onClick={startOver}>
+              Main Menu
+            </button>
+          </div>
         </>
       )}
 
@@ -418,9 +453,14 @@ export default function BookingFlow({
           <button type="button" onClick={confirmBooking} disabled={busy}>
             {busy ? 'Booking…' : 'Confirm booking'}
           </button>
-          <button type="button" className="link" onClick={() => setStep('slot')}>
-            Back
-          </button>
+          <div className="step-actions">
+            <button type="button" className="link" onClick={() => setStep('slot')}>
+              Back
+            </button>
+            <button type="button" className="link" onClick={startOver}>
+              Main Menu
+            </button>
+          </div>
         </>
       )}
 
