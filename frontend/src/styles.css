@@ -1608,6 +1608,51 @@ a.link.danger {
 
 .confirmation .state-icon {
   opacity: 1;
+  margin-bottom: var(--space-3);
+}
+
+.confirmation .summary {
+  margin-bottom: var(--space-4);
+}
+
+/* The "SMS sent" line -- was plain floating .muted text, easy to miss
+   and indistinguishable from any other secondary copy on the page.
+   Styled as a small success-toned notice (same success colour as the
+   confirmation checkmark above it) so it reads as part of the
+   confirmation itself, not an afterthought. */
+.confirmation-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-success-soft);
+  border-radius: var(--radius-md);
+  color: var(--color-success);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.confirmation-notice svg {
+  flex-shrink: 0;
+}
+
+/* Book another appointment (primary, full-width via .btn) stacked
+   above View my appointments (secondary, a plain text link) with
+   deliberate spacing between them -- previously two bare <button>s
+   with no wrapping container, one of them missing its .btn styling
+   entirely (a plain button one level too deep for the existing ".card
+   > button" selector to reach), which is why they rendered as
+   unstyled, touching text instead of two distinct actions. */
+.confirmation-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.confirmation-actions .link {
+  margin-top: 0;
 }
 
 /* ===========================================================

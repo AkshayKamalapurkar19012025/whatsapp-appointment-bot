@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { CheckCircle } from '@phosphor-icons/react'
+import { CheckCircle, ChatCircleText } from '@phosphor-icons/react'
 import {
   ApiError,
   createWebAppointment,
@@ -504,15 +504,18 @@ export default function BookingFlow({
             <dt>Duration</dt>
             <dd>{confirmed.duration_minutes} minutes</dd>
           </dl>
-          <p className="muted">
+          <p className="confirmation-notice">
+            <ChatCircleText size={18} weight="fill" aria-hidden="true" />
             A confirmation SMS has been sent to your registered number.
           </p>
-          <button type="button" onClick={startOver}>
-            Book another appointment
-          </button>
-          <button type="button" className="link" onClick={onViewAppointments}>
-            View my appointments
-          </button>
+          <div className="confirmation-actions">
+            <button type="button" className="btn" onClick={startOver}>
+              Book another appointment
+            </button>
+            <button type="button" className="link" onClick={onViewAppointments}>
+              View my appointments
+            </button>
+          </div>
         </div>
       )}
 
