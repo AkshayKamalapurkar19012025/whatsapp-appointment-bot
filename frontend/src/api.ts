@@ -360,6 +360,14 @@ export function createDepartment(name: string): Promise<Department> {
   return request('/departments', { method: 'POST', auth: 'staff', body: { name } })
 }
 
+export function updateDepartment(departmentId: number, name: string): Promise<Department> {
+  return request(`/departments/${departmentId}`, { method: 'PUT', auth: 'staff', body: { name } })
+}
+
+export function deleteDepartment(departmentId: number): Promise<{ id: number; message: string }> {
+  return request(`/departments/${departmentId}`, { method: 'DELETE', auth: 'staff' })
+}
+
 export function listAllDoctors(): Promise<Doctor[]> {
   return request('/doctors')
 }
@@ -530,6 +538,21 @@ export function listAppointmentTypeCatalog(): Promise<AppointmentTypeSummary[]> 
 
 export function createAppointmentType(name: string): Promise<AppointmentTypeSummary> {
   return request('/appointment-types', { method: 'POST', auth: 'staff', body: { name } })
+}
+
+export function updateAppointmentType(
+  appointmentTypeId: number,
+  name: string,
+): Promise<AppointmentTypeSummary> {
+  return request(`/appointment-types/${appointmentTypeId}`, {
+    method: 'PUT',
+    auth: 'staff',
+    body: { name },
+  })
+}
+
+export function deleteAppointmentType(appointmentTypeId: number): Promise<{ id: number; message: string }> {
+  return request(`/appointment-types/${appointmentTypeId}`, { method: 'DELETE', auth: 'staff' })
 }
 
 export function assignAppointmentTypeToDoctor(

@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Tag } from '@phosphor-icons/react'
-import { ApiError, createAppointmentType, listAppointmentTypeCatalog } from '../api'
+import { Tag, PencilSimple, Trash, X, Check } from '@phosphor-icons/react'
+import {
+  ApiError,
+  createAppointmentType,
+  deleteAppointmentType,
+  listAppointmentTypeCatalog,
+  updateAppointmentType,
+} from '../api'
 import type { AppointmentTypeSummary } from '../types'
 import { useStaggerReveal } from '../useStaggerReveal'
 
@@ -10,6 +16,9 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editingName, setEditingName] = useState('')
+  const [deletingId, setDeletingId] = useState<number | null>(null)
   const gridRef = useStaggerReveal<HTMLDivElement>([types])
 
   function load() {
@@ -36,6 +45,52 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
       setError(err instanceof ApiError ? err.message : 'Could not create appointment type')
     } finally {
       setBusy(false)
+    }
+  }
+
+  function startEdit(t: AppointmentTypeSummary) {
+    setError(null)
+    setEditingId(t.id)
+    setEditingName(t.name)
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+    setEditingName('')
+  }
+
+  async function handleRename(e: React.FormEvent, appointmentTypeId: number) {
+    e.preventDefault()
+    setError(null)
+    setBusy(true)
+    try {
+      await updateAppointmentType(appointmentTypeId, editingName)
+      cancelEdit()
+      load()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not update appointment type')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleDelete(t: AppointmentTypeSummary) {
+    if (
+      !window.confirm(
+        `Remove "${t.name}"? Doctors offering it keep their appointment history, but it will no longer appear for booking.`,
+      )
+    ) {
+      return
+    }
+    setError(null)
+    setDeletingId(t.id)
+    try {
+      await deleteAppointmentType(t.id)
+      load()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not remove appointment type')
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -84,11 +139,46 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
 
       {!loading && types.length > 0 && (
         <div className="card-grid" ref={gridRef}>
-          {types.map((t) => (
-            <div key={t.id} className="card-grid-item">
-              {t.name}
-            </div>
-          ))}
+          {types.map((t) =>
+            editingId === t.id ? (
+              <form key={t.id} className="card-grid-item editing" onSubmit={(e) => handleRename(e, t.id)}>
+                <input
+                  autoFocus
+                  value={editingName}
+                  onChange={(e) => setEditingName(e.target.value)}
+                  required
+                />
+                <span className="card-grid-item-actions">
+                  <button type="submit" className="icon-btn" disabled={busy} aria-label="Save">
+                    <Check size={16} />
+                  </button>
+                  <button type="button" className="icon-btn" onClick={cancelEdit} aria-label="Cancel">
+                    <X size={16} />
+                  </button>
+                </span>
+              </form>
+            ) : (
+              <div key={t.id} className="card-grid-item">
+                <span>{t.name}</span>
+                {isAdmin && (
+                  <span className="card-grid-item-actions">
+                    <button type="button" className="icon-btn" onClick={() => startEdit(t)} aria-label={`Edit ${t.name}`}>
+                      <PencilSimple size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-btn danger"
+                      onClick={() => handleDelete(t)}
+                      disabled={deletingId === t.id}
+                      aria-label={`Remove ${t.name}`}
+                    >
+                      <Trash size={16} />
+                    </button>
+                  </span>
+                )}
+              </div>
+            ),
+          )}
         </div>
       )}
     </section>
