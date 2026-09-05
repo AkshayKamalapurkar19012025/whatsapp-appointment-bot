@@ -10,6 +10,7 @@ import type {
   Department,
   Doctor,
   DoctorBlockEntry,
+  DoctorQueue,
   DoctorScheduleEntry,
   MyAppointmentsResponse,
   Patient,
@@ -315,6 +316,10 @@ export function getDoctorDepartments(doctorId: number): Promise<Department[]> {
   return request(`/doctors/${doctorId}/departments`)
 }
 
+export function getDoctorQueue(doctorId: number): Promise<DoctorQueue> {
+  return request(`/doctors/${doctorId}/queue`, { auth: 'staff' })
+}
+
 export function assignDoctorToDepartment(
   doctorId: number,
   departmentId: number,
@@ -522,7 +527,7 @@ export function rejectAdminAppointment(
 
 export function visitAdminAppointment(
   appointmentId: number,
-): Promise<{ id: number; status: string }> {
+): Promise<{ id: number; status: string; token_number: number; visited_at: string }> {
   return request(`/appointments/${appointmentId}/visit`, { method: 'POST', auth: 'staff' })
 }
 

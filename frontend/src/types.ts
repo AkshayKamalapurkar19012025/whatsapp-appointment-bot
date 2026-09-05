@@ -71,6 +71,8 @@ export interface MyAppointment {
   start_at: string
   end_at: string
   status: string
+  // Assigned at check-in (status -> VISITED); null until then.
+  token_number: number | null
 }
 
 export interface MyAppointmentsResponse {
@@ -147,6 +149,8 @@ export interface AdminAppointment {
   start_at: string
   end_at: string
   status: string
+  // Assigned at check-in (status -> VISITED); null until then.
+  token_number: number | null
 }
 
 export interface AdminAppointmentActionResult {
@@ -183,4 +187,22 @@ export interface DashboardTrendPoint {
 export interface DashboardTrends {
   appointments: DashboardTrendPoint[]
   patients: DashboardTrendPoint[]
+}
+
+// GET /api/doctors/{id}/queue -- today's walk-in queue (migrations/0012).
+export interface QueueEntry {
+  appointment_id: number
+  token_number: number
+  visited_at: string
+  patient_id: number
+  patient_name: string
+}
+
+export interface DoctorQueue {
+  doctor_id: number
+  doctor_name: string
+  date: string
+  now_serving: QueueEntry | null
+  waiting: QueueEntry[]
+  completed: QueueEntry[]
 }

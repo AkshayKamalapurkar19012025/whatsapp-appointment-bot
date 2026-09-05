@@ -40,8 +40,9 @@ both defaulting to today's exact behavior:
   genuinely closed before patient identity exists.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import logging
+from zoneinfo import ZoneInfo
 
 import psycopg
 
@@ -757,7 +758,8 @@ def list_patient_appointments_service(cur, patient_id: int):
             at.name,
             a.start_at,
             a.end_at,
-            a.status
+            a.status,
+            a.token_number
         FROM appointments a
         JOIN doctors d
             ON d.id = a.doctor_id
@@ -788,6 +790,7 @@ def list_patient_appointments_service(cur, patient_id: int):
             "start_at": convert_to_timezone(row[6], doctor_tz).isoformat(),
             "end_at": convert_to_timezone(row[7], doctor_tz).isoformat(),
             "status": row[8],
+            "token_number": row[9],
         }
 
         if row[8] in RELEASED_STATUSES:
@@ -868,10 +871,88 @@ def reject_appointment_service(cur, appointment_id: int):
 
 
 def mark_visited_service(cur, appointment_id: int):
-    """Staff checks a Confirmed patient in on arrival."""
-    return _transition_appointment_status(
-        cur, appointment_id, from_statuses=("CONFIRMED",), to_status="VISITED"
+    """
+    Staff checks a Confirmed patient in on arrival -- this is also the
+    moment they're issued a queue token number (migrations/0012_
+    appointment_queue_tokens.sql), so this doesn't reuse
+    _transition_appointment_status above the way the other three
+    transitions do.
+
+    Tokens are scoped per doctor, per doctor-local calendar day (a
+    walk-in queue is a per-doctor, per-day thing -- see the "Token
+    scope" product decision this implements), and assigned in
+    check-in order: the next integer after the highest token_number
+    already issued to this doctor today. Concurrent check-ins for the
+    same doctor are serialized with pg_advisory_xact_lock, the same
+    primitive create_appointment_service uses to serialize bookings --
+    a second lock key (the day's epoch-day number) scopes it to "this
+    doctor, today" specifically, so it can't collide with that other
+    lock's (doctor_id) key space or with a different day's queue.
+    """
+    cur.execute(
+        """
+        SELECT a.status, a.doctor_id, d.timezone
+        FROM appointments a
+        JOIN doctors d ON d.id = a.doctor_id
+        WHERE a.id = %s
+        FOR UPDATE OF a
+        """,
+        (appointment_id,),
     )
+
+    row = cur.fetchone()
+
+    if row is None:
+        raise AppointmentNotFound()
+
+    status, doctor_id, doctor_tz = row
+
+    if status != "CONFIRMED":
+        raise InvalidStatusTransition()
+
+    if not validate_timezone(doctor_tz):
+        doctor_tz = "Asia/Kolkata"
+
+    today = datetime.now(ZoneInfo(doctor_tz)).date()
+    day_epoch = (today - date(1970, 1, 1)).days
+
+    cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", (doctor_id, day_epoch))
+
+    cur.execute(
+        """
+        SELECT COALESCE(MAX(token_number), 0) + 1
+        FROM appointments
+        WHERE doctor_id = %s
+          AND visited_at IS NOT NULL
+          AND (visited_at AT TIME ZONE %s)::date = %s
+        """,
+        (doctor_id, doctor_tz, today),
+    )
+    (next_token,) = cur.fetchone()
+
+    cur.execute(
+        """
+        UPDATE appointments
+        SET status = 'VISITED',
+            visited_at = NOW(),
+            token_number = %s,
+            updated_at = NOW()
+        WHERE id = %s
+        RETURNING id, status, token_number, visited_at, doctor_id, patient_id
+        """,
+        (next_token, appointment_id),
+    )
+
+    result_row = cur.fetchone()
+
+    return {
+        "id": result_row[0],
+        "status": result_row[1],
+        "token_number": result_row[2],
+        "visited_at": result_row[3].isoformat(),
+        "doctor_id": result_row[4],
+        "patient_id": result_row[5],
+    }
 
 
 def mark_completed_service(cur, appointment_id: int):

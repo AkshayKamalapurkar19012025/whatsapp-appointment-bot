@@ -41,6 +41,7 @@ from app.services.appointment_services import (
     mark_completed_service,
 )
 from app.services.availability_engine import list_available_dates_in_range
+from app.services.notifications import KIND_CHECK_IN, send_mock_notification
 from app.utils.timezone import convert_to_timezone, validate_timezone
 
 logger = logging.getLogger(__name__)
@@ -133,7 +134,8 @@ def get_appointments(
                     at.name,
                     a.start_at,
                     a.end_at,
-                    a.status
+                    a.status,
+                    a.token_number
                 FROM appointments a
                 JOIN doctors d
                     ON d.id = a.doctor_id
@@ -175,6 +177,7 @@ def get_appointments(
                 "start_at": local_start_at.isoformat(),
                 "end_at": convert_to_timezone(row[10], doctor_tz).isoformat(),
                 "status": row[11],
+                "token_number": row[12],
             }
         )
 
@@ -455,7 +458,38 @@ def visit_appointment(
                     detail="Only a Confirmed appointment can be marked Visited",
                 )
 
-    return result
+            # Staff-initiated check-in notification (migrations/0012) --
+            # tells the patient their queue token number. Not a
+            # duplicate of anything: unlike a WhatsApp-driven action,
+            # the patient isn't mid-chat with the bot when staff check
+            # them in at the front desk, so there's no live confirmation
+            # this would repeat (see notifications.py's KIND_CHECK_IN
+            # note).
+            cur.execute(
+                """
+                SELECT p.whatsapp_number, p.name, d.name
+                FROM patients p, doctors d
+                WHERE p.id = %s AND d.id = %s
+                """,
+                (result["patient_id"], result["doctor_id"]),
+            )
+            patient_number, patient_name, doctor_name = cur.fetchone()
+            send_mock_notification(
+                cur,
+                patient_number,
+                KIND_CHECK_IN,
+                (
+                    f"Hi {patient_name}, you're checked in with {doctor_name}. "
+                    f"Your token number is {result['token_number']}."
+                ),
+            )
+
+    return {
+        "id": result["id"],
+        "status": result["status"],
+        "token_number": result["token_number"],
+        "visited_at": result["visited_at"],
+    }
 
 
 @router.post("/{appointment_id}/complete")

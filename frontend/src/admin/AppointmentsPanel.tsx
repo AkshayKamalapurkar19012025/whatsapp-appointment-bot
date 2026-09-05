@@ -372,6 +372,7 @@ export default function AppointmentsPanel({
                   </td>
                   <td>
                     <span className={`pill status-${a.status.toLowerCase()}`}>{a.status}</span>
+                    {a.token_number !== null && <span className="pill token-pill">Token #{a.token_number}</span>}
                   </td>
                   <td>
                     <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
