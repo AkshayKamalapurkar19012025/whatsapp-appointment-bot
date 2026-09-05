@@ -72,7 +72,8 @@ def test_simultaneous_whatsapp_bookings_same_slot(client, db_connection):
     register_patient(client, number_b, "Racer B")
 
     for number in (number_a, number_b):
-        send_booking(client, number, "1")  # book
+        send_booking(client, number, "1")  # book -> SELECT_BOOKING_MODE
+        send_booking(client, number, "1")  # Choose a Doctor
         send_booking(client, number, "1")  # department
         send_booking(client, number, "1")  # doctor
         send_booking(client, number, "1")  # appointment type
@@ -221,7 +222,8 @@ def test_cross_path_concurrent_booking(client, db_connection):
         # Drive the WhatsApp path to CONFIRM_BOOKING, and read back the
         # exact slot it will book, so the REST call can target the
         # identical doctor_id/start_at.
-        send_booking(client, whatsapp_number, "1")  # book
+        send_booking(client, whatsapp_number, "1")  # book -> SELECT_BOOKING_MODE
+        send_booking(client, whatsapp_number, "1")  # Choose a Doctor
         send_booking(client, whatsapp_number, "1")  # department
         send_booking(client, whatsapp_number, "1")  # doctor
         send_booking(client, whatsapp_number, "1")  # appointment type
@@ -332,7 +334,8 @@ def test_concurrent_reschedule_vs_fresh_booking_same_target_slot(client, db_conn
     # which use date_option="5" for the same reason).
     number_a = "+919660000001"
     register_patient(client, number_a, "Reschedule Racer A")
-    send_booking(client, number_a, "1")  # book
+    send_booking(client, number_a, "1")  # book -> SELECT_BOOKING_MODE
+    send_booking(client, number_a, "1")  # Choose a Doctor
     send_booking(client, number_a, "1")  # department
     send_booking(client, number_a, "1")  # doctor
     send_booking(client, number_a, "1")  # appointment type

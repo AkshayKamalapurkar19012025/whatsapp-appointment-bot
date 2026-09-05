@@ -376,6 +376,169 @@ def is_within_booking_window(candidate: date, today: date | None = None) -> bool
     return window_start <= candidate <= window_end
 
 
+def get_doctors_offering_appointment_type(
+    cur,
+    department_id: int,
+    appointment_type_id: int,
+):
+    """
+    Doctors who are BOTH assigned to this department AND actively offer
+    this appointment type (with their own doctor-specific duration) --
+    the candidate set for Date-First aggregation. A doctor in the
+    department who does not offer this type is correctly excluded here,
+    not just later when their slot count happens to be zero.
+    """
+    cur.execute(
+        """
+        SELECT DISTINCT
+            d.id,
+            d.name
+        FROM doctor_departments dd
+        JOIN doctors d
+            ON d.id = dd.doctor_id
+        JOIN doctor_appointment_types dat
+            ON dat.doctor_id = d.id
+           AND dat.appointment_type_id = %s
+           AND dat.active = TRUE
+        WHERE dd.department_id = %s
+          AND d.active = TRUE
+        ORDER BY d.name
+        """,
+        (appointment_type_id, department_id),
+    )
+
+    return [{"id": row[0], "name": row[1]} for row in cur.fetchall()]
+
+
+def get_appointment_types_for_department(cur, department_id: int):
+    """
+    Every appointment type offered by at least one active doctor in this
+    department -- the Date-First flow's "Appointment Type" step needs
+    this before any doctor is chosen, unlike the existing per-doctor
+    get_appointment_types_for_doctor()/get_doctor_appointment_types()
+    (app/api/booking.py / app/api/doctor_appointment_types.py), which
+    both require a doctor_id up front. Duration is deliberately not
+    returned here -- it is per doctor+type (doctor_appointment_types.
+    duration_minutes), so it is only meaningful once a specific doctor
+    is known, same as the Doctor-First flow already assumes.
+    """
+    cur.execute(
+        """
+        SELECT DISTINCT
+            at.id,
+            at.name
+        FROM doctor_departments dd
+        JOIN doctor_appointment_types dat
+            ON dat.doctor_id = dd.doctor_id
+           AND dat.active = TRUE
+        JOIN appointment_types at
+            ON at.id = dat.appointment_type_id
+           AND at.active = TRUE
+        JOIN doctors d
+            ON d.id = dd.doctor_id
+           AND d.active = TRUE
+        WHERE dd.department_id = %s
+        ORDER BY at.name
+        """,
+        (department_id,),
+    )
+
+    # active is always True here (the query above already requires it),
+    # included so this matches the frontend's existing
+    # AppointmentTypeSummary shape (app/api/appointment_types.py's own
+    # catalog listing) rather than needing a third, near-identical type.
+    return [{"id": row[0], "name": row[1], "active": True} for row in cur.fetchall()]
+
+
+def list_available_dates_for_department(
+    cur,
+    department_id: int,
+    appointment_type_id: int,
+    start_date: date,
+    end_date: date,
+):
+    """
+    Date-First's aggregate month calendar: for every date in range,
+    whether ANY doctor in the department who offers this appointment
+    type has at least one real, bookable slot -- not merely whether a
+    doctor is scheduled to work that day (a day fully consumed by
+    existing appointments/blocks is correctly reported unavailable,
+    since this loops the exact same get_available_slots() a single-
+    doctor calendar uses, per doctor, and ORs the per-day booleans).
+
+    A simple loop across doctors is intentional here, not a missing
+    optimization -- see this module's callers for why (small clinic,
+    correctness over premature optimization).
+    """
+    doctors = get_doctors_offering_appointment_type(
+        cur, department_id, appointment_type_id
+    )
+
+    result = {}
+    current = start_date
+    while current <= end_date:
+        result[current.isoformat()] = False
+        current += timedelta(days=1)
+
+    for doctor in doctors:
+        per_doctor = list_available_dates_in_range(
+            cur,
+            doctor["id"],
+            appointment_type_id,
+            start_date,
+            end_date,
+            department_id=department_id,
+        )
+        for iso_date, is_available in per_doctor.items():
+            if is_available:
+                result[iso_date] = True
+
+    return result
+
+
+def list_doctors_with_slots_for_date(
+    cur,
+    department_id: int,
+    appointment_type_id: int,
+    selected_date: date,
+):
+    """
+    Date-First's per-date doctor list: every doctor in the department
+    offering this appointment type who has at least one real slot on
+    this date, each with their actual slots -- a doctor with zero valid
+    slots for this date/type is omitted entirely (never returned with an
+    empty slots list), so callers never need to filter again.
+
+    Returns [{"id", "name", "slots": [...]}, ...], ordered by doctor
+    name. Each doctor's slots are exactly what get_available_slots()
+    already returns for that doctor -- no new slot-shape or duration
+    logic here.
+    """
+    doctors = get_doctors_offering_appointment_type(
+        cur, department_id, appointment_type_id
+    )
+
+    results = []
+    for doctor in doctors:
+        slots = get_available_slots(
+            cur,
+            doctor["id"],
+            appointment_type_id,
+            selected_date,
+            department_id=department_id,
+        )
+        if slots:
+            results.append(
+                {
+                    "id": doctor["id"],
+                    "name": doctor["name"],
+                    "slots": slots,
+                }
+            )
+
+    return results
+
+
 def list_available_dates_in_range(
     cur,
     doctor_id: int,

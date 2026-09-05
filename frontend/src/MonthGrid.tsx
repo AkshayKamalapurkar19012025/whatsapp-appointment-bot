@@ -112,6 +112,14 @@ export default function MonthGrid({
         </div>
       )}
 
+      {dates && !loading && showLegend && Object.values(dates).length > 0 && (
+        Object.values(dates).every((available) => !available) && (
+          <p className="calendar-empty-state">
+            No available dates this month. Try another month.
+          </p>
+        )
+      )}
+
       {showLegend && (
         <p className="calendar-legend">
           <span className="legend-swatch unavailable" /> Unavailable

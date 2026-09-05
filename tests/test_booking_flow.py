@@ -193,7 +193,8 @@ def test_back_navigation_returns_to_previous_step(client, db_connection):
     number = "+919000000107"
     register_patient(client, number, "Back Nav Patient")
 
-    send(client, number, "1")  # book
+    send(client, number, "1")  # book -> SELECT_BOOKING_MODE
+    send(client, number, "1")  # Choose a Doctor
     send(client, number, "1")  # department
     at_doctor_type = send(client, number, "1")  # doctor -> SELECT_APPOINTMENT_TYPE
     assert at_doctor_type["next_step"] == "SELECT_APPOINTMENT_TYPE"
@@ -203,6 +204,9 @@ def test_back_navigation_returns_to_previous_step(client, db_connection):
 
     back_twice = send(client, number, "back")
     assert back_twice["next_step"] == "SELECT_DEPARTMENT"
+
+    back_thrice = send(client, number, "back")
+    assert back_thrice["next_step"] == "SELECT_BOOKING_MODE"
 
 
 def test_restart_returns_to_main_menu(client, db_connection):
@@ -232,7 +236,8 @@ def test_invalid_department_selection_reprompts(client, db_connection):
     number = "+919000000110"
     register_patient(client, number, "Invalid Dept Patient")
 
-    send(client, number, "1")  # book -> SELECT_DEPARTMENT
+    send(client, number, "1")  # book -> SELECT_BOOKING_MODE
+    send(client, number, "1")  # Choose a Doctor -> SELECT_DEPARTMENT
     response = send(client, number, "not-a-number")
     assert response["next_step"] == "SELECT_DEPARTMENT"
     assert "error" in response

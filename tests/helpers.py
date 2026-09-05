@@ -135,6 +135,66 @@ def seed_basic_doctor(
     }
 
 
+def add_doctor_to_department(
+    client: TestClient,
+    db_connection: psycopg.Connection,
+    *,
+    department_id: int,
+    appointment_type_id: int,
+    doctor_name: str,
+    timezone: str = "Asia/Kolkata",
+    duration_minutes: int = 30,
+    schedule_days=(1, 2, 3, 4, 5),
+    start_time: str = "09:00",
+    end_time: str = "17:00",
+) -> int:
+    """
+    Add a second (or third...) doctor to an already-seeded department,
+    offering an already-seeded appointment type -- unlike
+    seed_basic_doctor(), which always creates a brand new department +
+    appointment type. For Date-First tests, which need multiple doctors
+    sharing the same department/appointment type (the whole point of
+    aggregation) rather than one doctor per test. Returns the new
+    doctor's id.
+    """
+    admin_headers = create_admin_and_get_headers(db_connection)
+
+    doctor = client.post(
+        "/api/doctors", json={"name": doctor_name}, headers=admin_headers
+    ).json()
+
+    if timezone != "Asia/Kolkata":
+        with db_connection.cursor() as cur:
+            cur.execute(
+                "UPDATE doctors SET timezone = %s WHERE id = %s",
+                (timezone, doctor["id"]),
+            )
+        db_connection.commit()
+
+    client.post(
+        f"/api/doctors/{doctor['id']}/departments/{department_id}", headers=admin_headers
+    )
+
+    client.post(
+        f"/api/doctors/{doctor['id']}/appointment-types/{appointment_type_id}",
+        json={"duration_minutes": duration_minutes},
+        headers=admin_headers,
+    )
+
+    for day in schedule_days:
+        client.post(
+            f"/api/doctors/{doctor['id']}/schedule",
+            json={
+                "day_of_week": day,
+                "start_time": start_time,
+                "end_time": end_time,
+            },
+            headers=admin_headers,
+        )
+
+    return doctor["id"]
+
+
 def register_patient(client: TestClient, whatsapp_number: str, name: str) -> dict:
     """Drive the WhatsApp registration flow (Hi -> name) and return the
     resulting patient dict."""
@@ -178,7 +238,8 @@ def book_first_available_slot(
         "/api/booking", json={"whatsapp_number": whatsapp_number, "message": m}
     ).json()
 
-    msg("1")  # Book Appointment
+    msg("1")  # Book Appointment -> SELECT_BOOKING_MODE
+    msg("1")  # Choose a Doctor (Doctor-First)
     msg("1")  # department 1
     msg("1")  # doctor 1
     msg("1")  # appointment type 1
