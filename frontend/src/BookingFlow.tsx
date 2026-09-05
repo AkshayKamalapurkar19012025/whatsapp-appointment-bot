@@ -14,6 +14,7 @@ import {
 import type { BookedAppointment, Department, Doctor, DoctorWithSlots, Slot } from './types'
 import Calendar from './Calendar'
 import DepartmentCalendar from './DepartmentCalendar'
+import LiveClock from './LiveClock'
 import SlotGrid from './SlotGrid'
 import { formatDate, formatTime } from './format'
 
@@ -235,6 +236,7 @@ export default function BookingFlow({
       <div className="topbar">
         <span>Hi, {patientName}</span>
         <div>
+          <LiveClock />
           <button type="button" className="link" onClick={onViewAppointments}>
             My appointments
           </button>

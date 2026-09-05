@@ -571,8 +571,18 @@ a.link.danger {
 
 .topbar > div {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
+  row-gap: var(--space-2);
   gap: var(--space-4);
+}
+
+.live-clock {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  white-space: nowrap;
 }
 
 /* ===========================================================
@@ -679,6 +689,14 @@ a.link.danger {
   }
   .appointment-actions button {
     flex: 1;
+  }
+
+  /* At very narrow widths, even the whole controls group (clock + nav
+     links, which already wraps internally -- see .topbar > div above)
+     may not fit next to a long greeting -- let it drop to its own row. */
+  .topbar {
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
   }
 }
 
