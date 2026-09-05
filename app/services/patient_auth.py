@@ -6,8 +6,11 @@ Flow, per the product spec:
     mobile number -> OTP -> existing patient -> login
                           -> new patient      -> registration
 
-request_otp() issues a 6-digit code (mock delivery -- see the
-mock_sms_outbox note below), rate-limited per mobile number.
+request_otp() issues a 6-digit code, rate-limited per mobile number. It
+always writes the code to mock_sms_outbox (see the note below), and
+additionally sends a real SMS via Twilio when configured -- see
+app/services/sms_provider.py. With no Twilio credentials set, only the
+mock delivery happens, same as before.
 
 verify_otp() checks the code, then branches:
   - a patient already exists for this number -> log them in.
@@ -64,6 +67,7 @@ from app.services.exceptions import (
     InvalidSession,
 )
 from app.services.notifications import KIND_OTP, send_mock_notification
+from app.services.sms_provider import send_otp_sms
 
 OTP_TTL_MINUTES = 5
 OTP_MAX_VERIFY_ATTEMPTS = 5
@@ -132,6 +136,7 @@ def request_otp(cur, whatsapp_number: str) -> None:
     send_mock_notification(
         cur, whatsapp_number, KIND_OTP, message_body, otp_code=code
     )
+    send_otp_sms(whatsapp_number, message_body)
 
 
 def verify_otp(cur, whatsapp_number: str, code: str, name: str | None = None):
