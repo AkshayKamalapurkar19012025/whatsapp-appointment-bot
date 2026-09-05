@@ -234,17 +234,17 @@ export default function BookingFlow({
   return (
     <div className="card">
       <div className="topbar">
-        <div className="topbar-greeting">
-          <span>Hi, {patientName}</span>
+        <span>Hi, {patientName}</span>
+        <div className="topbar-right">
           <LiveClock />
-        </div>
-        <div className="topbar-actions">
-          <button type="button" className="link" onClick={onViewAppointments}>
-            My appointments
-          </button>
-          <button type="button" className="link" onClick={handleLogout}>
-            Log out
-          </button>
+          <div className="topbar-actions">
+            <button type="button" className="link" onClick={onViewAppointments}>
+              My appointments
+            </button>
+            <button type="button" className="link" onClick={handleLogout}>
+              Log out
+            </button>
+          </div>
         </div>
       </div>
 

@@ -583,25 +583,23 @@ a.link.danger {
   margin: 0;
 }
 
-/* Left cluster: who you are + what time it is, read together as one
-   line of context (matches the "greeting + live status" header pattern
-   on booking sites like Zocdoc/Practo, rather than mixing the clock in
-   with the account action links on the right). */
-.topbar-greeting {
+/* Right-hand column: current date/time on top, account action links
+   directly below it -- both right-aligned, stacked so neither ever
+   competes with the other for the same row (the earlier version mixed
+   the clock into the same row as the action links, which wrapped
+   unevenly at narrow widths). */
+.topbar-right {
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-  row-gap: var(--space-2);
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+  flex-shrink: 0;
 }
 
-/* Right cluster: account actions only -- exactly two short links, so
-   this never needs to wrap onto a ragged second line. */
 .topbar-actions {
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  flex-shrink: 0;
 }
 
 .live-clock {

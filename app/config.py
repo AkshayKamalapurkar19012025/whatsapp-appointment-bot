@@ -52,6 +52,17 @@ DATABASE_URL = _build_default_database_url()
 DB_POOL_MIN_SIZE = int(os.environ.get("DB_POOL_MIN_SIZE", "1"))
 DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", "10"))
 
+# The clinic's own IANA timezone, used only for display purposes where no
+# specific doctor is in context yet (e.g. the patient site's header clock).
+# Deliberately separate from the per-doctor `doctors.timezone` column and
+# its "Asia/Kolkata" fallback scattered across app/api/booking.py,
+# app/services/appointment_services.py, etc. (see app/utils/timezone.py's
+# get_doctor_timezone) -- this does not change any of that existing
+# booking/availability timezone handling, it only gives the frontend a
+# single, non-hardcoded value to render a clock with before any doctor has
+# been chosen.
+DEFAULT_TIMEZONE = os.environ.get("DEFAULT_TIMEZONE", "Asia/Kolkata")
+
 # Defaults to "development" so local setups and tests work unchanged with
 # nothing set. A real deployment MUST set ENVIRONMENT=production -- this
 # gates dev-only endpoints such as the mock-OTP lookup endpoint

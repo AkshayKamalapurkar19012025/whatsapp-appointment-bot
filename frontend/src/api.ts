@@ -142,6 +142,12 @@ export function logout(): Promise<{ message: string }> {
   return request('/auth/patient/logout', { method: 'POST', auth: true })
 }
 
+// -- App-wide display config ---------------------------------------------
+
+export function getAppConfig(): Promise<{ default_timezone: string }> {
+  return request('/app-config')
+}
+
 // -- Reference data (departments/doctors/appointment types) --------------
 
 export function listDepartments(): Promise<Department[]> {
