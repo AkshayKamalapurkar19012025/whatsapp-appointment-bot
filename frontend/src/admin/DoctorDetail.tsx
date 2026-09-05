@@ -41,6 +41,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../components/ui/alert-dialog'
+import DoctorProfileSection from './DoctorProfileSection'
 
 const DAY_NAMES = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
@@ -102,9 +103,10 @@ function previewSlots(startTime: string, endTime: string, durationMinutes: numbe
   return slots
 }
 
-type DetailTab = 'upcoming' | 'queue' | 'schedule' | 'blocks' | 'departments' | 'types'
+type DetailTab = 'profile' | 'upcoming' | 'queue' | 'schedule' | 'blocks' | 'departments' | 'types'
 
 const DETAIL_TABS: { key: DetailTab; label: string }[] = [
+  { key: 'profile', label: 'Profile' },
   { key: 'upcoming', label: 'Upcoming' },
   { key: 'queue', label: 'Queue' },
   { key: 'schedule', label: 'Schedule' },
@@ -140,6 +142,7 @@ export default function DoctorDetail({ doctor, isAdmin }: { doctor: Doctor; isAd
         ))}
       </div>
 
+      {tab === 'profile' && <DoctorProfileSection doctor={doctor} isAdmin={isAdmin} />}
       {tab === 'upcoming' && <UpcomingAppointmentsSection doctor={doctor} />}
       {tab === 'queue' && <QueueSection doctor={doctor} />}
       {tab === 'schedule' && <ScheduleSection doctor={doctor} isAdmin={isAdmin} />}

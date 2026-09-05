@@ -9,6 +9,7 @@ override that default when explicitly provided (e.g. in production).
 """
 
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -62,6 +63,17 @@ DB_POOL_MAX_SIZE = int(os.environ.get("DB_POOL_MAX_SIZE", "10"))
 # single, non-hardcoded value to render a clock with before any doctor has
 # been chosen.
 DEFAULT_TIMEZONE = os.environ.get("DEFAULT_TIMEZONE", "Asia/Kolkata")
+
+# Local-disk root for uploaded media (currently just doctor profile
+# photos, app/api/doctor_photo.py). Matches this app's existing
+# single-instance deployment assumption (see DB_POOL_MAX_SIZE's comment
+# above) -- there is no object-storage (S3-style) integration anywhere
+# in this project, so storing files on disk and serving them via a
+# FastAPI StaticFiles mount (app/main.py) is the smallest change
+# consistent with what already exists. Override via env for a real
+# deployment (e.g. a mounted volume) -- defaults to a gitignored `media/`
+# directory next to the project root for local dev.
+MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", str(Path(__file__).resolve().parent.parent / "media")))
 
 # Defaults to "development" so local setups and tests work unchanged with
 # nothing set. A real deployment MUST set ENVIRONMENT=production -- this

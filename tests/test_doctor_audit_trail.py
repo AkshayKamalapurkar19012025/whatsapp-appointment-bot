@@ -24,7 +24,9 @@ def test_create_doctor_records_created_by(client, db_connection):
     admin_headers, username = _admin_headers_and_username(db_connection)
 
     response = client.post(
-        "/api/doctors", json={"name": "Dr. Audit Trail"}, headers=admin_headers
+        "/api/doctors",
+        json={"name": "Dr. Audit Trail", "specialization": "General Medicine"},
+        headers=admin_headers,
     )
     assert response.status_code == 200
     body = response.json()
@@ -37,7 +39,9 @@ def test_list_doctors_includes_created_by(client, db_connection):
     admin_headers, username = _admin_headers_and_username(db_connection)
 
     created = client.post(
-        "/api/doctors", json={"name": "Dr. Audit List"}, headers=admin_headers
+        "/api/doctors",
+        json={"name": "Dr. Audit List", "specialization": "General Medicine"},
+        headers=admin_headers,
     ).json()
 
     listing = client.get("/api/doctors")

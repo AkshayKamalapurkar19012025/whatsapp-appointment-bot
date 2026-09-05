@@ -14,6 +14,8 @@ import {
 import type { BookedAppointment, Department, Doctor, DoctorWithSlots, Slot } from './types'
 import Calendar from './Calendar'
 import DepartmentCalendar from './DepartmentCalendar'
+import DoctorCard from './DoctorCard'
+import DoctorProfileModal from './DoctorProfileModal'
 import LiveClock from './LiveClock'
 import SlotGrid from './SlotGrid'
 import { formatDate, formatTime } from './format'
@@ -93,6 +95,11 @@ export default function BookingFlow({
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null)
   const [confirmed, setConfirmed] = useState<BookedAppointment | null>(null)
   const [busy, setBusy] = useState(false)
+  // "View Profile" from a compact doctor card (DoctorCard.tsx) -- an
+  // overlay on top of whichever step is currently showing, not a Step
+  // of its own, so closing it never changes where the patient is in
+  // the booking flow.
+  const [viewingProfileDoctorId, setViewingProfileDoctorId] = useState<number | null>(null)
 
   useEffect(() => {
     listDepartments()
@@ -298,11 +305,12 @@ export default function BookingFlow({
           <h2>Choose a doctor</h2>
           <ul className="option-list">
             {doctors.map((doc) => (
-              <li key={doc.id}>
-                <button type="button" onClick={() => chooseDoctor(doc)}>
-                  {doc.name}
-                </button>
-              </li>
+              <DoctorCard
+                key={doc.id}
+                doctor={doc}
+                onSelect={() => chooseDoctor(doc)}
+                onViewProfile={() => setViewingProfileDoctorId(doc.id)}
+              />
             ))}
           </ul>
           <div className="step-actions">
@@ -396,14 +404,17 @@ export default function BookingFlow({
           ) : (
             <ul className="option-list">
               {availableDoctors.map((doc) => (
-                <li key={doc.id}>
-                  <button type="button" onClick={() => chooseAvailableDoctor(doc)}>
-                    {doc.name}{' '}
-                    <span className="muted">
-                      ({doc.slots.length} {doc.slots.length === 1 ? 'slot' : 'slots'} available)
+                <DoctorCard
+                  key={doc.id}
+                  doctor={doc}
+                  extra={
+                    <span className="muted doctor-option-meta">
+                      {doc.slots.length} {doc.slots.length === 1 ? 'slot' : 'slots'} available
                     </span>
-                  </button>
-                </li>
+                  }
+                  onSelect={() => chooseAvailableDoctor(doc)}
+                  onViewProfile={() => setViewingProfileDoctorId(doc.id)}
+                />
               ))}
             </ul>
           )}
@@ -503,6 +514,13 @@ export default function BookingFlow({
             View my appointments
           </button>
         </div>
+      )}
+
+      {viewingProfileDoctorId !== null && (
+        <DoctorProfileModal
+          doctorId={viewingProfileDoctorId}
+          onClose={() => setViewingProfileDoctorId(null)}
+        />
       )}
     </div>
   )

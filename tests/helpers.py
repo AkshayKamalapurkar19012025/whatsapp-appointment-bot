@@ -93,7 +93,11 @@ def seed_basic_doctor(
         "/api/departments", json={"name": department_name}, headers=admin_headers
     ).json()
 
-    doctor = client.post("/api/doctors", json={"name": doctor_name}, headers=admin_headers).json()
+    doctor = client.post(
+        "/api/doctors",
+        json={"name": doctor_name, "specialization": "General Medicine"},
+        headers=admin_headers,
+    ).json()
 
     if timezone != "Asia/Kolkata":
         with db_connection.cursor() as cur:
@@ -160,7 +164,9 @@ def add_doctor_to_department(
     admin_headers = create_admin_and_get_headers(db_connection)
 
     doctor = client.post(
-        "/api/doctors", json={"name": doctor_name}, headers=admin_headers
+        "/api/doctors",
+        json={"name": doctor_name, "specialization": "General Medicine"},
+        headers=admin_headers,
     ).json()
 
     if timezone != "Asia/Kolkata":

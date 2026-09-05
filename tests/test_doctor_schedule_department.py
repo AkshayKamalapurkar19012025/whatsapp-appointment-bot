@@ -43,7 +43,9 @@ def _seed_doctor_in_two_departments(client, db_connection, *, name_prefix: str) 
         "/api/departments", json={"name": f"{name_prefix} Dept B"}, headers=admin_headers
     ).json()
     doctor = client.post(
-        "/api/doctors", json={"name": f"Dr. {name_prefix}"}, headers=admin_headers
+        "/api/doctors",
+        json={"name": f"Dr. {name_prefix}", "specialization": "General Medicine"},
+        headers=admin_headers,
     ).json()
     client.post(f"/api/doctors/{doctor['id']}/departments/{dept_a['id']}", headers=admin_headers)
     client.post(f"/api/doctors/{doctor['id']}/departments/{dept_b['id']}", headers=admin_headers)

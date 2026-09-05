@@ -14,12 +14,52 @@ export interface Department {
   active: boolean
 }
 
-export interface Doctor {
+// The compact profile fields every doctor-listing endpoint now carries
+// (app/services/availability_engine.py's build_doctor_summary) --
+// specialization/years_of_experience/qualifications/photo_url plus a
+// derived education_location (the doctor's admin-chosen *featured*
+// doctor_education entry, "Institution, City, Country" -- never the
+// most recent one automatically, and null when nothing is featured).
+// Mixed into Doctor and DoctorWithSlots below rather than duplicated,
+// since both are actually the same summary shape at the wire level now.
+export interface DoctorProfileSummary {
+  specialization: string | null
+  years_of_experience: number | null
+  qualifications: string | null
+  photo_url: string | null
+  education_location: string | null
+}
+
+export interface Doctor extends DoctorProfileSummary {
   id: number
   name: string
   active: boolean
   created_at: string
   created_by: string | null
+}
+
+export interface DoctorEducationEntry {
+  id: number
+  doctor_id: number
+  qualification: string
+  institution: string
+  city: string
+  country: string
+  completion_year: number
+  is_primary: boolean
+}
+
+// GET /api/doctors/{id} -- the full profile + complete education
+// history, fetched on demand for "View Profile". Deliberately never
+// bundled into the compact DoctorProfileSummary above, which every
+// listing/card uses instead.
+export interface DoctorProfile extends DoctorProfileSummary {
+  id: number
+  name: string
+  active: boolean
+  created_at: string
+  sub_specialization: string | null
+  education: DoctorEducationEntry[]
 }
 
 export interface AppointmentType {
@@ -38,7 +78,7 @@ export interface Slot {
 // "doctors" list -- a doctor in the department offering the chosen
 // appointment type, with their own real slots for the chosen date
 // already attached (never present with an empty slots array).
-export interface DoctorWithSlots {
+export interface DoctorWithSlots extends DoctorProfileSummary {
   id: number
   name: string
   slots: Slot[]

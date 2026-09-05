@@ -71,7 +71,9 @@ def test_slot_generation_respects_date_range(client, db_connection):
         "/api/departments", json={"name": "P7 Ranged Dept"}, headers=admin_headers
     ).json()
     doctor = client.post(
-        "/api/doctors", json={"name": "Dr. P7 Ranged"}, headers=admin_headers
+        "/api/doctors",
+        json={"name": "Dr. P7 Ranged", "specialization": "General Medicine"},
+        headers=admin_headers,
     ).json()
     client.post(
         f"/api/doctors/{doctor['id']}/departments/{department['id']}", headers=admin_headers
@@ -133,7 +135,9 @@ def test_booking_creation_respects_date_range(client, db_connection):
         "/api/departments", json={"name": "P7 Booking Dept"}, headers=admin_headers
     ).json()
     doctor = client.post(
-        "/api/doctors", json={"name": "Dr. P7 Booking"}, headers=admin_headers
+        "/api/doctors",
+        json={"name": "Dr. P7 Booking", "specialization": "General Medicine"},
+        headers=admin_headers,
     ).json()
     client.post(
         f"/api/doctors/{doctor['id']}/departments/{seeded_department['id']}",

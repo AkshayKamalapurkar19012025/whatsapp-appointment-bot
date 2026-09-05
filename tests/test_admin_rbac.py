@@ -59,7 +59,7 @@ def _admin_only_write_calls(ids):
     a STAFF session with 403 and an unauthenticated one with 401."""
     return [
         ("post", "/api/departments", {"name": "RBAC New Department"}),
-        ("post", "/api/doctors", {"name": "Dr. RBAC New"}),
+        ("post", "/api/doctors", {"name": "Dr. RBAC New", "specialization": "General Medicine"}),
         (
             "delete",
             f"/api/doctors/{ids['doctor_id']}/departments/{ids['department_id']}",
@@ -137,7 +137,9 @@ def test_assign_department_to_doctor_requires_admin(client, db_connection):
         "/api/departments", json={"name": "Second Department"}, headers=admin_headers
     ).json()
     doctor = client.post(
-        "/api/doctors", json={"name": "Dr. Second"}, headers=admin_headers
+        "/api/doctors",
+        json={"name": "Dr. Second", "specialization": "General Medicine"},
+        headers=admin_headers,
     ).json()
 
     unauthenticated = client.post(f"/api/doctors/{doctor['id']}/departments/{department['id']}")
