@@ -110,7 +110,7 @@ def test_create_appointment_service_allows_date_inside_booking_window(client, db
         )
     db_connection.commit()
 
-    assert result["status"] == "BOOKED"
+    assert result["status"] == "PENDING"
 
 
 def test_create_appointment_service_default_does_not_enforce_booking_window(client, db_connection):
@@ -140,7 +140,7 @@ def test_create_appointment_service_default_does_not_enforce_booking_window(clie
         )
     db_connection.commit()
 
-    assert result["status"] == "BOOKED"
+    assert result["status"] == "PENDING"
 
 
 # ---------------------------------------------------------------------
@@ -177,7 +177,7 @@ def test_cancel_appointment_service_rejects_non_owner(client, db_connection):
 
     with db_connection.cursor() as cur:
         cur.execute("SELECT status FROM appointments WHERE id = %s", (created["id"],))
-        assert cur.fetchone()[0] == "BOOKED"
+        assert cur.fetchone()[0] == "PENDING"
 
 
 def test_cancel_appointment_service_allows_owner(client, db_connection):

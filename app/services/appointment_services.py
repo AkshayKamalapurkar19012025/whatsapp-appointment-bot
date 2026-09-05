@@ -40,8 +40,9 @@ both defaulting to today's exact behavior:
   genuinely closed before patient identity exists.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 import logging
+from zoneinfo import ZoneInfo
 
 import psycopg
 
@@ -61,9 +62,24 @@ from app.services.exceptions import (
     AppointmentNotFound,
     AlreadyCancelled,
     NotAppointmentOwner,
+    InvalidStatusTransition,
 )
 
 logger = logging.getLogger(__name__)
+
+# The appointment lifecycle (migrations/0011_appointment_lifecycle_
+# statuses.sql): every appointment starts PENDING and moves through
+# staff-driven transitions. CANCELLED and REJECTED are the two "never
+# happened" terminal states -- both release the doctor's slot; every
+# other status (including PENDING itself, so two patients can't be
+# offered the same slot while one request awaits confirmation) counts as
+# occupying it. This mirrors the exact predicate used by the EXCLUDE
+# constraint and the two partial indexes in that same migration -- keep
+# all three in lockstep if this set ever changes again.
+RELEASED_STATUSES = ("CANCELLED", "REJECTED")
+
+# Statuses a patient/staff can still cancel or reschedule out of.
+ACTIONABLE_STATUSES = ("PENDING", "CONFIRMED")
 
 
 def create_appointment_service(
@@ -276,13 +292,14 @@ def create_appointment_service(
         WHERE doctor_id = %s
           AND start_at < %s
           AND end_at > %s
-          AND status <> 'CANCELLED'
+          AND NOT (status = ANY(%s::text[]))
         ORDER BY start_at
         """,
         (
             doctor_id,
             end_at,
             start_at,
+            list(RELEASED_STATUSES),
         ),
     )
 
@@ -326,7 +343,7 @@ def create_appointment_service(
                 %s,
                 %s,
                 %s,
-                'BOOKED'
+                'PENDING'
             )
             RETURNING
                 id,
@@ -397,7 +414,14 @@ def cancel_appointment_service(
         # a non-owner shouldn't learn an appointment's cancellation state.
         raise NotAppointmentOwner()
 
-    if appointment[2] == "CANCELLED":
+    # Only a still-live appointment (awaiting confirmation, or
+    # confirmed) can be cancelled -- one that's already Cancelled,
+    # Rejected, Visited, or Completed is done, one way or another.
+    # AlreadyCancelled is reused for all of these (not just the literal
+    # CANCELLED case) -- every caller already treats it as "can't act on
+    # this anymore" and surfaces the same 409, so a new exception per
+    # terminal status wasn't worth the ripple through every call site.
+    if appointment[2] not in ACTIONABLE_STATUSES:
         raise AlreadyCancelled()
 
     cur.execute(
@@ -480,7 +504,7 @@ def reschedule_appointment_service(
     appointment_type_id = original[3]
     status = original[6]
 
-    if status != "BOOKED":
+    if status not in ACTIONABLE_STATUSES:
         raise AlreadyCancelled()
 
     appointment_type = get_appointment_type_for_doctor(cur, doctor_id, appointment_type_id)
@@ -602,10 +626,10 @@ def reschedule_appointment_service(
         WHERE doctor_id = %s
           AND start_at < %s
           AND end_at > %s
-          AND status <> 'CANCELLED'
+          AND NOT (status = ANY(%s::text[]))
           AND id <> %s
         """,
-        (doctor_id, new_end_at, new_start_at, appointment_id),
+        (doctor_id, new_end_at, new_start_at, list(RELEASED_STATUSES), appointment_id),
     )
 
     for existing_start, existing_end in cur.fetchall():
@@ -626,10 +650,10 @@ def reschedule_appointment_service(
             updated_at = NOW()
         WHERE id = %s
           AND patient_id = %s
-          AND status = 'BOOKED'
+          AND status = ANY(%s::text[])
         RETURNING id
         """,
-        (appointment_id, patient_id),
+        (appointment_id, patient_id, list(ACTIONABLE_STATUSES)),
     )
 
     if cur.fetchone() is None:
@@ -649,7 +673,7 @@ def reschedule_appointment_service(
                 end_at,
                 status
             )
-            VALUES (%s, %s, %s, %s, %s, 'BOOKED')
+            VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING
                 id,
                 doctor_id,
@@ -659,7 +683,12 @@ def reschedule_appointment_service(
                 end_at,
                 status
             """,
-            (doctor_id, patient_id, appointment_type_id, new_start_at, new_end_at),
+            # Rescheduling preserves the original appointment's status
+            # (PENDING stays PENDING, awaiting the same confirmation it
+            # always needed; CONFIRMED stays CONFIRMED) rather than
+            # resetting it -- moving the time shouldn't force an already-
+            # confirmed appointment back into a confirmation queue.
+            (doctor_id, patient_id, appointment_type_id, new_start_at, new_end_at, status),
         )
     except psycopg.errors.ExclusionViolation:
         # Unlike create_appointment_service's equivalent catch, this one
@@ -704,11 +733,13 @@ def list_patient_appointments_service(cur, patient_id: int):
     into upcoming / history / cancelled. The split uses exactly the
     status/start_at semantics app/api/booking.py's own
     get_upcoming_booked_appointments() already relies on for its
-    "upcoming" filter (status = 'BOOKED' AND start_at > now) -- no new
-    business rule invented for the web. CANCELLED appointments go to
-    "cancelled" regardless of their date; a BOOKED appointment in the
-    past (no separate COMPLETED status exists anywhere in this schema)
-    is "history".
+    "upcoming" filter (status IN ACTIONABLE_STATUSES AND start_at > now)
+    -- no new business rule invented for the web. CANCELLED and REJECTED
+    appointments both go to "cancelled" (a Rejected request never
+    happened either, same as a Cancelled one, and the frontend has no
+    separate bucket for it); a PENDING/CONFIRMED appointment whose time
+    has already passed without being resolved, or one marked VISITED/
+    COMPLETED, is "history".
 
     Same fix as get_upcoming_booked_appointments (see that function's
     docstring for the full story): start_at/end_at are converted to the
@@ -727,7 +758,8 @@ def list_patient_appointments_service(cur, patient_id: int):
             at.name,
             a.start_at,
             a.end_at,
-            a.status
+            a.status,
+            a.token_number
         FROM appointments a
         JOIN doctors d
             ON d.id = a.doctor_id
@@ -758,11 +790,12 @@ def list_patient_appointments_service(cur, patient_id: int):
             "start_at": convert_to_timezone(row[6], doctor_tz).isoformat(),
             "end_at": convert_to_timezone(row[7], doctor_tz).isoformat(),
             "status": row[8],
+            "token_number": row[9],
         }
 
-        if row[8] == "CANCELLED":
+        if row[8] in RELEASED_STATUSES:
             cancelled.append((row[6], entry))
-        elif row[6] > now:
+        elif row[8] in ACTIONABLE_STATUSES and row[6] > now:
             upcoming.append((row[6], entry))
         else:
             history.append((row[6], entry))
@@ -776,3 +809,155 @@ def list_patient_appointments_service(cur, patient_id: int):
         "history": [entry for _, entry in history],
         "cancelled": [entry for _, entry in cancelled],
     }
+
+
+def _transition_appointment_status(cur, appointment_id: int, *, from_statuses, to_status: str):
+    """Shared body for the four staff-driven lifecycle transitions below:
+    look up the current status under a row lock, reject if it isn't one
+    of `from_statuses`, otherwise set it to `to_status`. All four
+    transitions are single-column updates with no side effects on
+    scheduling (unlike create/cancel/reschedule, nothing here touches
+    the doctor's slot -- Confirming, Rejecting, Visiting, or Completing
+    an appointment doesn't change whether it "occupies" its time range,
+    per RELEASED_STATUSES/migrations/0011's own reasoning), so there's
+    no advisory lock or overlap re-check needed here."""
+    cur.execute(
+        """
+        SELECT status
+        FROM appointments
+        WHERE id = %s
+        FOR UPDATE
+        """,
+        (appointment_id,),
+    )
+
+    row = cur.fetchone()
+
+    if row is None:
+        raise AppointmentNotFound()
+
+    if row[0] not in from_statuses:
+        raise InvalidStatusTransition()
+
+    cur.execute(
+        """
+        UPDATE appointments
+        SET status = %s,
+            updated_at = NOW()
+        WHERE id = %s
+        RETURNING id, status
+        """,
+        (to_status, appointment_id),
+    )
+
+    result_row = cur.fetchone()
+
+    return {"id": result_row[0], "status": result_row[1]}
+
+
+def confirm_appointment_service(cur, appointment_id: int):
+    """Staff approves a Pending request."""
+    return _transition_appointment_status(
+        cur, appointment_id, from_statuses=("PENDING",), to_status="CONFIRMED"
+    )
+
+
+def reject_appointment_service(cur, appointment_id: int):
+    """Staff declines a Pending request -- releases its slot, same as a
+    cancellation (see RELEASED_STATUSES above)."""
+    return _transition_appointment_status(
+        cur, appointment_id, from_statuses=("PENDING",), to_status="REJECTED"
+    )
+
+
+def mark_visited_service(cur, appointment_id: int):
+    """
+    Staff checks a Confirmed patient in on arrival -- this is also the
+    moment they're issued a queue token number (migrations/0012_
+    appointment_queue_tokens.sql), so this doesn't reuse
+    _transition_appointment_status above the way the other three
+    transitions do.
+
+    Tokens are scoped per doctor, per doctor-local calendar day (a
+    walk-in queue is a per-doctor, per-day thing -- see the "Token
+    scope" product decision this implements), and assigned in
+    check-in order: the next integer after the highest token_number
+    already issued to this doctor today. Concurrent check-ins for the
+    same doctor are serialized with pg_advisory_xact_lock, the same
+    primitive create_appointment_service uses to serialize bookings --
+    a second lock key (the day's epoch-day number) scopes it to "this
+    doctor, today" specifically, so it can't collide with that other
+    lock's (doctor_id) key space or with a different day's queue.
+    """
+    cur.execute(
+        """
+        SELECT a.status, a.doctor_id, d.timezone
+        FROM appointments a
+        JOIN doctors d ON d.id = a.doctor_id
+        WHERE a.id = %s
+        FOR UPDATE OF a
+        """,
+        (appointment_id,),
+    )
+
+    row = cur.fetchone()
+
+    if row is None:
+        raise AppointmentNotFound()
+
+    status, doctor_id, doctor_tz = row
+
+    if status != "CONFIRMED":
+        raise InvalidStatusTransition()
+
+    if not validate_timezone(doctor_tz):
+        doctor_tz = "Asia/Kolkata"
+
+    today = datetime.now(ZoneInfo(doctor_tz)).date()
+    day_epoch = (today - date(1970, 1, 1)).days
+
+    cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", (doctor_id, day_epoch))
+
+    cur.execute(
+        """
+        SELECT COALESCE(MAX(token_number), 0) + 1
+        FROM appointments
+        WHERE doctor_id = %s
+          AND visited_at IS NOT NULL
+          AND (visited_at AT TIME ZONE %s)::date = %s
+        """,
+        (doctor_id, doctor_tz, today),
+    )
+    (next_token,) = cur.fetchone()
+
+    cur.execute(
+        """
+        UPDATE appointments
+        SET status = 'VISITED',
+            visited_at = NOW(),
+            token_number = %s,
+            updated_at = NOW()
+        WHERE id = %s
+        RETURNING id, status, token_number, visited_at, doctor_id, patient_id
+        """,
+        (next_token, appointment_id),
+    )
+
+    result_row = cur.fetchone()
+
+    return {
+        "id": result_row[0],
+        "status": result_row[1],
+        "token_number": result_row[2],
+        "visited_at": result_row[3].isoformat(),
+        "doctor_id": result_row[4],
+        "patient_id": result_row[5],
+    }
+
+
+def mark_completed_service(cur, appointment_id: int):
+    """Staff closes out a Visited appointment once the consultation is
+    finished."""
+    return _transition_appointment_status(
+        cur, appointment_id, from_statuses=("VISITED",), to_status="COMPLETED"
+    )

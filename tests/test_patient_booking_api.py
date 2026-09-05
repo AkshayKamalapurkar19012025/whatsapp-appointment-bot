@@ -113,7 +113,7 @@ def test_booking_creates_appointment_for_authenticated_patient(client, db_connec
 
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "BOOKED"
+    assert body["status"] == "PENDING"
     assert body["doctor_id"] == seeded["doctor_id"]
 
     with db_connection.cursor() as cur:

@@ -87,6 +87,7 @@ def get_available_slots(
     doctor_id: int,
     appointment_type_id: int,
     selected_date: date,
+    department_id: int | None = None,
 ):
     """
     Calculate available appointment slots.
@@ -96,6 +97,15 @@ def get_available_slots(
     - Blocks and appointments come from TIMESTAMPTZ and are aware.
     - We convert schedule times into timezone-aware datetimes before
       comparing them with blocks/appointments.
+
+    department_id (migrations/0010) narrows which doctor_schedule rows
+    apply: a row with a NULL department_id always applies, and a row
+    with a non-NULL department_id applies only when it matches. Passing
+    department_id=None here (the default) applies no department filter
+    at all -- every active row for this doctor/day counts, department-
+    scoped or not -- which is exactly the pre-0010 behavior every
+    caller that doesn't yet have a department in scope (admin booking,
+    reschedule) still gets unchanged.
     """
 
     # ---------------------------------------------------------
@@ -146,6 +156,7 @@ def get_available_slots(
           AND active = TRUE
           AND (start_date IS NULL OR start_date <= %s)
           AND (end_date IS NULL OR end_date >= %s)
+          AND (%s::bigint IS NULL OR department_id IS NULL OR department_id = %s)
         ORDER BY start_time
         """,
         (
@@ -153,6 +164,8 @@ def get_available_slots(
             day_of_week,
             selected_date,
             selected_date,
+            department_id,
+            department_id,
         ),
     )
 
@@ -211,7 +224,12 @@ def get_available_slots(
         WHERE doctor_id = %s
           AND start_at < %s
           AND end_at > %s
-          AND status <> 'CANCELLED'
+          -- CANCELLED and REJECTED both release the slot; every other
+          -- status (PENDING included, so a request awaiting confirmation
+          -- still blocks the slot) counts as occupying it -- see
+          -- app/services/appointment_services.py's RELEASED_STATUSES,
+          -- the canonical definition this mirrors.
+          AND NOT (status = ANY(ARRAY['CANCELLED', 'REJECTED']))
         ORDER BY start_at
         """,
         (
@@ -364,6 +382,7 @@ def list_available_dates_in_range(
     appointment_type_id: int,
     start_date: date,
     end_date: date,
+    department_id: int | None = None,
 ):
     """
     For every date in [start_date, end_date] (inclusive), whether it has
@@ -371,6 +390,9 @@ def list_available_dates_in_range(
     doctor/appointment-type at a time, one HTTP request per rendered
     month) -- not used by the WhatsApp flow or by anything yet, since no
     endpoint calls this until the web availability API is built.
+
+    department_id is passed straight through to get_available_slots --
+    see its docstring (migrations/0010).
 
     Returns {"YYYY-MM-DD": bool, ...}.
     """
@@ -383,6 +405,7 @@ def list_available_dates_in_range(
             doctor_id,
             appointment_type_id,
             current,
+            department_id=department_id,
         )
         result[current.isoformat()] = bool(slots)
         current += timedelta(days=1)

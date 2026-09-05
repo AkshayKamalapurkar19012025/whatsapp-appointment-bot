@@ -57,6 +57,14 @@ class NotAppointmentOwner(ServiceError):
     pass
 
 
+class InvalidStatusTransition(ServiceError):
+    """Raised by confirm/reject/mark_visited/mark_completed_service when
+    the appointment's current status doesn't allow the requested
+    transition (e.g. rejecting one that's already Confirmed, or marking
+    Completed one that was never marked Visited)."""
+    pass
+
+
 # ---------------------------------------------------------------------
 # Patient authentication (WEB P2) -- see app/services/patient_auth.py.
 # ---------------------------------------------------------------------

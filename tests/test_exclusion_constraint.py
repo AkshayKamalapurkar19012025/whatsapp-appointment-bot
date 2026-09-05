@@ -14,7 +14,7 @@ double-booking physically impossible to persist.
 The rest of this file covers the constraint's boundary behaviour
 directly (back-to-back allowed, partial overlap rejected, different
 doctors allowed, a CANCELLED appointment's old slot not blocking a new
-BOOKED one at the same time) -- all pure data-integrity checks, no
+Confirmed one at the same time) -- all pure data-integrity checks, no
 concurrency involved.
 
 All patient/doctor/department names and phone numbers here are
@@ -61,7 +61,7 @@ def seeded_doctor(db_connection):
     }
 
 
-def _insert_appointment(cur, doctor_id, patient_id, appointment_type_id, start_at, end_at, status="BOOKED"):
+def _insert_appointment(cur, doctor_id, patient_id, appointment_type_id, start_at, end_at, status="CONFIRMED"):
     cur.execute(
         """
         INSERT INTO appointments (doctor_id, patient_id, appointment_type_id, start_at, end_at, status)
@@ -82,7 +82,7 @@ def _insert_synthetic_patient(cur, label: str):
 
 
 def test_exclusion_constraint_rejects_overlap_bypassing_app_lock(seeded_doctor, db_connection):
-    """Test D: two raw connections race to INSERT overlapping BOOKED
+    """Test D: two raw connections race to INSERT overlapping Confirmed
     appointments directly, with NO advisory lock taken by either --
     neither goes through app/api/booking.py or app/api/appointments.py
     at all. Exactly one must succeed; the constraint alone must reject
@@ -153,12 +153,12 @@ def test_exclusion_constraint_rejects_overlap_bypassing_app_lock(seeded_doctor, 
     # own connection still works normally after the rejection.
     with db_connection.cursor() as cur:
         cur.execute(
-            "SELECT count(*) FROM appointments WHERE doctor_id = %s AND status = 'BOOKED'",
+            "SELECT count(*) FROM appointments WHERE doctor_id = %s AND status = 'CONFIRMED'",
             (seeded_doctor["doctor_id"],),
         )
         booked_count = cur.fetchone()[0]
 
-    assert booked_count == 1, f"expected exactly one BOOKED appointment, found {booked_count}"
+    assert booked_count == 1, f"expected exactly one Confirmed appointment, found {booked_count}"
 
 
 def test_back_to_back_appointments_are_allowed(seeded_doctor, db_connection):
@@ -182,7 +182,7 @@ def test_back_to_back_appointments_are_allowed(seeded_doctor, db_connection):
 
     with db_connection.cursor() as cur:
         cur.execute(
-            "SELECT count(*) FROM appointments WHERE doctor_id = %s AND status = 'BOOKED'",
+            "SELECT count(*) FROM appointments WHERE doctor_id = %s AND status = 'CONFIRMED'",
             (seeded_doctor["doctor_id"],),
         )
         assert cur.fetchone()[0] == 2
@@ -211,7 +211,7 @@ def test_partial_overlap_is_rejected(seeded_doctor, db_connection):
 
     with db_connection.cursor() as cur:
         cur.execute(
-            "SELECT count(*) FROM appointments WHERE doctor_id = %s AND status = 'BOOKED'",
+            "SELECT count(*) FROM appointments WHERE doctor_id = %s AND status = 'CONFIRMED'",
             (seeded_doctor["doctor_id"],),
         )
         assert cur.fetchone()[0] == 1
@@ -247,7 +247,7 @@ def test_different_doctors_can_have_identical_overlapping_times(db_connection):
 
     with db_connection.cursor() as cur:
         cur.execute(
-            "SELECT count(*) FROM appointments WHERE doctor_id IN (%s, %s) AND status = 'BOOKED'",
+            "SELECT count(*) FROM appointments WHERE doctor_id IN (%s, %s) AND status = 'CONFIRMED'",
             (doctor_a, doctor_b),
         )
         assert cur.fetchone()[0] == 2
@@ -255,8 +255,9 @@ def test_different_doctors_can_have_identical_overlapping_times(db_connection):
 
 def test_cancelled_appointment_does_not_block_new_booking_at_same_time(seeded_doctor, db_connection):
     """A CANCELLED appointment at 09:00-09:30 must not prevent a new
-    BOOKED appointment at that identical time -- the constraint's
-    WHERE (status <> 'CANCELLED') clause excludes cancelled rows."""
+    Confirmed appointment at that identical time -- the constraint's
+    WHERE (status NOT IN ('CANCELLED', 'REJECTED')) clause excludes
+    cancelled/rejected rows."""
     with db_connection.cursor() as cur:
         patient_a = _insert_synthetic_patient(cur, "A5")
         patient_b = _insert_synthetic_patient(cur, "B5")
@@ -284,4 +285,40 @@ def test_cancelled_appointment_does_not_block_new_booking_at_same_time(seeded_do
         )
         rows = cur.fetchall()
 
-    assert rows == [("CANCELLED", patient_a), ("BOOKED", patient_b)]
+    assert rows == [("CANCELLED", patient_a), ("CONFIRMED", patient_b)]
+
+
+def test_rejected_appointment_does_not_block_new_booking_at_same_time(seeded_doctor, db_connection):
+    """Same shape as the CANCELLED case above, but for REJECTED --
+    added to the exclusion constraint's release set in migrations/0011_
+    appointment_lifecycle_statuses.sql alongside CANCELLED, since a
+    rejected request never happened either."""
+    with db_connection.cursor() as cur:
+        patient_a = _insert_synthetic_patient(cur, "A6")
+        patient_b = _insert_synthetic_patient(cur, "B6")
+
+        original_id = _insert_appointment(
+            cur, seeded_doctor["doctor_id"], patient_a, seeded_doctor["appointment_type_id"],
+            "2026-10-10T09:00:00+00:00", "2026-10-10T09:30:00+00:00",
+            status="PENDING",
+        )
+        cur.execute(
+            "UPDATE appointments SET status = 'REJECTED' WHERE id = %s",
+            (original_id,),
+        )
+
+        # Must not raise, even though the time range is identical.
+        _insert_appointment(
+            cur, seeded_doctor["doctor_id"], patient_b, seeded_doctor["appointment_type_id"],
+            "2026-10-10T09:00:00+00:00", "2026-10-10T09:30:00+00:00",
+        )
+    db_connection.commit()
+
+    with db_connection.cursor() as cur:
+        cur.execute(
+            "SELECT status, patient_id FROM appointments WHERE doctor_id = %s ORDER BY id",
+            (seeded_doctor["doctor_id"],),
+        )
+        rows = cur.fetchall()
+
+    assert rows == [("REJECTED", patient_a), ("CONFIRMED", patient_b)]

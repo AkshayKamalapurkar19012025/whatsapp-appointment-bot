@@ -120,6 +120,12 @@ def get_calendar_month(
     appointment_type_id: int,
     year: int,
     month: int,
+    # Optional (migrations/0010) -- see AvailabilityRequest.department_id
+    # in app/api/availability.py for the exact semantics. The web
+    # booking flow (BookingFlow.tsx) already selects department before
+    # doctor and passes it here; the reschedule flow has no department
+    # in scope and omits it, seeing every active schedule row.
+    department_id: int | None = None,
 ):
     if not (1 <= month <= 12):
         raise HTTPException(status_code=422, detail="month must be between 1 and 12")
@@ -144,6 +150,7 @@ def get_calendar_month(
                 appointment_type_id,
                 month_start,
                 month_end,
+                department_id=department_id,
             )
 
     dates = {
@@ -222,8 +229,8 @@ def create_web_appointment(
                 patient["whatsapp_number"],
                 KIND_BOOKING_CONFIRMATION,
                 (
-                    f"Your appointment with {doctor_name} on {date_label} at "
-                    f"{time_label} has been confirmed."
+                    f"Your appointment request with {doctor_name} on {date_label} at "
+                    f"{time_label} has been received and is awaiting confirmation."
                 ),
             )
 
@@ -253,7 +260,7 @@ def cancel_web_appointment(
             except (svc_exc.AppointmentNotFound, svc_exc.NotAppointmentOwner):
                 raise HTTPException(status_code=404, detail="Appointment not found")
             except svc_exc.AlreadyCancelled:
-                raise HTTPException(status_code=409, detail="Appointment is already cancelled")
+                raise HTTPException(status_code=409, detail="Appointment can no longer be cancelled")
 
             # WEB P8: mock cancellation notification. cancel_appointment_
             # service's own return doesn't carry display fields (doctor

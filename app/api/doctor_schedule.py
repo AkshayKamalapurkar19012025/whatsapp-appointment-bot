@@ -19,6 +19,12 @@ class DoctorScheduleCreate(BaseModel):
     # omitting both keeps a row's pre-P7 "applies forever" meaning.
     start_date: date | None = None
     end_date: date | None = None
+    # NULL (the default) means this row applies regardless of
+    # department -- see migrations/0010's header. A non-NULL value
+    # must be a department this doctor is actually assigned to
+    # (checked in the handlers below, not here, since it needs a
+    # doctor_departments lookup a field_validator can't do).
+    department_id: int | None = None
 
     @field_validator("end_time")
     @classmethod
@@ -63,6 +69,12 @@ def schedule_overlaps(
     exactly matching every pre-P7 row's "applies forever" behavior,
     which is why the plain time-only overlap check (no date columns
     involved yet) still worked correctly before this migration.
+
+    Deliberately department-agnostic (migrations/0010): a doctor can
+    only be in one place at a time, so this still flags a conflict
+    between two rows tagged to different departments -- department_id
+    is a label on which of a doctor's time blocks belongs to which
+    specialty, not a second independent timeline.
     """
     cur.execute(
         """
@@ -89,6 +101,20 @@ def schedule_overlaps(
             schedule_start_date,
             schedule_start_date,
         ),
+    )
+
+    return cur.fetchone() is not None
+
+
+def doctor_has_department(cur, doctor_id: int, department_id: int) -> bool:
+    cur.execute(
+        """
+        SELECT 1
+        FROM doctor_departments
+        WHERE doctor_id = %s
+          AND department_id = %s
+        """,
+        (doctor_id, department_id),
     )
 
     return cur.fetchone() is not None
@@ -126,7 +152,8 @@ def get_doctor_schedule(doctor_id: int):
                     end_time,
                     active,
                     start_date,
-                    end_date
+                    end_date,
+                    department_id
                 FROM doctor_schedule
                 WHERE doctor_id = %s
                   AND active = TRUE
@@ -146,6 +173,7 @@ def get_doctor_schedule(doctor_id: int):
             "active": row[4],
             "start_date": row[5].isoformat() if row[5] else None,
             "end_date": row[6].isoformat() if row[6] else None,
+            "department_id": row[7],
         }
         for row in rows
     ]
@@ -178,6 +206,14 @@ def create_doctor_schedule(
                     detail="Doctor not found",
                 )
 
+            if schedule.department_id is not None and not doctor_has_department(
+                cur, doctor_id, schedule.department_id
+            ):
+                raise HTTPException(
+                    status_code=422,
+                    detail="Doctor is not assigned to this department",
+                )
+
             if schedule_overlaps(
                 cur,
                 doctor_id,
@@ -200,9 +236,10 @@ def create_doctor_schedule(
                     start_time,
                     end_time,
                     start_date,
-                    end_date
+                    end_date,
+                    department_id
                 )
-                VALUES (%s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 RETURNING
                     id,
                     day_of_week,
@@ -210,7 +247,8 @@ def create_doctor_schedule(
                     end_time,
                     active,
                     start_date,
-                    end_date
+                    end_date,
+                    department_id
                 """,
                 (
                     doctor_id,
@@ -219,6 +257,7 @@ def create_doctor_schedule(
                     schedule.end_time,
                     schedule.start_date,
                     schedule.end_date,
+                    schedule.department_id,
                 ),
             )
 
@@ -233,6 +272,7 @@ def create_doctor_schedule(
         "active": row[4],
         "start_date": row[5].isoformat() if row[5] else None,
         "end_date": row[6].isoformat() if row[6] else None,
+        "department_id": row[7],
     }
 
 
@@ -283,6 +323,14 @@ def update_doctor_schedule(
                     detail="Schedule not found",
                 )
 
+            if schedule.department_id is not None and not doctor_has_department(
+                cur, doctor_id, schedule.department_id
+            ):
+                raise HTTPException(
+                    status_code=422,
+                    detail="Doctor is not assigned to this department",
+                )
+
             if schedule_overlaps(
                 cur,
                 doctor_id,
@@ -305,7 +353,8 @@ def update_doctor_schedule(
                     start_time = %s,
                     end_time = %s,
                     start_date = %s,
-                    end_date = %s
+                    end_date = %s,
+                    department_id = %s
                 WHERE id = %s
                   AND doctor_id = %s
                   AND active = TRUE
@@ -316,7 +365,8 @@ def update_doctor_schedule(
                     end_time,
                     active,
                     start_date,
-                    end_date
+                    end_date,
+                    department_id
                 """,
                 (
                     schedule.day_of_week,
@@ -324,6 +374,7 @@ def update_doctor_schedule(
                     schedule.end_time,
                     schedule.start_date,
                     schedule.end_date,
+                    schedule.department_id,
                     schedule_id,
                     doctor_id,
                 ),
@@ -340,6 +391,7 @@ def update_doctor_schedule(
         "active": row[4],
         "start_date": row[5].isoformat() if row[5] else None,
         "end_date": row[6].isoformat() if row[6] else None,
+        "department_id": row[7],
     }
 
 

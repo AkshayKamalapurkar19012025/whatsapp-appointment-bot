@@ -3,12 +3,14 @@ import {
   ApiError,
   assignAppointmentTypeToDoctor,
   assignDoctorToDepartment,
+  completeAdminAppointment,
   createDoctorBlock,
   createDoctorSchedule,
   deleteDoctorBlock,
   deleteDoctorSchedule,
   getDoctorBlocks,
   getDoctorDepartments,
+  getDoctorQueue,
   getDoctorScheduleAdmin,
   listAdminAppointments,
   listAppointmentTypeCatalog,
@@ -24,6 +26,7 @@ import type {
   Department,
   Doctor,
   DoctorBlockEntry,
+  DoctorQueue,
   DoctorScheduleEntry,
 } from '../types'
 import { formatDate, formatTime, formatTimeOfDay } from '../format'
@@ -99,10 +102,11 @@ function previewSlots(startTime: string, endTime: string, durationMinutes: numbe
   return slots
 }
 
-type DetailTab = 'upcoming' | 'schedule' | 'blocks' | 'departments' | 'types'
+type DetailTab = 'upcoming' | 'queue' | 'schedule' | 'blocks' | 'departments' | 'types'
 
 const DETAIL_TABS: { key: DetailTab; label: string }[] = [
   { key: 'upcoming', label: 'Upcoming' },
+  { key: 'queue', label: 'Queue' },
   { key: 'schedule', label: 'Schedule' },
   { key: 'blocks', label: 'Time off' },
   { key: 'departments', label: 'Departments' },
@@ -137,6 +141,7 @@ export default function DoctorDetail({ doctor, isAdmin }: { doctor: Doctor; isAd
       </div>
 
       {tab === 'upcoming' && <UpcomingAppointmentsSection doctor={doctor} />}
+      {tab === 'queue' && <QueueSection doctor={doctor} />}
       {tab === 'schedule' && <ScheduleSection doctor={doctor} isAdmin={isAdmin} />}
       {tab === 'blocks' && <BlocksSection doctor={doctor} />}
       {tab === 'departments' && <DepartmentAssignment doctor={doctor} isAdmin={isAdmin} />}
@@ -148,9 +153,11 @@ export default function DoctorDetail({ doctor, isAdmin }: { doctor: Doctor; isAd
 // -- This doctor's upcoming appointments (ADMIN or STAFF) ---------------
 // Scoped to doctor.id server-side via the same /appointments listing
 // AppointmentsPanel's own Upcoming tab uses; "upcoming" here means the
-// same thing it does there -- booked and not yet started (no separate
-// COMPLETED status, see migrations/0001_baseline_schema.sql, so a past
-// BOOKED appointment falls out of Upcoming on its own).
+// same thing it does there -- still Pending or Confirmed (the two
+// statuses that haven't happened, been rejected, or been cancelled yet)
+// and not yet started. GET /appointments only takes one status value at
+// a time, so both statuses are fetched unfiltered and narrowed
+// client-side, same as AppointmentsPanel's own Upcoming tab does.
 
 function UpcomingAppointmentsSection({ doctor }: { doctor: Doctor }) {
   const [appointments, setAppointments] = useState<AdminAppointment[]>([])
@@ -161,7 +168,7 @@ function UpcomingAppointmentsSection({ doctor }: { doctor: Doctor }) {
   function load() {
     setLoading(true)
     setError(null)
-    listAdminAppointments({ doctor_id: doctor.id, status: 'BOOKED' })
+    listAdminAppointments({ doctor_id: doctor.id })
       .then(setAppointments)
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load appointments'))
       .finally(() => setLoading(false))
@@ -175,6 +182,7 @@ function UpcomingAppointmentsSection({ doctor }: { doctor: Doctor }) {
   // already-stale data looks like on the next real render, never
   // mid-render.
   const upcoming = appointments
+    .filter((a) => a.status === 'PENDING' || a.status === 'CONFIRMED')
     // eslint-disable-next-line react/purity
     .filter((a) => new Date(a.start_at).getTime() >= Date.now())
     .filter(
@@ -237,6 +245,134 @@ function UpcomingAppointmentsSection({ doctor }: { doctor: Doctor }) {
             ))}
           </tbody>
         </table>
+      )}
+    </div>
+  )
+}
+
+// -- Today's walk-in queue (ADMIN or STAFF) -----------------------------
+// migrations/0012_appointment_queue_tokens.sql: a token number is
+// assigned the moment a Confirmed appointment is checked in (marked
+// Visited, from the Appointments panel or this doctor's Upcoming tab
+// above -- there's no separate check-in button, "Mark visited" IS
+// check-in). This tab is purely a read+advance view of that queue: who
+// has a token today, who's currently being served (the lowest token
+// still waiting -- this app has no separate "in consultation" status),
+// and who's already been seen.
+
+function QueueSection({ doctor }: { doctor: Doctor }) {
+  const [queue, setQueue] = useState<DoctorQueue | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [completingId, setCompletingId] = useState<number | null>(null)
+
+  function load() {
+    setLoading(true)
+    setError(null)
+    getDoctorQueue(doctor.id)
+      .then(setQueue)
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load the queue'))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(load, [doctor.id])
+
+  async function handleComplete(appointmentId: number) {
+    setError(null)
+    setCompletingId(appointmentId)
+    try {
+      await completeAdminAppointment(appointmentId)
+      load()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not mark the appointment completed')
+    } finally {
+      setCompletingId(null)
+    }
+  }
+
+  return (
+    <div className="detail-section">
+      <h4>Today&apos;s queue</h4>
+      {error && <p className="error">{error}</p>}
+
+      {loading && (
+        <div className="state-block">
+          <span className="spinner" aria-hidden="true" />
+          Loading…
+        </div>
+      )}
+
+      {!loading && queue && (
+        <>
+          <div className="queue-now-serving">
+            <span className="queue-now-serving-label">Now serving</span>
+            {queue.now_serving ? (
+              <>
+                <span className="queue-token-badge">#{queue.now_serving.token_number}</span>
+                <span>{queue.now_serving.patient_name}</span>
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ width: 'auto' }}
+                  disabled={completingId === queue.now_serving.appointment_id}
+                  onClick={() => handleComplete(queue.now_serving!.appointment_id)}
+                >
+                  {completingId === queue.now_serving.appointment_id ? 'Saving…' : 'Mark completed'}
+                </button>
+              </>
+            ) : (
+              <span className="muted">Nobody checked in yet today.</span>
+            )}
+          </div>
+
+          {queue.waiting.length > 0 && (
+            <>
+              <h4>Waiting ({queue.waiting.length})</h4>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Token</th>
+                    <th>Patient</th>
+                    <th>Checked in</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {queue.waiting.map((entry) => (
+                    <tr key={entry.appointment_id}>
+                      <td>#{entry.token_number}</td>
+                      <td>{entry.patient_name}</td>
+                      <td>{formatTime(entry.visited_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+
+          {queue.completed.length > 0 && (
+            <>
+              <h4>Completed today ({queue.completed.length})</h4>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Token</th>
+                    <th>Patient</th>
+                    <th>Checked in</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {queue.completed.map((entry) => (
+                    <tr key={entry.appointment_id}>
+                      <td>#{entry.token_number}</td>
+                      <td>{entry.patient_name}</td>
+                      <td>{formatTime(entry.visited_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+        </>
       )}
     </div>
   )
@@ -350,11 +486,13 @@ function DepartmentAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmin: bo
 
 function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean }) {
   const [entries, setEntries] = useState<DoctorScheduleEntry[]>([])
+  const [departments, setDepartments] = useState<Department[]>([])
   const [dayOfWeek, setDayOfWeek] = useState('1')
   const [startTime, setStartTime] = useState('09:00')
   const [endTime, setEndTime] = useState('17:00')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
+  const [departmentId, setDepartmentId] = useState('')
   const [breaks, setBreaks] = useState<{ start: string; end: string }[]>([])
   const [previewDuration, setPreviewDuration] = useState(30)
   const [error, setError] = useState<string | null>(null)
@@ -362,12 +500,25 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
   const [removeTarget, setRemoveTarget] = useState<DoctorScheduleEntry | null>(null)
 
   function load() {
-    getDoctorScheduleAdmin(doctor.id)
-      .then(setEntries)
+    // The doctor's own assigned departments (not every department in the
+    // system) populate the schedule form's department picker -- a row
+    // can only be scoped to a department this doctor actually belongs
+    // to, matching what app/api/doctor_schedule.py's create/update
+    // handlers validate server-side.
+    Promise.all([getDoctorScheduleAdmin(doctor.id), getDoctorDepartments(doctor.id)])
+      .then(([schedule, depts]) => {
+        setEntries(schedule)
+        setDepartments(depts)
+      })
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load schedule'))
   }
 
   useEffect(load, [doctor.id])
+
+  function departmentName(id: number | null): string {
+    if (id === null) return 'All departments'
+    return departments.find((d) => d.id === id)?.name ?? 'All departments'
+  }
 
   function addBreak() {
     setBreaks((prev) => [...prev, { start: '13:00', end: '14:00' }])
@@ -431,6 +582,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
     setEndTime('17:00')
     setStartDate('')
     setEndDate('')
+    setDepartmentId('')
     setBreaks([])
   }
 
@@ -440,6 +592,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
     endTime !== '17:00' ||
     startDate !== '' ||
     endDate !== '' ||
+    departmentId !== '' ||
     breaks.length > 0
 
   async function handleCreate(e: React.FormEvent) {
@@ -477,6 +630,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
             end_time: segments[i].end,
             start_date: startDate || null,
             end_date: endDate || null,
+            department_id: departmentId ? Number(departmentId) : null,
           })
         } catch (err) {
           if (i > 0) {
@@ -528,6 +682,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
             <th>Day</th>
             <th>Hours</th>
             <th>Date range</th>
+            <th>Department</th>
             <th />
           </tr>
         </thead>
@@ -543,6 +698,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
                   ? `${e.start_date ? formatDate(e.start_date) : 'Always'} – ${e.end_date ? formatDate(e.end_date) : 'Always'}`
                   : 'Every week'}
               </td>
+              <td>{departmentName(e.department_id)}</td>
               <td>
                 {isAdmin && (
                   <button type="button" className="link" onClick={() => setRemoveTarget(e)}>
@@ -554,7 +710,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
           ))}
           {entries.length === 0 && (
             <tr>
-              <td colSpan={4} className="muted">
+              <td colSpan={5} className="muted">
                 No recurring schedule set.
               </td>
             </tr>
@@ -598,6 +754,24 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
           <label className="inline-label">
             Until (optional)
             <AdminDatePicker value={endDate} onChange={setEndDate} label="Pick end date" />
+          </label>
+          <label className="inline-label">
+            Department (optional)
+            <select
+              value={departmentId}
+              onChange={(e) => setDepartmentId(e.target.value)}
+              disabled={departments.length === 0}
+            >
+              <option value="">All departments</option>
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+            {departments.length === 0 && (
+              <span className="muted">Assign a department (Departments tab) to set department-specific hours.</span>
+            )}
           </label>
           <button type="submit" disabled={busy}>
             {busy ? 'Saving…' : 'Save'}

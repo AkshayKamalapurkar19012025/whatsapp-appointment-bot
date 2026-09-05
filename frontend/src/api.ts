@@ -5,9 +5,12 @@ import type {
   AppointmentTypeSummary,
   BookedAppointment,
   CalendarMonth,
+  DashboardStats,
+  DashboardTrends,
   Department,
   Doctor,
   DoctorBlockEntry,
+  DoctorQueue,
   DoctorScheduleEntry,
   MyAppointmentsResponse,
   Patient,
@@ -159,6 +162,10 @@ export function getCalendarMonth(
   appointmentTypeId: number,
   year: number,
   month: number,
+  // Narrows results to this department's schedule rows (plus any
+  // department-agnostic ones) -- see migrations/0010. Omit when there's
+  // no department in scope (e.g. rescheduling), which sees every row.
+  departmentId?: number,
 ): Promise<CalendarMonth> {
   const params = new URLSearchParams({
     doctor_id: String(doctorId),
@@ -166,6 +173,7 @@ export function getCalendarMonth(
     year: String(year),
     month: String(month),
   })
+  if (departmentId !== undefined) params.set('department_id', String(departmentId))
   return request(`/web/calendar?${params.toString()}`)
 }
 
@@ -173,6 +181,7 @@ export function getSlotsForDate(
   doctorId: number,
   appointmentTypeId: number,
   isoDate: string,
+  departmentId?: number,
 ): Promise<{ slots: { start_at: string; end_at: string }[]; duration_minutes: number }> {
   return request('/availability', {
     method: 'POST',
@@ -180,6 +189,7 @@ export function getSlotsForDate(
       doctor_id: doctorId,
       appointment_type_id: appointmentTypeId,
       date: isoDate,
+      ...(departmentId !== undefined ? { department_id: departmentId } : {}),
     },
   })
 }
@@ -246,6 +256,16 @@ export function staffLogout(): Promise<{ message: string }> {
   return request('/auth/staff/logout', { method: 'POST', auth: 'staff' })
 }
 
+// -- Dashboard ---------------------------------------------------------
+
+export function getDashboardStats(): Promise<DashboardStats> {
+  return request('/dashboard/stats', { auth: 'staff' })
+}
+
+export function getDashboardTrends(days = 14): Promise<DashboardTrends> {
+  return request(`/dashboard/trends?days=${days}`, { auth: 'staff' })
+}
+
 // -- WEB P11: staff accounts (ADMIN only) -----------------------------------
 
 export function listStaffAccounts(): Promise<StaffAccount[]> {
@@ -294,6 +314,10 @@ export function createDoctor(name: string): Promise<Doctor> {
 
 export function getDoctorDepartments(doctorId: number): Promise<Department[]> {
   return request(`/doctors/${doctorId}/departments`)
+}
+
+export function getDoctorQueue(doctorId: number): Promise<DoctorQueue> {
+  return request(`/doctors/${doctorId}/queue`, { auth: 'staff' })
 }
 
 export function assignDoctorToDepartment(
@@ -360,6 +384,7 @@ export function createDoctorSchedule(
     end_time: string
     start_date?: string | null
     end_date?: string | null
+    department_id?: number | null
   },
 ): Promise<DoctorScheduleEntry> {
   return request(`/doctors/${doctorId}/schedule`, {
@@ -481,6 +506,35 @@ export function rescheduleAdminAppointment(
     auth: 'staff',
     body: { new_start_at: newStartAt },
   })
+}
+
+// Lifecycle transitions (migrations/0011_appointment_lifecycle_
+// statuses.sql): PENDING -> CONFIRMED -> VISITED -> COMPLETED, with
+// PENDING -> REJECTED or PENDING/CONFIRMED -> CANCELLED (cancelAdmin
+// Appointment above) as the two "never happened" exits.
+
+export function confirmAdminAppointment(
+  appointmentId: number,
+): Promise<{ id: number; status: string }> {
+  return request(`/appointments/${appointmentId}/confirm`, { method: 'POST', auth: 'staff' })
+}
+
+export function rejectAdminAppointment(
+  appointmentId: number,
+): Promise<{ id: number; status: string }> {
+  return request(`/appointments/${appointmentId}/reject`, { method: 'POST', auth: 'staff' })
+}
+
+export function visitAdminAppointment(
+  appointmentId: number,
+): Promise<{ id: number; status: string; token_number: number; visited_at: string }> {
+  return request(`/appointments/${appointmentId}/visit`, { method: 'POST', auth: 'staff' })
+}
+
+export function completeAdminAppointment(
+  appointmentId: number,
+): Promise<{ id: number; status: string }> {
+  return request(`/appointments/${appointmentId}/complete`, { method: 'POST', auth: 'staff' })
 }
 
 // Staff-only month availability for the admin date picker -- unlike

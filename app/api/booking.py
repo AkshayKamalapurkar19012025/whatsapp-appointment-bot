@@ -494,11 +494,11 @@ def get_upcoming_booked_appointments(cur, patient_id: int):
         JOIN appointment_types at
             ON at.id = a.appointment_type_id
         WHERE a.patient_id = %s
-          AND a.status = 'BOOKED'
+          AND a.status = ANY(%s::text[])
           AND a.start_at > NOW()
         ORDER BY a.start_at
         """,
-        (patient_id,),
+        (patient_id, ["PENDING", "CONFIRMED"]),
     )
 
     rows = cur.fetchall()
@@ -2022,12 +2022,13 @@ def booking(request: BookingRequest):
                     SET status = 'CANCELLED', updated_at = NOW()
                     WHERE id = %s
                     AND patient_id = %s
-                    AND status = 'BOOKED'
+                    AND status = ANY(%s::text[])
                     RETURNING id, start_at, end_at
                     """,
     (
         session["selected_appointment_id"],
         patient["id"],
+        ["PENDING", "CONFIRMED"],
     ),
                 )
 
@@ -3315,12 +3316,13 @@ def booking(request: BookingRequest):
                     WHERE doctor_id = %s
                       AND start_at < %s
                       AND end_at > %s
-                      AND status <> 'CANCELLED'
+                      AND NOT (status = ANY(%s::text[]))
                     """,
                     (
                         session["doctor_id"],
                         end_at,
                         start_at,
+                        ["CANCELLED", "REJECTED"],
                     ),
                 )
 
@@ -3405,7 +3407,7 @@ def booking(request: BookingRequest):
                             %s,
                             %s,
                             %s,
-                            'BOOKED'
+                            'PENDING'
                         )
                         RETURNING
                             id,
@@ -3488,7 +3490,10 @@ def booking(request: BookingRequest):
                         "status": row[6],
                     },
                     "next_step": "BOOKED",
-                    "message": "Your appointment has been booked successfully.\n\n" + main_menu_message(),
+                    "message": (
+                        "Your appointment request has been received and is awaiting "
+                        "confirmation from our staff.\n\n" + main_menu_message()
+                    ),
                 }
 
             # =============================================================

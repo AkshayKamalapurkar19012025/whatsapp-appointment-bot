@@ -234,6 +234,29 @@ h4 {
   }
 }
 
+/* Radix DropdownMenu (components/ui/dropdown-menu.tsx) -- an anchored
+   popover, not a centered modal, so it gets its own small
+   fade-and-rise rather than reusing dialog-content-in's translate(-50%,
+   -50%) centering. */
+.dropdown-menu-content-anim[data-state='open'] {
+  animation: dropdown-content-in 0.14s ease-out;
+}
+
+.dropdown-menu-content-anim[data-state='closed'] {
+  animation: dropdown-content-in 0.1s ease-in reverse;
+}
+
+@keyframes dropdown-content-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 /* Radix Select (components/ui/select.tsx) popover open motion. */
 .select-content-anim[data-state='open'] {
   animation: select-content-in 0.12s ease-out;
@@ -782,6 +805,149 @@ a.link.danger {
 }
 
 /* ===========================================================
+   Dashboard (DashboardPanel.tsx)
+   =========================================================== */
+
+.quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-6);
+}
+
+.quick-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: auto;
+  padding: 10px 16px;
+  background: var(--color-surface);
+  color: var(--color-primary-hover);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  transition: border-color 0.12s ease, background 0.12s ease, transform 0.08s ease;
+}
+
+.quick-action-btn:hover {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+}
+
+.quick-action-btn:active {
+  transform: scale(0.98);
+}
+
+/* Dashboard's own grid: 4 equal columns on desktop, each card
+   declaring how many it spans (the welcome banner, the pending/
+   confirmed pair, and each chart are all --wide, spanning 2; a section
+   heading spans the full row via grid-column: 1 / -1 below; everything
+   else defaults to 1). Collapses to 2 columns, then 1, as the viewport
+   narrows -- see the mobile breakpoint at the end of this file. */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-3);
+}
+
+.dashboard-section-heading {
+  grid-column: 1 / -1;
+  margin: var(--space-2) 0 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.welcome-card,
+.chart-card {
+  grid-column: span 2;
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.welcome-card h3,
+.chart-card h4 {
+  margin: 0 0 var(--space-1);
+}
+
+.welcome-card .quick-actions {
+  margin: var(--space-4) 0 0;
+}
+
+.welcome-totals {
+  display: flex;
+  gap: var(--space-6);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.welcome-totals > div {
+  display: flex;
+  flex-direction: column;
+}
+
+.welcome-total-value {
+  font-family: var(--font-heading);
+  font-size: 1.3rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.welcome-total-label {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.stat-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.stat-card.stat-card--wide {
+  grid-column: span 2;
+}
+
+.stat-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-md);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.stat-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.stat-value {
+  font-family: var(--font-heading);
+  font-size: 1.5rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.stat-label {
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+}
+
+/* ===========================================================
    Slot picker (SlotGrid.tsx / AdminSlotPicker.tsx)
    =========================================================== */
 
@@ -1243,6 +1409,87 @@ a.link.danger {
   color: var(--color-danger);
 }
 
+/* Appointment lifecycle statuses (migrations/0011_appointment_
+   lifecycle_statuses.sql): PENDING -> CONFIRMED -> VISITED -> COMPLETED,
+   with PENDING -> REJECTED or PENDING/CONFIRMED -> CANCELLED as the two
+   "never happened" exits. .status-confirmed reuses the same success
+   green as the pre-existing .status-booked (a Confirmed appointment is
+   today's equivalent of the old, single "booked" state) and
+   .status-rejected reuses .status-cancelled's danger red (same "never
+   happened" meaning to a viewer) rather than inventing new colors for
+   states that already read correctly with the existing ones. */
+.pill.status-pending {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.pill.status-confirmed {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.pill.status-rejected {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.pill.status-visited {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-hover);
+}
+
+.pill.status-completed {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-secondary);
+}
+
+.pill.token-pill {
+  margin-left: var(--space-2);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-hover);
+}
+
+/* ===========================================================
+   Doctor queue (DoctorDetail.tsx's QueueSection)
+   =========================================================== */
+
+.queue-now-serving {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  margin-bottom: var(--space-5);
+  background: var(--color-primary-soft);
+  border-radius: var(--radius-md);
+}
+
+.queue-now-serving-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-primary-hover);
+}
+
+.queue-token-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  height: 40px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  font-family: var(--font-heading);
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.queue-now-serving .btn {
+  margin-left: auto;
+}
+
 .pill.role-admin {
   background: var(--color-primary-soft);
   color: var(--color-primary-hover);
@@ -1316,6 +1563,47 @@ a.link.danger {
   justify-content: space-between;
   gap: var(--space-4);
   margin-bottom: var(--space-2);
+}
+
+.admin-topbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-5);
+}
+
+.admin-account-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 10px 6px 6px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.admin-account-trigger:hover,
+.admin-account-trigger[data-state='open'] {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-strong);
+}
+
+.admin-account-trigger-text {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.88rem;
+}
+
+.admin-account-trigger-text strong {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.admin-account-trigger-caret {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
 }
 
 .admin-content h2 {
@@ -1427,16 +1715,6 @@ a.link.danger {
 .admin-sidebar-item.disabled {
   cursor: default;
   opacity: 0.5;
-}
-
-.admin-sidebar-footer {
-  border-top: 1px solid var(--color-border);
-  padding: var(--space-3) var(--space-2) 0;
-  flex-shrink: 0;
-}
-
-.admin-sidebar-footer .link {
-  margin: 0;
 }
 
 /* ===========================================================
@@ -1671,14 +1949,28 @@ a.link.danger {
     flex: 1;
     gap: var(--space-1);
   }
-  .admin-sidebar-footer {
-    border-top: none;
-    padding: 0;
-  }
   .admin-content {
     padding: var(--space-5);
   }
   .slot-grid {
     grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  }
+  .dashboard-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 560px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+  .welcome-card,
+  .chart-card,
+  .stat-card.stat-card--wide {
+    grid-column: span 1;
+  }
+  .welcome-totals {
+    flex-wrap: wrap;
+    gap: var(--space-4);
   }
 }

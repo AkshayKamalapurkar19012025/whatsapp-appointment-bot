@@ -99,7 +99,7 @@ export default function BookingFlow({
     if (!doctor || !appointmentType) return
     setSelectedDate(isoDate)
     setError(null)
-    getSlotsForDate(doctor.id, appointmentType.id, isoDate)
+    getSlotsForDate(doctor.id, appointmentType.id, isoDate, department?.id)
       .then((result) => {
         setSlots(result.slots)
         setStep('slot')
@@ -222,7 +222,12 @@ export default function BookingFlow({
       {step === 'date' && doctor && appointmentType && (
         <>
           <h2>Choose a date</h2>
-          <Calendar doctorId={doctor.id} appointmentTypeId={appointmentType.id} onSelectDate={chooseDate} />
+          <Calendar
+            doctorId={doctor.id}
+            appointmentTypeId={appointmentType.id}
+            departmentId={department?.id}
+            onSelectDate={chooseDate}
+          />
           <button type="button" className="link" onClick={() => setStep('appointmentType')}>
             Back
           </button>

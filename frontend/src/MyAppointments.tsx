@@ -260,6 +260,9 @@ export default function MyAppointments({
                     {formatDate(appointment.start_at)} · {formatTime(appointment.start_at)} –{' '}
                     {formatTime(appointment.end_at)}
                   </div>
+                  {appointment.token_number !== null && (
+                    <div className="muted">Token #{appointment.token_number}</div>
+                  )}
                 </div>
                 {tab === 'upcoming' && (
                   <div className="appointment-actions">

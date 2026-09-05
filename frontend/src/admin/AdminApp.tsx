@@ -4,9 +4,9 @@ import {
   CalendarCheck,
   CalendarPlus,
   ChartLineUp,
+  Gauge,
   GearSix,
   ShieldCheck,
-  SignOut,
   Stethoscope,
   Tag,
   UsersThree,
@@ -14,6 +14,7 @@ import {
 import { clearStaffToken, getStaffMe, getStaffToken, staffLogout } from '../api'
 import type { Staff } from '../types'
 import StaffLoginFlow from './StaffLoginFlow'
+import DashboardPanel from './DashboardPanel'
 import DepartmentsPanel from './DepartmentsPanel'
 import DoctorsPanel from './DoctorsPanel'
 import AppointmentTypesPanel from './AppointmentTypesPanel'
@@ -22,8 +23,10 @@ import PatientsPanel from './PatientsPanel'
 import AppointmentsPanel from './AppointmentsPanel'
 import BookAppointmentPanel from './BookAppointmentPanel'
 import AdminSidebar, { type AdminSidebarItem } from './AdminSidebar'
+import AdminTopBar from './AdminTopBar'
 
 type Section =
+  | 'dashboard'
   | 'appointments'
   | 'book-appointment'
   | 'doctors'
@@ -42,7 +45,7 @@ type Section =
 export default function AdminApp() {
   const [staff, setStaff] = useState<Staff | null>(null)
   const [checkingSession, setCheckingSession] = useState(true)
-  const [section, setSection] = useState<Section>('appointments')
+  const [section, setSection] = useState<Section>('dashboard')
 
   useEffect(() => {
     if (!getStaffToken()) {
@@ -65,7 +68,7 @@ export default function AdminApp() {
     await staffLogout().catch(() => undefined)
     clearStaffToken()
     setStaff(null)
-    setSection('appointments')
+    setSection('dashboard')
   }
 
   function goTo(target: Section) {
@@ -108,6 +111,13 @@ export default function AdminApp() {
   // they stay visible (with a plain "Coming soon" label) rather than a
   // silently incomplete menu or a dead-end click.
   const menuItems: AdminSidebarItem[] = [
+    {
+      key: 'dashboard',
+      label: 'Dashboard',
+      icon: <Gauge size={20} weight="regular" />,
+      active: section === 'dashboard',
+      onSelect: () => goTo('dashboard'),
+    },
     {
       key: 'appointments',
       label: 'Appointments',
@@ -173,25 +183,24 @@ export default function AdminApp() {
       icon: <GearSix size={20} weight="regular" />,
       disabled: true,
     },
-    {
-      key: 'logout',
-      label: 'Logout',
-      icon: <SignOut size={20} weight="regular" />,
-      onSelect: handleLogout,
-    },
   ]
 
   return (
     <div className="page">
       <div className="admin-shell">
-        <AdminSidebar
-          items={menuItems}
-          username={staff.username}
-          role={staff.role}
-          footerItems={[{ key: 'patient-site', label: 'Patient site', onSelect: () => window.location.assign('/') }]}
-        />
+        <AdminSidebar items={menuItems} />
 
         <main className="admin-content">
+          <AdminTopBar username={staff.username} role={staff.role} onLogout={handleLogout} />
+
+          {section === 'dashboard' && (
+            <DashboardPanel
+              staffName={staff.username}
+              onBookAppointment={() => goTo('book-appointment')}
+              onGoToDoctors={() => goTo('doctors')}
+              onGoToPatients={() => goTo('patients')}
+            />
+          )}
           {section === 'appointments' && <AppointmentsPanel onBookAppointment={() => goTo('book-appointment')} />}
           {section === 'book-appointment' && (
             <BookAppointmentPanel onViewAppointments={() => goTo('appointments')} />

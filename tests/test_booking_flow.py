@@ -46,13 +46,13 @@ def test_full_booking_flow_creates_booked_appointment(client, db_connection):
     result = book_first_available_slot(client, number)
 
     assert result["next_step"] == "BOOKED"
-    assert result["appointment"]["status"] == "BOOKED"
+    assert result["appointment"]["status"] == "PENDING"
 
     with db_connection.cursor() as cur:
         cur.execute("SELECT status FROM appointments WHERE id = %s", (result["appointment"]["id"],))
         row = cur.fetchone()
     assert row is not None
-    assert row[0] == "BOOKED"
+    assert row[0] == "PENDING"
 
 
 def test_booking_uses_doctor_specific_timezone(client, db_connection):
@@ -185,7 +185,7 @@ def test_reschedule_flow_cancels_old_and_books_new(client, db_connection):
         rows = {row[0]: row[1] for row in cur.fetchall()}
 
     assert rows[original_id] == "CANCELLED"
-    assert rows[new_id] == "BOOKED"
+    assert rows[new_id] == "PENDING"
 
 
 def test_back_navigation_returns_to_previous_step(client, db_connection):

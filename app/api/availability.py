@@ -16,6 +16,15 @@ class AvailabilityRequest(BaseModel):
     doctor_id: int
     appointment_type_id: int
     date: date
+    # Optional (migrations/0010): when the caller already knows which
+    # department this slot lookup is for (the patient web/WhatsApp
+    # flows both select department before doctor), passing it narrows
+    # results to that department's schedule rows plus any department-
+    # agnostic ones. Omitted entirely by admin booking/reschedule and
+    # the patient reschedule flow, which have no department in scope
+    # and so see every active row regardless of department -- see
+    # get_available_slots's docstring for the exact semantics.
+    department_id: int | None = None
 
 
 @router.post("")
@@ -95,6 +104,7 @@ def get_available_slots(request: AvailabilityRequest):
                 doctor_id,
                 appointment_type_id,
                 requested_date,
+                department_id=request.department_id,
             )
 
     return {

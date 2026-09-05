@@ -35,8 +35,13 @@ from app.services.appointment_services import (
     create_appointment_service,
     cancel_appointment_service,
     reschedule_appointment_service,
+    confirm_appointment_service,
+    reject_appointment_service,
+    mark_visited_service,
+    mark_completed_service,
 )
 from app.services.availability_engine import list_available_dates_in_range
+from app.services.notifications import KIND_CHECK_IN, send_mock_notification
 from app.utils.timezone import convert_to_timezone, validate_timezone
 
 logger = logging.getLogger(__name__)
@@ -129,7 +134,8 @@ def get_appointments(
                     at.name,
                     a.start_at,
                     a.end_at,
-                    a.status
+                    a.status,
+                    a.token_number
                 FROM appointments a
                 JOIN doctors d
                     ON d.id = a.doctor_id
@@ -171,6 +177,7 @@ def get_appointments(
                 "start_at": local_start_at.isoformat(),
                 "end_at": convert_to_timezone(row[10], doctor_tz).isoformat(),
                 "status": row[11],
+                "token_number": row[12],
             }
         )
 
@@ -302,7 +309,7 @@ def cancel_appointment(
             except svc_exc.AlreadyCancelled:
                 raise HTTPException(
                     status_code=409,
-                    detail="Appointment is already cancelled",
+                    detail="Appointment can no longer be cancelled",
                 )
 
     return {
@@ -379,6 +386,127 @@ def reschedule_appointment(
                 raise HTTPException(
                     status_code=409,
                     detail="That slot was just booked by someone else",
+                )
+
+    return result
+
+
+# ---------------------------------------------------------------------
+# Lifecycle transitions (migrations/0011_appointment_lifecycle_
+# statuses.sql): every appointment starts PENDING (WhatsApp, patient web
+# booking, and the admin create above all go through the same
+# create_appointment_service). Staff move it forward from here -- same
+# RBAC as the rest of this router (any authenticated STAFF or ADMIN,
+# matching cancel/reschedule above, not require_role("ADMIN")).
+# ---------------------------------------------------------------------
+
+
+@router.post("/{appointment_id}/confirm")
+def confirm_appointment(
+    appointment_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = confirm_appointment_service(cur, appointment_id)
+            except svc_exc.AppointmentNotFound:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            except svc_exc.InvalidStatusTransition:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Only a Pending appointment can be confirmed",
+                )
+
+    return result
+
+
+@router.post("/{appointment_id}/reject")
+def reject_appointment(
+    appointment_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = reject_appointment_service(cur, appointment_id)
+            except svc_exc.AppointmentNotFound:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            except svc_exc.InvalidStatusTransition:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Only a Pending appointment can be rejected",
+                )
+
+    return result
+
+
+@router.post("/{appointment_id}/visit")
+def visit_appointment(
+    appointment_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = mark_visited_service(cur, appointment_id)
+            except svc_exc.AppointmentNotFound:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            except svc_exc.InvalidStatusTransition:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Only a Confirmed appointment can be marked Visited",
+                )
+
+            # Staff-initiated check-in notification (migrations/0012) --
+            # tells the patient their queue token number. Not a
+            # duplicate of anything: unlike a WhatsApp-driven action,
+            # the patient isn't mid-chat with the bot when staff check
+            # them in at the front desk, so there's no live confirmation
+            # this would repeat (see notifications.py's KIND_CHECK_IN
+            # note).
+            cur.execute(
+                """
+                SELECT p.whatsapp_number, p.name, d.name
+                FROM patients p, doctors d
+                WHERE p.id = %s AND d.id = %s
+                """,
+                (result["patient_id"], result["doctor_id"]),
+            )
+            patient_number, patient_name, doctor_name = cur.fetchone()
+            send_mock_notification(
+                cur,
+                patient_number,
+                KIND_CHECK_IN,
+                (
+                    f"Hi {patient_name}, you're checked in with {doctor_name}. "
+                    f"Your token number is {result['token_number']}."
+                ),
+            )
+
+    return {
+        "id": result["id"],
+        "status": result["status"],
+        "token_number": result["token_number"],
+        "visited_at": result["visited_at"],
+    }
+
+
+@router.post("/{appointment_id}/complete")
+def complete_appointment(
+    appointment_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = mark_completed_service(cur, appointment_id)
+            except svc_exc.AppointmentNotFound:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            except svc_exc.InvalidStatusTransition:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Only a Visited appointment can be marked Completed",
                 )
 
     return result

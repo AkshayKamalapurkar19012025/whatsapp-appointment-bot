@@ -18,27 +18,12 @@ export interface AdminSidebarItem {
 // clickable row in this app already gets (.data-table tbody tr:hover,
 // .tag-list .link, etc.) -- nothing here needs its own bespoke
 // animation.
-export default function AdminSidebar({
-  items,
-  footerItems,
-  username,
-  role,
-}: {
-  items: AdminSidebarItem[]
-  footerItems?: { key: string; label: string; onSelect: () => void }[]
-  username: string
-  role: string
-}) {
+export default function AdminSidebar({ items }: { items: AdminSidebarItem[] }) {
   return (
     <nav className="admin-sidebar" aria-label="Admin navigation">
       <div className="admin-sidebar-brand">
         <span className="brand-mark">A</span>
-        <span>
-          <strong>Appointment Admin</strong>
-          <span className="muted admin-sidebar-role">
-            {username} · <span className={`pill role-${role.toLowerCase()}`}>{role}</span>
-          </span>
-        </span>
+        <strong>Appointment Admin</strong>
       </div>
 
       <ul className="admin-sidebar-list">
@@ -61,16 +46,6 @@ export default function AdminSidebar({
           </li>
         ))}
       </ul>
-
-      {footerItems && footerItems.length > 0 && (
-        <div className="admin-sidebar-footer">
-          {footerItems.map((f) => (
-            <button key={f.key} type="button" className="link" onClick={f.onSelect}>
-              {f.label}
-            </button>
-          ))}
-        </div>
-      )}
     </nav>
   )
 }
