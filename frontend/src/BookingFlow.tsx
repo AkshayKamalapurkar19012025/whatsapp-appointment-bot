@@ -239,7 +239,7 @@ export default function BookingFlow({
         onLoggedOut()
         return
       }
-      setError(err instanceof ApiError ? err.message : 'Could not book the appointment')
+      setError(err instanceof ApiError ? err.message : 'Could not schedule the appointment')
     } finally {
       setBusy(false)
     }
@@ -274,13 +274,13 @@ export default function BookingFlow({
   return (
     <div className="patient-shell">
       <div className="card patient-card">
-        <PatientTopBar patientName={patientName} subtitle="Book your next appointment in just a few steps." />
+        <PatientTopBar patientName={patientName} subtitle="Schedule your next appointment in just a few steps." />
 
         {error && <p className="error">{error}</p>}
 
         {step === 'mode' && (
           <>
-            <h2>How would you like to book your appointment?</h2>
+            <h2>How would you like to schedule your appointment?</h2>
             <p className="muted choice-step-subtitle">Choose an option below to get started.</p>
             <div className="choice-grid">
               <button
@@ -564,7 +564,7 @@ export default function BookingFlow({
             </dd>
           </dl>
           <button type="button" onClick={confirmBooking} disabled={busy}>
-            {busy ? 'Booking…' : 'Confirm booking'}
+            {busy ? 'Scheduling…' : 'Confirm appointment'}
           </button>
           <div className="step-actions">
             <button type="button" className="link" onClick={() => setStep('slot')}>
@@ -610,7 +610,7 @@ export default function BookingFlow({
           </p>
           <div className="confirmation-actions">
             <button type="button" className="btn" onClick={startOver}>
-              Book another appointment
+              Schedule another appointment
             </button>
             <button type="button" className="link" onClick={onViewAppointments}>
               View my appointments

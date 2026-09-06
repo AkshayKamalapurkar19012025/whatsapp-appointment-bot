@@ -202,4 +202,4 @@ def test_booking_enforces_calendar_window(client, db_connection):
     )
 
     assert response.status_code == 409
-    assert "booking window" in response.json()["detail"]
+    assert "scheduling window" in response.json()["detail"]
