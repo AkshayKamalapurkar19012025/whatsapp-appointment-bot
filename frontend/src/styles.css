@@ -2399,15 +2399,26 @@ a.link.danger {
   color: var(--color-primary-hover);
 }
 
+/* A small count badge (not a bare dot) so "you already have N
+   appointments here" is legible at a glance, not just "something is
+   marked" -- sized to still fit a single day cell. */
 .calendar-day-marker {
   position: absolute;
-  bottom: 3px;
-  right: 3px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
+  bottom: 2px;
+  right: 2px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
   background: var(--color-primary);
-  border: 1px solid var(--color-surface);
+  color: var(--color-on-primary);
+  border: 1.5px solid var(--color-surface);
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
 }
 
@@ -2418,7 +2429,8 @@ a.link.danger {
   transform: translateX(-50%);
   z-index: 20;
   width: max-content;
-  max-width: 190px;
+  min-width: 200px;
+  max-width: 230px;
   background: var(--color-glass);
   border: 1px solid var(--color-primary-soft-strong);
   border-radius: var(--radius-sm);
@@ -2427,6 +2439,38 @@ a.link.danger {
   backdrop-filter: blur(20px);
   text-align: left;
   pointer-events: none;
+}
+
+.calendar-day-popover-title {
+  margin: 0 0 var(--space-2);
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.calendar-day-popover-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.calendar-day-popover-row:first-of-type {
+  border-top: none;
+}
+
+.calendar-day-popover-time {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.calendar-day-popover .pill {
+  padding: 2px 8px;
+  font-size: 0.62rem;
 }
 
 /* A pointer connecting the popover to the marked date's dot directly
@@ -2454,17 +2498,6 @@ a.link.danger {
   border: 6px solid transparent;
   border-top-color: var(--color-glass);
   z-index: 1;
-}
-
-.calendar-day-popover p {
-  margin: 0;
-  font-size: 0.78rem;
-  line-height: 1.4;
-  color: var(--color-text);
-}
-
-.calendar-day-popover p + p {
-  margin-top: var(--space-1);
 }
 
 /* ===========================================================

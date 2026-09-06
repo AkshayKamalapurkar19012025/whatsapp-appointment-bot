@@ -174,7 +174,7 @@ export default function MonthGrid({
                     className="calendar-day-marker"
                     role="button"
                     tabIndex={0}
-                    aria-label={`You already have an appointment with ${doctorName ?? 'this doctor'} on this date -- show details`}
+                    aria-label={`You already have ${existingAppointments.length === 1 ? 'an appointment' : `${existingAppointments.length} appointments`} with ${doctorName ?? 'this doctor'} on this date -- show details`}
                     aria-expanded={isPopoverOpen}
                     onMouseEnter={() => setOpenMarkerDate(cell.iso)}
                     onMouseLeave={() => setOpenMarkerDate((current) => (current === cell.iso ? null : current))}
@@ -197,16 +197,24 @@ export default function MonthGrid({
                         setOpenMarkerDate((current) => (current === cell.iso ? null : cell.iso))
                       }
                     }}
-                  />
+                  >
+                    {existingAppointments.length}
+                  </span>
                 )}
                 {existingAppointments && existingAppointments.length > 0 && isPopoverOpen && (
                   <div className="calendar-day-popover" role="tooltip">
+                    <p className="calendar-day-popover-title">
+                      {MONTH_NAMES[Number(cell.iso.slice(5, 7)) - 1]} {cell.day} with {doctorName ?? 'this doctor'}
+                    </p>
                     {existingAppointments.map((appointment) => (
-                      <p key={appointment.id}>
-                        You already have an appointment with {doctorName ?? 'this doctor'} on{' '}
-                        {MONTH_NAMES[Number(cell.iso.slice(5, 7)) - 1].slice(0, 3)} {cell.day},{' '}
-                        {formatTime(appointment.start_at)}–{formatTime(appointment.end_at)}.
-                      </p>
+                      <div key={appointment.id} className="calendar-day-popover-row">
+                        <span className="calendar-day-popover-time">
+                          {formatTime(appointment.start_at)}–{formatTime(appointment.end_at)}
+                        </span>
+                        <span className={`pill status-${appointment.status.toLowerCase()}`}>
+                          {appointment.status}
+                        </span>
+                      </div>
                     ))}
                   </div>
                 )}
