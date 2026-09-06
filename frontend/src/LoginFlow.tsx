@@ -92,7 +92,7 @@ export default function LoginFlow({ onLoggedIn }: { onLoggedIn: () => void }) {
   return (
     <div className="login-shell">
       <div className="login-shell-glow" aria-hidden="true" />
-      <div className="card login-card">
+      <div className="card patient-card login-card">
         <div className="login-icon-badge" aria-hidden="true">
           <HeaderIcon size={28} weight="light" />
         </div>
