@@ -64,7 +64,9 @@ export default function App() {
     <>
       <AppHeader
         loggedIn={patient !== null}
+        patientName={patient?.name}
         primaryLabel={view === 'booking' ? 'My appointments' : 'Book an appointment'}
+        primaryLabelShort={view === 'booking' ? 'Appointments' : 'Book'}
         onPrimaryAction={() => setView(view === 'booking' ? 'appointments' : 'booking')}
         onLogout={handleLogout}
       />
