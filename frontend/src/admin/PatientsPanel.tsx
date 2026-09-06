@@ -74,7 +74,7 @@ export default function PatientsPanel() {
           Mobile number
           <PhoneInput value={whatsappNumber} onChange={setWhatsappNumber} />
         </label>
-        <button type="submit" style={{ width: 'auto' }} disabled={busy}>
+        <button type="submit" className="btn-sm" disabled={busy}>
           {busy ? 'Creating…' : 'Add patient'}
         </button>
       </form>
@@ -105,8 +105,7 @@ export default function PatientsPanel() {
         {(searchText || typeFilter !== 'all') && (
           <button
             type="button"
-            className="btn-secondary btn"
-            style={{ width: 'auto' }}
+            className="btn-secondary btn btn-sm"
             onClick={() => {
               setSearchText('')
               setTypeFilter('all')

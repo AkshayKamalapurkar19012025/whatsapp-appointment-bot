@@ -249,7 +249,7 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
             />
           </label>
           <div className="doctor-form-actions">
-            <button type="submit" style={{ width: 'auto' }} disabled={savingProfile}>
+            <button type="submit" className="btn-sm" disabled={savingProfile}>
               {savingProfile ? 'Saving…' : 'Save profile'}
             </button>
           </div>
@@ -333,7 +333,7 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
             />
           </label>
           <div className="doctor-form-actions">
-            <button type="submit" style={{ width: 'auto' }} disabled={eduBusy}>
+            <button type="submit" className="btn-sm" disabled={eduBusy}>
               {eduBusy ? 'Adding…' : 'Add entry'}
             </button>
           </div>

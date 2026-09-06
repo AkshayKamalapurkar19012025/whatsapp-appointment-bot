@@ -132,10 +132,10 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
             Booked {justBooked.patientName} with {justBooked.doctorName}.
           </p>
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginTop: 8 }}>
-            <button type="button" className="btn" style={{ width: 'auto' }} onClick={() => setJustBooked(null)}>
+            <button type="button" className="btn btn-sm" onClick={() => setJustBooked(null)}>
               Book another
             </button>
-            <button type="button" className="btn-secondary btn" style={{ width: 'auto' }} onClick={onViewAppointments}>
+            <button type="button" className="btn-secondary btn btn-sm" onClick={onViewAppointments}>
               View appointments
             </button>
           </div>
@@ -226,7 +226,7 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
             {missingSelection ?? 'Ready to book -- review the details above, then confirm.'}
           </p>
         )}
-        <button type="submit" className="btn" style={{ width: 'auto' }} disabled={!canSubmit}>
+        <button type="submit" className="btn btn-sm" disabled={!canSubmit}>
           {busy ? 'Booking…' : 'Book appointment'}
         </button>
       </form>

@@ -191,7 +191,7 @@ export default function AppointmentsPanel({
     <section>
       <div className="admin-content-header">
         <h2>Appointments</h2>
-        <button type="button" className="btn" style={{ width: 'auto' }} onClick={onBookAppointment}>
+        <button type="button" className="btn btn-sm" onClick={onBookAppointment}>
           + Book appointment
         </button>
       </div>
@@ -309,8 +309,7 @@ export default function AppointmentsPanel({
         {(doctorFilter || patientFilter || statusFilter || appointmentTypeFilter || dateFromFilter || dateToFilter || searchText) && (
           <button
             type="button"
-            className="btn-secondary btn"
-            style={{ width: 'auto' }}
+            className="btn-secondary btn btn-sm"
             onClick={() => {
               setDoctorFilter('')
               setPatientFilter('')
@@ -476,8 +475,7 @@ export default function AppointmentsPanel({
                         <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
                           <button
                             type="button"
-                            className="btn"
-                            style={{ width: 'auto' }}
+                            className="btn btn-sm"
                             disabled={!rescheduleSlot || rescheduleBusy}
                             onClick={() => confirmReschedule(a.id)}
                           >
@@ -485,8 +483,7 @@ export default function AppointmentsPanel({
                           </button>
                           <button
                             type="button"
-                            className="btn-secondary btn"
-                            style={{ width: 'auto' }}
+                            className="btn-secondary btn btn-sm"
                             onClick={() => setReschedulingId(null)}
                           >
                             Cancel

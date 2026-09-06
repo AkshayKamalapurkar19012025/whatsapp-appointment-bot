@@ -594,6 +594,19 @@ button[type='submit']:disabled,
   background: #8f1f19;
 }
 
+/* Compact inline button size (form actions inside admin panels, table row
+   actions) -- replaces scattered style={{ width: 'auto' }} overrides with
+   one shared size so every inline button is consistent. The doubled-up
+   selector matches or exceeds the specificity of button[type='submit'] and
+   .card > button:not(.link) so it reliably overrides their width: 100%. */
+.btn-sm,
+button.btn-sm,
+button[type='submit'].btn-sm {
+  width: auto;
+  padding: var(--space-2) var(--space-4);
+  font-size: 0.88rem;
+}
+
 button.link,
 a.link {
   background: none;
