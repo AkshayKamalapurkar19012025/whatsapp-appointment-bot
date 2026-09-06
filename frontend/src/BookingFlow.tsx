@@ -248,7 +248,7 @@ export default function BookingFlow({
 
   return (
     <div className="patient-shell">
-      <div className="card">
+      <div className="card patient-card">
         <PatientTopBar patientName={patientName} subtitle="Book your next appointment in just a few steps." />
 
         {error && <p className="error">{error}</p>}

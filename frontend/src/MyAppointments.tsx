@@ -145,7 +145,7 @@ export default function MyAppointments({
   const listRef = useStaggerReveal<HTMLUListElement>([list])
 
   return (
-    <div className="card">
+    <div className="card patient-card">
       <PatientTopBar patientName={patientName} subtitle="Manage your upcoming and past visits." />
 
       {error && <p className="error">{error}</p>}

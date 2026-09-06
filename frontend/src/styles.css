@@ -278,7 +278,7 @@ h4 {
   align-items: center;
   gap: var(--space-4);
   width: 100%;
-  max-width: 480px;
+  max-width: 640px;
   align-self: flex-start;
 }
 
@@ -313,6 +313,14 @@ h4 {
   max-width: 480px;
   align-self: flex-start;
   animation: shell-in 0.4s ease-out;
+}
+
+/* Patient-facing cards (login, booking flow, My Appointments) get a
+   bit more breathing room than the base .card default -- the base
+   480px stays as-is for other .card consumers (e.g. the admin staff
+   login screen) not covered by this request. */
+.patient-card {
+  max-width: 640px;
 }
 
 /* Shared one-time entrance for the two outer "frame" containers (.card,
@@ -1845,7 +1853,7 @@ a.link.danger {
   position: relative;
   isolation: isolate;
   width: 100%;
-  max-width: 480px;
+  max-width: 640px;
   align-self: flex-start;
 }
 
