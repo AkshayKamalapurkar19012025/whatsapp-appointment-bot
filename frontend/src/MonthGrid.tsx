@@ -1,5 +1,7 @@
-import { isoDateOnly } from './format'
+import { useEffect, useRef, useState } from 'react'
+import { formatTime, isoDateOnly } from './format'
 import { useClinicToday } from './useClinicToday'
+import type { MyAppointment } from './types'
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -39,6 +41,8 @@ export default function MonthGrid({
   nextDisabled,
   showLegend = true,
   selectedDate = null,
+  markedDates,
+  doctorName,
 }: {
   year: number
   month: number
@@ -66,7 +70,35 @@ export default function MonthGrid({
   // "selected but still looking at the calendar" state to show and
   // simply omits this prop.
   selectedDate?: string | null
+  // Doctor-first booking only (via Calendar.tsx) -- dates the patient
+  // already has an upcoming appointment with this doctor on, keyed by
+  // "YYYY-MM-DD". Undefined/empty everywhere else this grid is reused
+  // (admin picker, reschedule calendar), which simply renders no
+  // markers. doctorName is just display copy for the popover text.
+  markedDates?: Record<string, MyAppointment[]>
+  doctorName?: string
 }) {
+  // Which marked date's popover is currently open (hover on desktop,
+  // tap on mobile) -- at most one at a time.
+  const [openMarkerDate, setOpenMarkerDate] = useState<string | null>(null)
+  const gridRef = useRef<HTMLDivElement>(null)
+
+  // Dismiss an open popover on an outside tap/click -- the only close
+  // path on touch devices, which don't fire mouseleave. Not a toggle on
+  // the marker's own click (see below): a real click/tap always fires a
+  // synthetic mouseenter first, which would open-then-immediately-close
+  // it in the same gesture if the click handler toggled instead of just
+  // opening.
+  useEffect(() => {
+    if (!openMarkerDate) return
+    function handleOutside(event: MouseEvent) {
+      if (gridRef.current && !gridRef.current.contains(event.target as Node)) {
+        setOpenMarkerDate(null)
+      }
+    }
+    document.addEventListener('click', handleOutside, true)
+    return () => document.removeEventListener('click', handleOutside, true)
+  }, [openMarkerDate])
   // The clinic's own current date (not the viewer's device date) --
   // display-only, for the "Today" ring below; never the source of
   // truth for which dates are actually bookable (that's `dates`
@@ -103,7 +135,7 @@ export default function MonthGrid({
       )}
 
       {dates && !loading && (
-        <div className="calendar-grid">
+        <div className="calendar-grid" ref={gridRef}>
           {WEEKDAY_LABELS.map((label) => (
             <div key={label} className="calendar-weekday">
               {label}
@@ -114,6 +146,7 @@ export default function MonthGrid({
             const available = dates[cell.iso] === true
             const isSelected = selectedDate === cell.iso
             const isToday = today === cell.iso
+            const existingAppointments = markedDates?.[cell.iso]
             const classNames = [
               'calendar-day',
               available ? 'available' : 'unavailable',
@@ -122,19 +155,62 @@ export default function MonthGrid({
             ]
               .filter(Boolean)
               .join(' ')
+            const isPopoverOpen = openMarkerDate === cell.iso
             return (
-              <button
-                key={cell.iso}
-                type="button"
-                className={classNames}
-                disabled={!available}
-                aria-current={isToday ? 'date' : undefined}
-                aria-pressed={isSelected}
-                title={isToday ? 'Today' : undefined}
-                onClick={() => onSelectDate(cell.iso)}
-              >
-                {cell.day}
-              </button>
+              <div key={cell.iso} className="calendar-day-cell">
+                <button
+                  type="button"
+                  className={classNames}
+                  disabled={!available}
+                  aria-current={isToday ? 'date' : undefined}
+                  aria-pressed={isSelected}
+                  title={isToday ? 'Today' : undefined}
+                  onClick={() => onSelectDate(cell.iso)}
+                >
+                  {cell.day}
+                </button>
+                {existingAppointments && existingAppointments.length > 0 && (
+                  <span
+                    className="calendar-day-marker"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`You already have an appointment with ${doctorName ?? 'this doctor'} on this date -- show details`}
+                    aria-expanded={isPopoverOpen}
+                    onMouseEnter={() => setOpenMarkerDate(cell.iso)}
+                    onMouseLeave={() => setOpenMarkerDate((current) => (current === cell.iso ? null : current))}
+                    onFocus={() => setOpenMarkerDate(cell.iso)}
+                    onBlur={() => setOpenMarkerDate((current) => (current === cell.iso ? null : current))}
+                    onClick={(event) => {
+                      // Always open (not toggle): a tap/click also fires
+                      // a synthetic mouseenter first, which already
+                      // opened this same popover -- toggling here would
+                      // immediately close what the tap just opened.
+                      // Dismissal is the outside-click handler above (or
+                      // mouseleave/blur on desktop).
+                      event.stopPropagation()
+                      setOpenMarkerDate(cell.iso)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        setOpenMarkerDate((current) => (current === cell.iso ? null : cell.iso))
+                      }
+                    }}
+                  />
+                )}
+                {existingAppointments && existingAppointments.length > 0 && isPopoverOpen && (
+                  <div className="calendar-day-popover" role="tooltip">
+                    {existingAppointments.map((appointment) => (
+                      <p key={appointment.id}>
+                        You already have an appointment with {doctorName ?? 'this doctor'} on{' '}
+                        {MONTH_NAMES[Number(cell.iso.slice(5, 7)) - 1].slice(0, 3)} {cell.day},{' '}
+                        {formatTime(appointment.start_at)}–{formatTime(appointment.end_at)}.
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
             )
           })}
         </div>

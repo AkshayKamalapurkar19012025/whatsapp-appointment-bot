@@ -2279,8 +2279,14 @@ a.link.danger {
   padding: 4px 0;
 }
 
-.calendar-day {
+.calendar-day-cell {
+  position: relative;
   aspect-ratio: 1;
+}
+
+.calendar-day {
+  width: 100%;
+  height: 100%;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-surface);
@@ -2289,6 +2295,7 @@ a.link.danger {
 }
 
 .calendar-day.empty {
+  aspect-ratio: 1;
   border: none;
   background: transparent;
 }
@@ -2375,6 +2382,60 @@ a.link.danger {
 .legend-swatch.today {
   background: var(--color-surface);
   border: 2px solid var(--color-warning);
+}
+
+/* Same-doctor duplicate-appointment nudge (Calendar.tsx's month-level
+   note) and the per-date marker/popover pair (MonthGrid.tsx) -- blue,
+   distinct from the primary-teal "available" and warning-amber "today"
+   meanings already used on this grid. */
+.calendar-month-nudge {
+  background: #e3edfc;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+  font-size: 0.84rem;
+  color: #2f6fed;
+}
+
+.calendar-day-marker {
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2f6fed;
+  border: 1px solid var(--color-surface);
+  cursor: pointer;
+}
+
+.calendar-day-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  width: max-content;
+  max-width: 200px;
+  background: var(--color-glass);
+  border: 1px solid var(--color-glass-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(20px);
+  text-align: left;
+  pointer-events: none;
+}
+
+.calendar-day-popover p {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--color-text);
+}
+
+.calendar-day-popover p + p {
+  margin-top: var(--space-1);
 }
 
 /* ===========================================================
