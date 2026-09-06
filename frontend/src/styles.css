@@ -828,7 +828,6 @@ a.link.danger {
   border-radius: var(--radius-md);
   padding: var(--space-4);
   display: flex;
-  justify-content: space-between;
   align-items: center;
   gap: var(--space-4);
   transition: border-color 0.12s ease, box-shadow 0.12s ease;
@@ -837,6 +836,21 @@ a.link.danger {
 .appointment-card:hover {
   border-color: var(--color-border-strong);
   box-shadow: var(--shadow-sm);
+}
+
+.appointment-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+}
+
+.appointment-card-body {
+  flex: 1;
+  min-width: 0;
 }
 
 .appointment-actions {
@@ -1190,10 +1204,48 @@ a.link.danger {
   flex-shrink: 0;
 }
 
+/* A small fixed accent palette (see cardAccent.ts) applied to any
+   icon-box (department cards, appointment-type cards, My Appointments'
+   status icon) so a list of category cards reads as individually
+   identifiable rather than a wall of identical mint boxes, without
+   going all the way to a full-color icon per item. */
+.accent-teal {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.accent-blue {
+  background: #e3edfc;
+  color: #2f6fed;
+}
+
+.accent-purple {
+  background: #ece4fb;
+  color: #7c4fd8;
+}
+
+.accent-amber {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.accent-rose {
+  background: #fbe4ee;
+  color: #c34a7c;
+}
+
 .department-card-name {
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.department-card-meta {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 400;
+  color: var(--color-text-muted);
+  margin-top: 1px;
 }
 
 .department-card-arrow {

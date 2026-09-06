@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { CalendarBlank } from '@phosphor-icons/react'
+import { CalendarBlank, CalendarCheck, ClockCounterClockwise, XCircle } from '@phosphor-icons/react'
 import {
   ApiError,
   cancelWebAppointment,
@@ -26,6 +26,14 @@ import {
 
 type Tab = 'upcoming' | 'history' | 'cancelled'
 type RescheduleStep = 'date' | 'slot' | 'review' | 'done'
+
+// One status icon + tint per tab -- every card in a given tab shares
+// the same status, so this is a function of the tab, not the item.
+const TAB_ICON = {
+  upcoming: { Icon: CalendarCheck, accent: 'accent-teal' },
+  history: { Icon: ClockCounterClockwise, accent: 'accent-blue' },
+  cancelled: { Icon: XCircle, accent: 'accent-rose' },
+} as const
 
 export default function MyAppointments({
   patientName,
@@ -234,31 +242,37 @@ export default function MyAppointments({
           )}
 
           <ul className="appointment-list" ref={listRef}>
-            {list.map((appointment) => (
-              <li key={appointment.id} className="appointment-card">
-                <div>
-                  <strong>{appointment.doctor_name}</strong>
-                  <div className="muted">{appointment.appointment_type_name}</div>
-                  <div>
-                    {formatDate(appointment.start_at)} · {formatTime(appointment.start_at)} –{' '}
-                    {formatTime(appointment.end_at)}
+            {list.map((appointment) => {
+              const { Icon: TabIcon, accent } = TAB_ICON[tab]
+              return (
+                <li key={appointment.id} className="appointment-card">
+                  <span className={`appointment-card-icon ${accent}`} aria-hidden="true">
+                    <TabIcon size={20} weight="duotone" />
+                  </span>
+                  <div className="appointment-card-body">
+                    <strong>{appointment.doctor_name}</strong>
+                    <div className="muted">{appointment.appointment_type_name}</div>
+                    <div>
+                      {formatDate(appointment.start_at)} · {formatTime(appointment.start_at)} –{' '}
+                      {formatTime(appointment.end_at)}
+                    </div>
+                    {appointment.token_number !== null && (
+                      <div className="muted">Token #{appointment.token_number}</div>
+                    )}
                   </div>
-                  {appointment.token_number !== null && (
-                    <div className="muted">Token #{appointment.token_number}</div>
+                  {tab === 'upcoming' && (
+                    <div className="appointment-actions">
+                      <button type="button" onClick={() => startReschedule(appointment)}>
+                        Reschedule
+                      </button>
+                      <button type="button" className="danger" onClick={() => setCancelTarget(appointment)}>
+                        Cancel
+                      </button>
+                    </div>
                   )}
-                </div>
-                {tab === 'upcoming' && (
-                  <div className="appointment-actions">
-                    <button type="button" onClick={() => startReschedule(appointment)}>
-                      Reschedule
-                    </button>
-                    <button type="button" className="danger" onClick={() => setCancelTarget(appointment)}>
-                      Cancel
-                    </button>
-                  </div>
-                )}
-              </li>
-            ))}
+                </li>
+              )
+            })}
           </ul>
         </>
       )}
