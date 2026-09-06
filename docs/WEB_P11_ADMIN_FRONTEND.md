@@ -54,9 +54,10 @@ possible truth about doctor timezone in this system today. Flagged
 here as a real limitation for whoever adds multi-timezone doctor
 support later, not silently baked in.
 
-**Routing decision**: `/admin` for the staff/admin UI, everything else
-for the patient UI — one Vite app, a plain `window.location.pathname`
-check in `main.tsx`, no router dependency. Two paths is too small a
+**Routing decision**: `/admin` (aliased at `/staff`) for the staff/admin
+UI, everything else for the patient UI — one Vite app, a plain
+`window.location.pathname` check in `main.tsx`, no router dependency. Two
+paths is too small a
 surface to justify a new dependency (matching this project's "propose
 a specific new dependency only when actually needed" posture from
 `docs/WEB_EXPANSION_ARCHITECTURE.md` §10 item 6); the same
