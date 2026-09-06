@@ -26,7 +26,10 @@ export function formatTime(isoString: string): string {
   const suffix = hour >= 12 ? 'PM' : 'AM'
   hour = hour % 12
   if (hour === 0) hour = 12
-  return `${hour}:${minute} ${suffix}`
+  // A non-breaking space keeps "11:30 AM" from splitting across lines
+  // in a narrow container -- a regular space there is a legal line-break
+  // point, which orphans the AM/PM suffix onto its own line.
+  return `${hour}:${minute} ${suffix}`
 }
 
 export function formatDate(isoDate: string): string {
@@ -70,7 +73,8 @@ export function formatTimeOfDay(hhmm: string): string {
   const suffix = hour >= 12 ? 'PM' : 'AM'
   hour = hour % 12
   if (hour === 0) hour = 12
-  return `${hour}:${minute} ${suffix}`
+  // Non-breaking space, same reasoning as formatTime above.
+  return `${hour}:${minute} ${suffix}`
 }
 
 // Unlike formatDate/formatTime above, this genuinely needs `new Date(...)`
