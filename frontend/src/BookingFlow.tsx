@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   CalendarBlank,
   CaretRight,
@@ -13,13 +13,14 @@ import {
   ApiError,
   createWebAppointment,
   getDoctorsForDate,
+  getMyAppointments,
   getSlotsForDate,
   listAppointmentTypesForDepartment,
   listAppointmentTypesForDoctor,
   listDepartments,
   listDoctorsInDepartment,
 } from './api'
-import type { BookedAppointment, Department, Doctor, DoctorWithSlots, Slot } from './types'
+import type { BookedAppointment, Department, Doctor, DoctorWithSlots, MyAppointment, Slot } from './types'
 import { appointmentTypeIcon } from './appointmentTypeIcon'
 import Calendar from './Calendar'
 import { accentClassFor } from './cardAccent'
@@ -98,6 +99,18 @@ export default function BookingFlow({
   const [appointmentTypes, setAppointmentTypes] = useState<SelectableAppointmentType[]>([])
   const [availableDoctors, setAvailableDoctors] = useState<DoctorWithSlots[]>([])
   const [slots, setSlots] = useState<Slot[]>([])
+  // Doctor-first only: the patient's own upcoming appointments already
+  // booked with the currently selected doctor, fetched alongside
+  // appointment types in chooseDoctor -- feeds Calendar's same-doctor
+  // duplicate-appointment markers/nudge below. Best-effort: a failed
+  // fetch here must never block booking, so it's just left empty.
+  const [existingAppointmentsWithDoctor, setExistingAppointmentsWithDoctor] = useState<MyAppointment[]>([])
+  // Always holds the most recently chosen doctor's id, read inside
+  // chooseDoctor's getMyAppointments().then below to discard a stale
+  // response -- e.g. picking Doctor A, going Back, then picking Doctor
+  // B before A's slower fetch resolves must not overwrite B's already-
+  // set existingAppointmentsWithDoctor with A's.
+  const selectedDoctorIdRef = useRef<number | null>(null)
 
   const [department, setDepartment] = useState<Department | null>(null)
   const [doctor, setDoctor] = useState<SelectableDoctor | null>(null)
@@ -147,12 +160,23 @@ export default function BookingFlow({
   function chooseDoctor(doc: Doctor) {
     setDoctor(doc)
     setError(null)
+    setExistingAppointmentsWithDoctor([])
+    selectedDoctorIdRef.current = doc.id
     listAppointmentTypesForDoctor(doc.id)
       .then((result) => {
         setAppointmentTypes(result)
         setStep('appointmentType')
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load appointment types'))
+
+    getMyAppointments()
+      .then((result) => {
+        if (selectedDoctorIdRef.current !== doc.id) return
+        setExistingAppointmentsWithDoctor(result.upcoming.filter((a) => a.doctor_id === doc.id))
+      })
+      .catch(() => {
+        // Best-effort nudge only -- silently skip it if this fails.
+      })
   }
 
   function chooseAppointmentType(type: SelectableAppointmentType) {
@@ -230,6 +254,7 @@ export default function BookingFlow({
     setSelectedDate(null)
     setSelectedSlot(null)
     setAvailableDoctors([])
+    setExistingAppointmentsWithDoctor([])
     setConfirmed(null)
     setError(null)
   }
@@ -455,6 +480,8 @@ export default function BookingFlow({
             appointmentTypeId={appointmentType.id}
             departmentId={department?.id}
             onSelectDate={chooseDate}
+            doctorName={doctor.name}
+            existingAppointments={existingAppointmentsWithDoctor}
           />
           <div className="step-actions">
             <button type="button" className="link" onClick={() => setStep('appointmentType')}>

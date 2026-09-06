@@ -2279,8 +2279,14 @@ a.link.danger {
   padding: 4px 0;
 }
 
-.calendar-day {
+.calendar-day-cell {
+  position: relative;
   aspect-ratio: 1;
+}
+
+.calendar-day {
+  width: 100%;
+  height: 100%;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-surface);
@@ -2289,6 +2295,7 @@ a.link.danger {
 }
 
 .calendar-day.empty {
+  aspect-ratio: 1;
   border: none;
   background: transparent;
 }
@@ -2375,6 +2382,155 @@ a.link.danger {
 .legend-swatch.today {
   background: var(--color-surface);
   border: 2px solid var(--color-warning);
+}
+
+/* Same-doctor duplicate-appointment nudge (Calendar.tsx's month-level
+   note) and the per-date marker/popover pair (MonthGrid.tsx) -- reuses
+   the app's own primary teal (not a one-off colour) so this reads as
+   part of the same design language as every other accent on this
+   calendar, just applied to a new meaning ("you've already booked
+   this"). */
+.calendar-month-nudge {
+  background: var(--color-primary-soft);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-3);
+  font-size: 0.84rem;
+  color: var(--color-primary-hover);
+}
+
+/* A small count badge (not a bare dot) so "you already have N
+   appointments here" is legible at a glance, not just "something is
+   marked" -- sized to still fit a single day cell. */
+.calendar-day-marker {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  border: 1.5px solid var(--color-surface);
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.calendar-day-popover {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  /* --popover-shift (set inline by MonthGrid.tsx, in px) nudges the box
+     back on-screen for a marked date near the left/right edge of a
+     narrow viewport -- 0px on a normal desktop-width calendar where it
+     fits centered already. */
+  transform: translateX(calc(-50% + var(--popover-shift, 0px)));
+  z-index: 20;
+  width: max-content;
+  min-width: 200px;
+  max-width: 230px;
+  background: var(--color-glass);
+  border: 1px solid var(--color-primary-soft-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(20px);
+  text-align: left;
+  pointer-events: none;
+}
+
+.calendar-day-popover-title {
+  margin: 0 0 var(--space-2);
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.calendar-day-popover-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.calendar-day-popover-row:first-of-type {
+  border-top: none;
+}
+
+.calendar-day-popover-time {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.calendar-day-popover .pill {
+  padding: 2px 8px;
+  font-size: 0.62rem;
+}
+
+/* A pointer connecting the popover to the marked date's dot directly
+   below it -- without this, the popover (wider than a single day cell)
+   reads as floating over the row above rather than belonging to this
+   date. Coloured to match the marker dot and popover border above
+   (the app's own primary teal), so the connection reads at a glance
+   without introducing a colour nothing else on this page uses. */
+.calendar-day-popover::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  /* Counter-shifts by the same --popover-shift the box itself was
+     nudged by, so the arrow keeps pointing at the marker's actual
+     position rather than drifting to the (now off-center) popover's
+     own midpoint. */
+  transform: translateX(calc(-50% - var(--popover-shift, 0px)));
+  border: 8px solid transparent;
+  border-top-color: var(--color-primary-soft-strong);
+}
+
+.calendar-day-popover::before {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(calc(-50% - var(--popover-shift, 0px))) translateY(-2px);
+  border: 6px solid transparent;
+  border-top-color: var(--color-glass);
+  z-index: 1;
+}
+
+/* Flips the popover to sit below its marker instead of above (see
+   MonthGrid.tsx's popoverBelow) for a marked date in the calendar's
+   first row with no room above it, and flips the pointer arrow to
+   match -- pointing up at the marker from underneath, rather than
+   down from above. */
+.calendar-day-popover.below {
+  bottom: auto;
+  top: calc(100% + 10px);
+}
+
+.calendar-day-popover.below::after {
+  top: auto;
+  bottom: 100%;
+  border-top-color: transparent;
+  border-bottom-color: var(--color-primary-soft-strong);
+}
+
+.calendar-day-popover.below::before {
+  top: auto;
+  bottom: 100%;
+  transform: translateX(calc(-50% - var(--popover-shift, 0px))) translateY(2px);
+  border-top-color: transparent;
+  border-bottom-color: var(--color-glass);
 }
 
 /* ===========================================================
