@@ -2508,6 +2508,31 @@ a.link.danger {
   z-index: 1;
 }
 
+/* Flips the popover to sit below its marker instead of above (see
+   MonthGrid.tsx's popoverBelow) for a marked date in the calendar's
+   first row with no room above it, and flips the pointer arrow to
+   match -- pointing up at the marker from underneath, rather than
+   down from above. */
+.calendar-day-popover.below {
+  bottom: auto;
+  top: calc(100% + 10px);
+}
+
+.calendar-day-popover.below::after {
+  top: auto;
+  bottom: 100%;
+  border-top-color: transparent;
+  border-bottom-color: var(--color-primary-soft-strong);
+}
+
+.calendar-day-popover.below::before {
+  top: auto;
+  bottom: 100%;
+  transform: translateX(calc(-50% - var(--popover-shift, 0px))) translateY(2px);
+  border-top-color: transparent;
+  border-bottom-color: var(--color-glass);
+}
+
 /* ===========================================================
    Status pills
    =========================================================== */

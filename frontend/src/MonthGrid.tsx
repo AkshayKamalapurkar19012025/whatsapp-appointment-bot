@@ -83,16 +83,25 @@ export default function MonthGrid({
   const [openMarkerDate, setOpenMarkerDate] = useState<string | null>(null)
   const gridRef = useRef<HTMLDivElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
+  // The specific marker <span> currently open, if any -- set wherever a
+  // marker opens itself below, read by the focusin dismissal handler.
+  const openMarkerElRef = useRef<HTMLElement | null>(null)
   // Horizontal correction (px) applied on top of the popover's default
   // centered-on-the-marker position, so it stays on-screen for a
   // marked date in the leftmost/rightmost calendar column -- without
   // this, a plain centered popover runs off the viewport edge on a
   // narrow (mobile) screen since it's wider than a single day cell.
   const [popoverShift, setPopoverShift] = useState(0)
+  // Flips the popover to render below its marker instead of above,
+  // for a marked date in the calendar's first row where there isn't
+  // room above it (e.g. scrolled near the top of the page) -- same
+  // reasoning as popoverShift, just the vertical axis.
+  const [popoverBelow, setPopoverBelow] = useState(false)
 
   useLayoutEffect(() => {
     if (!openMarkerDate) {
       setPopoverShift(0)
+      setPopoverBelow(false)
       return
     }
     const el = popoverRef.current
@@ -106,6 +115,38 @@ export default function MonthGrid({
       shift = window.innerWidth - margin - rect.right
     }
     setPopoverShift(shift)
+    setPopoverBelow(rect.top < margin)
+  }, [openMarkerDate])
+
+  // Dismiss on Escape, and when keyboard focus moves anywhere other
+  // than the marker that's currently open -- the pointer-based fix
+  // above (onPointerEnter/onPointerLeave gated by pointerType, so a
+  // touch tap's synthetic mouse events can't self-close the popover it
+  // just opened) meant dropping the marker's old onBlur handler, which
+  // otherwise closed it once a keyboard user tabbed off that specific
+  // marker. This restores that dismissal via focus tracking instead
+  // (checked against openMarkerElRef, set wherever a marker opens
+  // itself below -- not just "left the grid", since Tab can move focus
+  // to a different day cell/marker still inside the grid and this
+  // popover should still close then), without reintroducing the touch
+  // race: a touch tap focuses the marker itself, so this never fires
+  // for the tap that opened it.
+  useEffect(() => {
+    if (!openMarkerDate) return
+    function handleFocusOut(event: FocusEvent) {
+      if (event.target !== openMarkerElRef.current) {
+        setOpenMarkerDate(null)
+      }
+    }
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setOpenMarkerDate(null)
+    }
+    document.addEventListener('focusin', handleFocusOut)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('focusin', handleFocusOut)
+      document.removeEventListener('keydown', handleEscape)
+    }
   }, [openMarkerDate])
 
   // Dismiss an open popover on an outside tap/click -- the only close
@@ -215,7 +256,10 @@ export default function MonthGrid({
                     // (fires for both mouse and touch) is what actually
                     // opens it on tap.
                     onPointerEnter={(event) => {
-                      if (event.pointerType === 'mouse') setOpenMarkerDate(cell.iso)
+                      if (event.pointerType === 'mouse') {
+                        openMarkerElRef.current = event.currentTarget
+                        setOpenMarkerDate(cell.iso)
+                      }
                     }}
                     onPointerLeave={(event) => {
                       if (event.pointerType === 'mouse') {
@@ -230,12 +274,14 @@ export default function MonthGrid({
                       // outside-click handler above, or onPointerLeave
                       // for a real mouse.
                       event.stopPropagation()
+                      openMarkerElRef.current = event.currentTarget
                       setOpenMarkerDate(cell.iso)
                     }}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' || event.key === ' ') {
                         event.preventDefault()
                         event.stopPropagation()
+                        openMarkerElRef.current = event.currentTarget
                         setOpenMarkerDate((current) => (current === cell.iso ? null : cell.iso))
                       }
                     }}
@@ -246,7 +292,7 @@ export default function MonthGrid({
                 {existingAppointments && existingAppointments.length > 0 && isPopoverOpen && (
                   <div
                     ref={popoverRef}
-                    className="calendar-day-popover"
+                    className={`calendar-day-popover${popoverBelow ? ' below' : ''}`}
                     role="tooltip"
                     style={{ '--popover-shift': `${popoverShift}px` } as CSSProperties}
                   >

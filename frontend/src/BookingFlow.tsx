@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   CalendarBlank,
   CaretRight,
@@ -105,6 +105,12 @@ export default function BookingFlow({
   // duplicate-appointment markers/nudge below. Best-effort: a failed
   // fetch here must never block booking, so it's just left empty.
   const [existingAppointmentsWithDoctor, setExistingAppointmentsWithDoctor] = useState<MyAppointment[]>([])
+  // Always holds the most recently chosen doctor's id, read inside
+  // chooseDoctor's getMyAppointments().then below to discard a stale
+  // response -- e.g. picking Doctor A, going Back, then picking Doctor
+  // B before A's slower fetch resolves must not overwrite B's already-
+  // set existingAppointmentsWithDoctor with A's.
+  const selectedDoctorIdRef = useRef<number | null>(null)
 
   const [department, setDepartment] = useState<Department | null>(null)
   const [doctor, setDoctor] = useState<SelectableDoctor | null>(null)
@@ -155,6 +161,7 @@ export default function BookingFlow({
     setDoctor(doc)
     setError(null)
     setExistingAppointmentsWithDoctor([])
+    selectedDoctorIdRef.current = doc.id
     listAppointmentTypesForDoctor(doc.id)
       .then((result) => {
         setAppointmentTypes(result)
@@ -164,6 +171,7 @@ export default function BookingFlow({
 
     getMyAppointments()
       .then((result) => {
+        if (selectedDoctorIdRef.current !== doc.id) return
         setExistingAppointmentsWithDoctor(result.upcoming.filter((a) => a.doctor_id === doc.id))
       })
       .catch(() => {
