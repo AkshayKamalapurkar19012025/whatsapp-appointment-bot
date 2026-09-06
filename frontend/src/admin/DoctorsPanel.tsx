@@ -154,7 +154,7 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
             />
           </label>
           <div className="doctor-form-actions">
-            <button type="submit" style={{ width: 'auto' }} disabled={busy}>
+            <button type="submit" className="btn-sm" disabled={busy}>
               {busy ? 'Saving…' : 'Save'}
             </button>
           </div>

@@ -315,8 +315,7 @@ function QueueSection({ doctor }: { doctor: Doctor }) {
                 <span>{queue.now_serving.patient_name}</span>
                 <button
                   type="button"
-                  className="btn"
-                  style={{ width: 'auto' }}
+                  className="btn btn-sm"
                   disabled={completingId === queue.now_serving.appointment_id}
                   onClick={() => handleComplete(queue.now_serving!.appointment_id)}
                 >
@@ -780,7 +779,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
             {busy ? 'Saving…' : 'Save'}
           </button>
           {formIsDirty && (
-            <button type="button" className="btn-secondary btn" style={{ width: 'auto' }} onClick={resetForm}>
+            <button type="button" className="btn-secondary btn btn-sm" onClick={resetForm}>
               Cancel
             </button>
           )}
@@ -959,7 +958,7 @@ function BlocksSection({ doctor }: { doctor: Doctor }) {
           {busy ? 'Saving…' : 'Save'}
         </button>
         {(date || reason) && (
-          <button type="button" className="btn-secondary btn" style={{ width: 'auto' }} onClick={resetForm}>
+          <button type="button" className="btn-secondary btn btn-sm" onClick={resetForm}>
             Cancel
           </button>
         )}
@@ -1072,11 +1071,11 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
               </option>
             ))}
           </select>
-          <button type="submit" style={{ width: 'auto' }}>
+          <button type="submit" className="btn-sm">
             Save
           </button>
           {selected && (
-            <button type="button" className="btn-secondary btn" style={{ width: 'auto' }} onClick={resetAssignForm}>
+            <button type="button" className="btn-secondary btn btn-sm" onClick={resetAssignForm}>
               Cancel
             </button>
           )}

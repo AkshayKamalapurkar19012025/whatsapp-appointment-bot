@@ -92,11 +92,11 @@ export default function StaffAccountsPanel() {
           <option value="STAFF">STAFF</option>
           <option value="ADMIN">ADMIN</option>
         </select>
-        <button type="submit" style={{ width: 'auto' }} disabled={busy}>
+        <button type="submit" className="btn-sm" disabled={busy}>
           {busy ? 'Saving…' : 'Save'}
         </button>
         {(username || password) && (
-          <button type="button" className="btn-secondary btn" style={{ width: 'auto' }} onClick={resetCreateForm}>
+          <button type="button" className="btn-secondary btn btn-sm" onClick={resetCreateForm}>
             Cancel
           </button>
         )}

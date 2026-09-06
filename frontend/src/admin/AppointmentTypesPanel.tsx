@@ -9,6 +9,16 @@ import {
 } from '../api'
 import type { AppointmentTypeSummary } from '../types'
 import { useStaggerReveal } from '../useStaggerReveal'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog'
 
 export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean }) {
   const [types, setTypes] = useState<AppointmentTypeSummary[]>([])
@@ -19,6 +29,7 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingName, setEditingName] = useState('')
   const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<AppointmentTypeSummary | null>(null)
   const gridRef = useStaggerReveal<HTMLDivElement>([types])
 
   function load() {
@@ -74,23 +85,18 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
     }
   }
 
-  async function handleDelete(t: AppointmentTypeSummary) {
-    if (
-      !window.confirm(
-        `Remove "${t.name}"? Doctors offering it keep their appointment history, but it will no longer appear for booking.`,
-      )
-    ) {
-      return
-    }
+  async function confirmDelete() {
+    if (!deleteTarget) return
     setError(null)
-    setDeletingId(t.id)
+    setDeletingId(deleteTarget.id)
     try {
-      await deleteAppointmentType(t.id)
+      await deleteAppointmentType(deleteTarget.id)
       load()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not remove appointment type')
     } finally {
       setDeletingId(null)
+      setDeleteTarget(null)
     }
   }
 
@@ -111,11 +117,11 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
             onChange={(e) => setName(e.target.value)}
             required
           />
-          <button type="submit" style={{ width: 'auto' }} disabled={busy}>
+          <button type="submit" className="btn-sm" disabled={busy}>
             {busy ? 'Saving…' : 'Save'}
           </button>
           {name && (
-            <button type="button" className="btn-secondary btn" style={{ width: 'auto' }} onClick={() => setName('')}>
+            <button type="button" className="btn-secondary btn btn-sm" onClick={() => setName('')}>
               Cancel
             </button>
           )}
@@ -168,7 +174,7 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
                     <button
                       type="button"
                       className="icon-btn danger"
-                      onClick={() => handleDelete(t)}
+                      onClick={() => setDeleteTarget(t)}
                       disabled={deletingId === t.id}
                       aria-label={`Remove ${t.name}`}
                     >
@@ -181,6 +187,24 @@ export default function AppointmentTypesPanel({ isAdmin }: { isAdmin: boolean })
           )}
         </div>
       )}
+
+      <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this appointment type?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget &&
+                `"${deleteTarget.name}" will no longer appear for booking. Doctors offering it keep their appointment history.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="danger" onClick={confirmDelete}>
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   )
 }

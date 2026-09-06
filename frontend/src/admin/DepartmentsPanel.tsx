@@ -3,6 +3,16 @@ import { Buildings, PencilSimple, Trash, X, Check } from '@phosphor-icons/react'
 import { ApiError, createDepartment, deleteDepartment, listDepartments, updateDepartment } from '../api'
 import type { Department } from '../types'
 import { useStaggerReveal } from '../useStaggerReveal'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog'
 
 export default function DepartmentsPanel({ isAdmin }: { isAdmin: boolean }) {
   const [departments, setDepartments] = useState<Department[]>([])
@@ -13,6 +23,7 @@ export default function DepartmentsPanel({ isAdmin }: { isAdmin: boolean }) {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingName, setEditingName] = useState('')
   const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Department | null>(null)
   const gridRef = useStaggerReveal<HTMLDivElement>([departments])
 
   function load() {
@@ -66,19 +77,18 @@ export default function DepartmentsPanel({ isAdmin }: { isAdmin: boolean }) {
     }
   }
 
-  async function handleDelete(d: Department) {
-    if (!window.confirm(`Remove "${d.name}"? Doctors assigned to it keep their history, but it will no longer appear for booking.`)) {
-      return
-    }
+  async function confirmDelete() {
+    if (!deleteTarget) return
     setError(null)
-    setDeletingId(d.id)
+    setDeletingId(deleteTarget.id)
     try {
-      await deleteDepartment(d.id)
+      await deleteDepartment(deleteTarget.id)
       load()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not remove department')
     } finally {
       setDeletingId(null)
+      setDeleteTarget(null)
     }
   }
 
@@ -95,11 +105,11 @@ export default function DepartmentsPanel({ isAdmin }: { isAdmin: boolean }) {
             onChange={(e) => setName(e.target.value)}
             required
           />
-          <button type="submit" style={{ width: 'auto' }} disabled={busy}>
+          <button type="submit" className="btn-sm" disabled={busy}>
             {busy ? 'Saving…' : 'Save'}
           </button>
           {name && (
-            <button type="button" className="btn-secondary btn" style={{ width: 'auto' }} onClick={() => setName('')}>
+            <button type="button" className="btn-secondary btn btn-sm" onClick={() => setName('')}>
               Cancel
             </button>
           )}
@@ -152,7 +162,7 @@ export default function DepartmentsPanel({ isAdmin }: { isAdmin: boolean }) {
                     <button
                       type="button"
                       className="icon-btn danger"
-                      onClick={() => handleDelete(d)}
+                      onClick={() => setDeleteTarget(d)}
                       disabled={deletingId === d.id}
                       aria-label={`Remove ${d.name}`}
                     >
@@ -165,6 +175,24 @@ export default function DepartmentsPanel({ isAdmin }: { isAdmin: boolean }) {
           )}
         </div>
       )}
+
+      <AlertDialog open={deleteTarget !== null} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this department?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleteTarget &&
+                `"${deleteTarget.name}" will no longer appear for booking. Doctors assigned to it keep their history.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="danger" onClick={confirmDelete}>
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   )
 }
