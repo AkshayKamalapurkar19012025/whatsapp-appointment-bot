@@ -1,5 +1,14 @@
 import { useEffect, useState } from 'react'
-import { CalendarBlank, CaretRight, ChatCircleText, CheckCircle, UserCircle } from '@phosphor-icons/react'
+import {
+  CalendarBlank,
+  CaretRight,
+  ChatCircleText,
+  CheckCircle,
+  Heart,
+  Shield,
+  UserCircle,
+  UsersThree,
+} from '@phosphor-icons/react'
 import {
   ApiError,
   createWebAppointment,
@@ -9,7 +18,6 @@ import {
   listAppointmentTypesForDoctor,
   listDepartments,
   listDoctorsInDepartment,
-  logout,
 } from './api'
 import type { BookedAppointment, Department, Doctor, DoctorWithSlots, Slot } from './types'
 import Calendar from './Calendar'
@@ -224,11 +232,6 @@ export default function BookingFlow({
     setError(null)
   }
 
-  async function handleLogout() {
-    await logout().catch(() => undefined)
-    onLoggedOut()
-  }
-
   // Slot-step "back": Doctor-First returns to its own per-doctor
   // calendar (Date); Date-First returns to Available Doctors (pick a
   // different doctor for the same date), not the calendar -- the one
@@ -239,52 +242,75 @@ export default function BookingFlow({
     setStep(mode === 'date-first' ? 'availableDoctors' : 'date')
   }
 
+  const isLanding = step === 'mode'
+
   return (
-    <div className="card">
-      <PatientTopBar
-        patientName={patientName}
-        subtitle="Book your next appointment in just a few steps."
-        actions={
+    <div className="patient-shell">
+      <div className="card">
+        <PatientTopBar patientName={patientName} subtitle="Book your next appointment in just a few steps." />
+
+        {error && <p className="error">{error}</p>}
+
+        {step === 'mode' && (
           <>
-            <button type="button" className="link" onClick={onViewAppointments}>
-              My appointments
-            </button>
-            <button type="button" className="link" onClick={handleLogout}>
-              Log out
-            </button>
+            <h2>How would you like to book your appointment?</h2>
+            <p className="muted choice-step-subtitle">Choose an option below to get started.</p>
+            <div className="choice-grid">
+              <button
+                type="button"
+                className="choice-card choice-card-doctor"
+                onClick={() => chooseMode('doctor-first')}
+              >
+                <span className="choice-card-icon" aria-hidden="true">
+                  <UserCircle size={26} weight="duotone" />
+                </span>
+                <span className="choice-card-body">
+                  <span className="choice-card-title">Choose a Doctor</span>
+                  <span className="choice-card-subtitle">You already know which doctor you'd like to see</span>
+                </span>
+                <CaretRight size={18} className="choice-card-arrow" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                className="choice-card choice-card-date"
+                onClick={() => chooseMode('date-first')}
+              >
+                <span className="choice-card-icon" aria-hidden="true">
+                  <CalendarBlank size={26} weight="duotone" />
+                </span>
+                <span className="choice-card-body">
+                  <span className="choice-card-title">Find by Date</span>
+                  <span className="choice-card-subtitle">See which doctors are available on your preferred date</span>
+                </span>
+                <CaretRight size={18} className="choice-card-arrow" aria-hidden="true" />
+              </button>
+            </div>
+
+            <ul className="trust-badges">
+              <li>
+                <Shield size={20} weight="duotone" aria-hidden="true" />
+                <div>
+                  <strong>Secure &amp; Private</strong>
+                  <span className="muted">Your information is safe with us</span>
+                </div>
+              </li>
+              <li>
+                <UsersThree size={20} weight="duotone" aria-hidden="true" />
+                <div>
+                  <strong>Trusted Healthcare</strong>
+                  <span className="muted">Qualified and verified doctors</span>
+                </div>
+              </li>
+              <li>
+                <Heart size={20} weight="duotone" aria-hidden="true" />
+                <div>
+                  <strong>Better Care</strong>
+                  <span className="muted">For a healthier tomorrow</span>
+                </div>
+              </li>
+            </ul>
           </>
-        }
-      />
-
-      {error && <p className="error">{error}</p>}
-
-      {step === 'mode' && (
-        <>
-          <h2>How would you like to find your appointment?</h2>
-          <div className="choice-grid">
-            <button type="button" className="choice-card" onClick={() => chooseMode('doctor-first')}>
-              <span className="choice-card-icon" aria-hidden="true">
-                <UserCircle size={26} weight="duotone" />
-              </span>
-              <span className="choice-card-body">
-                <span className="choice-card-title">Choose a Doctor</span>
-                <span className="choice-card-subtitle">You already know which doctor you'd like to see</span>
-              </span>
-              <CaretRight size={18} className="choice-card-arrow" aria-hidden="true" />
-            </button>
-            <button type="button" className="choice-card" onClick={() => chooseMode('date-first')}>
-              <span className="choice-card-icon" aria-hidden="true">
-                <CalendarBlank size={26} weight="duotone" />
-              </span>
-              <span className="choice-card-body">
-                <span className="choice-card-title">Find by Date</span>
-                <span className="choice-card-subtitle">See which doctors are available on your preferred date</span>
-              </span>
-              <CaretRight size={18} className="choice-card-arrow" aria-hidden="true" />
-            </button>
-          </div>
-        </>
-      )}
+        )}
 
       {step === 'department' && (
         <>
@@ -533,11 +559,20 @@ export default function BookingFlow({
         </div>
       )}
 
-      {viewingProfileDoctorId !== null && (
-        <DoctorProfileModal
-          doctorId={viewingProfileDoctorId}
-          onClose={() => setViewingProfileDoctorId(null)}
-        />
+        {viewingProfileDoctorId !== null && (
+          <DoctorProfileModal
+            doctorId={viewingProfileDoctorId}
+            onClose={() => setViewingProfileDoctorId(null)}
+          />
+        )}
+      </div>
+
+      {isLanding && (
+        <p className="patient-page-tagline">
+          <span className="patient-page-tagline-rule" aria-hidden="true" />
+          Smaller steps to a healthier you
+          <span className="patient-page-tagline-rule" aria-hidden="true" />
+        </p>
       )}
     </div>
   )
