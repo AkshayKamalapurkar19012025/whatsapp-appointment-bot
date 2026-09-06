@@ -93,6 +93,13 @@
 html,
 body {
   height: 100%;
+  /* Belt-and-suspenders against any sideways scroll/shift on mobile --
+     box-sizing: border-box below already keeps padding/borders from
+     pushing elements past 100% width, so this shouldn't ever have
+     content to hide; it's here so a future layout mistake fails safe
+     (a clipped edge, easy to spot) instead of a horizontally
+     scrollable page. */
+  overflow-x: hidden;
 }
 
 body {
@@ -520,7 +527,13 @@ textarea {
   padding: 10px 13px;
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-sm);
-  font-size: 0.95rem;
+  /* 16px minimum -- iOS Safari (and Chrome-on-iOS, same WebKit engine)
+     auto-zooms the whole page in on focus for any text input under
+     16px, which is what was causing the mobile zoom/shift-on-typing
+     bug. Below 16px was a readability choice that happened to sit
+     right under that threshold; 1rem fixes the bug and reads the same
+     or better. */
+  font-size: 1rem;
   font-family: inherit;
   color: var(--color-text);
   background: var(--color-surface);
