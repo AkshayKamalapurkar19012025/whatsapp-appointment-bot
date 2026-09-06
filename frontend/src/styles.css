@@ -2430,15 +2430,16 @@ a.link.danger {
 /* A pointer connecting the popover to the marked date's dot directly
    below it -- without this, the popover (wider than a single day cell)
    reads as floating over the row above rather than belonging to this
-   date. */
+   date. Coloured to match the marker dot itself (rather than the
+   popover's own glass border) so the connection reads at a glance. */
 .calendar-day-popover::after {
   content: '';
   position: absolute;
   top: 100%;
   left: 50%;
   transform: translateX(-50%);
-  border: 6px solid transparent;
-  border-top-color: var(--color-glass-border);
+  border: 8px solid transparent;
+  border-top-color: #2f6fed;
 }
 
 .calendar-day-popover::before {
@@ -2446,8 +2447,8 @@ a.link.danger {
   position: absolute;
   top: 100%;
   left: 50%;
-  transform: translateX(-50%) translateY(-1px);
-  border: 5px solid transparent;
+  transform: translateX(-50%) translateY(-2px);
+  border: 6px solid transparent;
   border-top-color: var(--color-glass);
   z-index: 1;
 }
