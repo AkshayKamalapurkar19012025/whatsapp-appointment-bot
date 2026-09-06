@@ -2385,16 +2385,18 @@ a.link.danger {
 }
 
 /* Same-doctor duplicate-appointment nudge (Calendar.tsx's month-level
-   note) and the per-date marker/popover pair (MonthGrid.tsx) -- blue,
-   distinct from the primary-teal "available" and warning-amber "today"
-   meanings already used on this grid. */
+   note) and the per-date marker/popover pair (MonthGrid.tsx) -- reuses
+   the app's own primary teal (not a one-off colour) so this reads as
+   part of the same design language as every other accent on this
+   calendar, just applied to a new meaning ("you've already booked
+   this"). */
 .calendar-month-nudge {
-  background: #e3edfc;
+  background: var(--color-primary-soft);
   border-radius: var(--radius-sm);
   padding: var(--space-2) var(--space-3);
   margin-bottom: var(--space-3);
   font-size: 0.84rem;
-  color: #2f6fed;
+  color: var(--color-primary-hover);
 }
 
 .calendar-day-marker {
@@ -2404,7 +2406,7 @@ a.link.danger {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #2f6fed;
+  background: var(--color-primary);
   border: 1px solid var(--color-surface);
   cursor: pointer;
 }
@@ -2418,7 +2420,7 @@ a.link.danger {
   width: max-content;
   max-width: 190px;
   background: var(--color-glass);
-  border: 1px solid var(--color-glass-border);
+  border: 1px solid var(--color-primary-soft-strong);
   border-radius: var(--radius-sm);
   padding: var(--space-2) var(--space-3);
   box-shadow: var(--shadow-md);
@@ -2430,8 +2432,9 @@ a.link.danger {
 /* A pointer connecting the popover to the marked date's dot directly
    below it -- without this, the popover (wider than a single day cell)
    reads as floating over the row above rather than belonging to this
-   date. Coloured to match the marker dot itself (rather than the
-   popover's own glass border) so the connection reads at a glance. */
+   date. Coloured to match the marker dot and popover border above
+   (the app's own primary teal), so the connection reads at a glance
+   without introducing a colour nothing else on this page uses. */
 .calendar-day-popover::after {
   content: '';
   position: absolute;
@@ -2439,7 +2442,7 @@ a.link.danger {
   left: 50%;
   transform: translateX(-50%);
   border: 8px solid transparent;
-  border-top-color: #2f6fed;
+  border-top-color: var(--color-primary-soft-strong);
 }
 
 .calendar-day-popover::before {
