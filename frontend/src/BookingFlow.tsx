@@ -20,7 +20,9 @@ import {
   listDoctorsInDepartment,
 } from './api'
 import type { BookedAppointment, Department, Doctor, DoctorWithSlots, Slot } from './types'
+import { appointmentTypeIcon } from './appointmentTypeIcon'
 import Calendar from './Calendar'
+import { accentClassFor } from './cardAccent'
 import { departmentIcon } from './departmentIcon'
 import DepartmentCalendar from './DepartmentCalendar'
 import DoctorCard from './DoctorCard'
@@ -320,7 +322,7 @@ export default function BookingFlow({
               const Icon = departmentIcon(d.name)
               return (
                 <button key={d.id} type="button" className="department-card" onClick={() => chooseDepartment(d)}>
-                  <span className="department-card-icon" aria-hidden="true">
+                  <span className={`department-card-icon ${accentClassFor(d.name)}`} aria-hidden="true">
                     <Icon size={22} weight="duotone" />
                   </span>
                   <span className="department-card-name">{d.name}</span>
@@ -367,18 +369,30 @@ export default function BookingFlow({
       {step === 'appointmentType' && (
         <>
           <h2>Choose an appointment type</h2>
-          <ul className="option-list">
-            {appointmentTypes.map((type) => (
-              <li key={type.id}>
-                <button type="button" onClick={() => chooseAppointmentType(type)}>
-                  {type.name}{' '}
-                  {type.duration_minutes !== undefined && (
-                    <span className="muted">({type.duration_minutes} min)</span>
-                  )}
+          <div className="department-grid">
+            {appointmentTypes.map((type) => {
+              const Icon = appointmentTypeIcon(type.name)
+              return (
+                <button
+                  key={type.id}
+                  type="button"
+                  className="department-card"
+                  onClick={() => chooseAppointmentType(type)}
+                >
+                  <span className={`department-card-icon ${accentClassFor(type.name)}`} aria-hidden="true">
+                    <Icon size={22} weight="duotone" />
+                  </span>
+                  <span className="department-card-name">
+                    {type.name}
+                    {type.duration_minutes !== undefined && (
+                      <span className="department-card-meta">{type.duration_minutes} min</span>
+                    )}
+                  </span>
+                  <CaretRight size={16} className="department-card-arrow" aria-hidden="true" />
                 </button>
-              </li>
-            ))}
-          </ul>
+              )
+            })}
+          </div>
           <div className="step-actions">
             <button
               type="button"
