@@ -342,19 +342,38 @@ export default function BookingFlow({
         </>
       )}
 
+      {/* Manual test note (no frontend test runner exists yet to automate
+          this): with a department that has doctors, a department with
+          none, and the doctors fetch failing (e.g. DevTools network
+          throttling set to "Offline", or aborting the
+          GET /departments/:id/doctors request), confirm respectively: the
+          normal doctor list renders, the empty-state message below
+          renders instead of a blank section, and chooseDepartment's
+          catch (setError above) surfaces its own distinct
+          "Could not load doctors" banner rather than falling through to
+          this empty-state message -- verified manually via Playwright
+          screenshots against a locally seeded department with zero
+          doctors and a simulated network failure. */}
       {step === 'doctor' && (
         <>
           <h2>Choose a doctor</h2>
-          <ul className="option-list">
-            {doctors.map((doc) => (
-              <DoctorCard
-                key={doc.id}
-                doctor={doc}
-                onSelect={() => chooseDoctor(doc)}
-                onViewProfile={() => setViewingProfileDoctorId(doc.id)}
-              />
-            ))}
-          </ul>
+          {doctors.length === 0 ? (
+            <p className="calendar-empty-state">
+              No doctors are currently available for this department. Please check back later or contact the front
+              desk.
+            </p>
+          ) : (
+            <ul className="option-list">
+              {doctors.map((doc) => (
+                <DoctorCard
+                  key={doc.id}
+                  doctor={doc}
+                  onSelect={() => chooseDoctor(doc)}
+                  onViewProfile={() => setViewingProfileDoctorId(doc.id)}
+                />
+              ))}
+            </ul>
+          )}
           <div className="step-actions">
             <button type="button" className="link" onClick={() => setStep('department')}>
               Back
