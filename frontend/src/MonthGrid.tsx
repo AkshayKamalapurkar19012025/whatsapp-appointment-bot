@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { formatTime, isoDateOnly } from './format'
 import { useClinicToday } from './useClinicToday'
 import type { MyAppointment } from './types'
@@ -82,6 +82,31 @@ export default function MonthGrid({
   // tap on mobile) -- at most one at a time.
   const [openMarkerDate, setOpenMarkerDate] = useState<string | null>(null)
   const gridRef = useRef<HTMLDivElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
+  // Horizontal correction (px) applied on top of the popover's default
+  // centered-on-the-marker position, so it stays on-screen for a
+  // marked date in the leftmost/rightmost calendar column -- without
+  // this, a plain centered popover runs off the viewport edge on a
+  // narrow (mobile) screen since it's wider than a single day cell.
+  const [popoverShift, setPopoverShift] = useState(0)
+
+  useLayoutEffect(() => {
+    if (!openMarkerDate) {
+      setPopoverShift(0)
+      return
+    }
+    const el = popoverRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const margin = 8
+    let shift = 0
+    if (rect.left < margin) {
+      shift = margin - rect.left
+    } else if (rect.right > window.innerWidth - margin) {
+      shift = window.innerWidth - margin - rect.right
+    }
+    setPopoverShift(shift)
+  }, [openMarkerDate])
 
   // Dismiss an open popover on an outside tap/click -- the only close
   // path on touch devices, which don't fire mouseleave. Not a toggle on
@@ -176,17 +201,34 @@ export default function MonthGrid({
                     tabIndex={0}
                     aria-label={`You already have ${existingAppointments.length === 1 ? 'an appointment' : `${existingAppointments.length} appointments`} with ${doctorName ?? 'this doctor'} on this date -- show details`}
                     aria-expanded={isPopoverOpen}
-                    onMouseEnter={() => setOpenMarkerDate(cell.iso)}
-                    onMouseLeave={() => setOpenMarkerDate((current) => (current === cell.iso ? null : current))}
-                    onFocus={() => setOpenMarkerDate(cell.iso)}
-                    onBlur={() => setOpenMarkerDate((current) => (current === cell.iso ? null : current))}
+                    // Pointer Events, gated by pointerType, rather than
+                    // onMouseEnter/onMouseLeave/onFocus/onBlur: a real
+                    // touch tap synthesizes a full mouse-event burst
+                    // afterwards (mouseenter, mousedown, mouseup, click,
+                    // and critically a trailing mouseleave/blur as the
+                    // "virtual pointer" leaves) -- the old mouse-based
+                    // handlers opened it via mouseenter and then
+                    // immediately closed it again via that trailing
+                    // mouseleave, all within one gesture, faster than
+                    // any render could show it. Only a real mouse's
+                    // pointerType drives hover open/close now; onClick
+                    // (fires for both mouse and touch) is what actually
+                    // opens it on tap.
+                    onPointerEnter={(event) => {
+                      if (event.pointerType === 'mouse') setOpenMarkerDate(cell.iso)
+                    }}
+                    onPointerLeave={(event) => {
+                      if (event.pointerType === 'mouse') {
+                        setOpenMarkerDate((current) => (current === cell.iso ? null : current))
+                      }
+                    }}
                     onClick={(event) => {
-                      // Always open (not toggle): a tap/click also fires
-                      // a synthetic mouseenter first, which already
-                      // opened this same popover -- toggling here would
-                      // immediately close what the tap just opened.
-                      // Dismissal is the outside-click handler above (or
-                      // mouseleave/blur on desktop).
+                      // Always open (not toggle): on a mouse, hover via
+                      // onPointerEnter above already opened it, so this
+                      // is a no-op re-open; on touch, this is the only
+                      // thing that opens it. Dismissal is the
+                      // outside-click handler above, or onPointerLeave
+                      // for a real mouse.
                       event.stopPropagation()
                       setOpenMarkerDate(cell.iso)
                     }}
@@ -202,7 +244,12 @@ export default function MonthGrid({
                   </span>
                 )}
                 {existingAppointments && existingAppointments.length > 0 && isPopoverOpen && (
-                  <div className="calendar-day-popover" role="tooltip">
+                  <div
+                    ref={popoverRef}
+                    className="calendar-day-popover"
+                    role="tooltip"
+                    style={{ '--popover-shift': `${popoverShift}px` } as CSSProperties}
+                  >
                     <p className="calendar-day-popover-title">
                       {MONTH_NAMES[Number(cell.iso.slice(5, 7)) - 1]} {cell.day} with {doctorName ?? 'this doctor'}
                     </p>

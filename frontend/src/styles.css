@@ -2426,7 +2426,11 @@ a.link.danger {
   position: absolute;
   bottom: calc(100% + 10px);
   left: 50%;
-  transform: translateX(-50%);
+  /* --popover-shift (set inline by MonthGrid.tsx, in px) nudges the box
+     back on-screen for a marked date near the left/right edge of a
+     narrow viewport -- 0px on a normal desktop-width calendar where it
+     fits centered already. */
+  transform: translateX(calc(-50% + var(--popover-shift, 0px)));
   z-index: 20;
   width: max-content;
   min-width: 200px;
@@ -2484,7 +2488,11 @@ a.link.danger {
   position: absolute;
   top: 100%;
   left: 50%;
-  transform: translateX(-50%);
+  /* Counter-shifts by the same --popover-shift the box itself was
+     nudged by, so the arrow keeps pointing at the marker's actual
+     position rather than drifting to the (now off-center) popover's
+     own midpoint. */
+  transform: translateX(calc(-50% - var(--popover-shift, 0px)));
   border: 8px solid transparent;
   border-top-color: var(--color-primary-soft-strong);
 }
@@ -2494,7 +2502,7 @@ a.link.danger {
   position: absolute;
   top: 100%;
   left: 50%;
-  transform: translateX(-50%) translateY(-2px);
+  transform: translateX(calc(-50% - var(--popover-shift, 0px))) translateY(-2px);
   border: 6px solid transparent;
   border-top-color: var(--color-glass);
   z-index: 1;
