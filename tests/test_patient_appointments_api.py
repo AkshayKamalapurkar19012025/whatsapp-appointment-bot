@@ -275,7 +275,7 @@ def test_reschedule_web_appointment_rejects_overlap(client, db_connection):
         json={"new_start_at": f"{target_day.isoformat()}T11:00:00+05:30"},
     )
     assert response.status_code == 409
-    assert "booked by someone else" in response.json()["detail"]
+    assert "scheduled by someone else" in response.json()["detail"]
 
 
 def test_reschedule_web_appointment_rejects_time_outside_doctor_schedule(client, db_connection):
@@ -316,7 +316,7 @@ def test_reschedule_web_appointment_enforces_booking_window(client, db_connectio
         json={"new_start_at": f"{outside_date.isoformat()}T09:00:00+05:30"},
     )
     assert response.status_code == 409
-    assert "booking window" in response.json()["detail"]
+    assert "scheduling window" in response.json()["detail"]
 
 
 # ---------------------------------------------------------------------

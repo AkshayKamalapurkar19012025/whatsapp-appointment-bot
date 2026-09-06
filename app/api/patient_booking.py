@@ -141,7 +141,7 @@ def get_calendar_month(
     if month_end < window_start or month_start > window_end:
         raise HTTPException(
             status_code=409,
-            detail="Requested month is outside the allowed booking window",
+            detail="Requested month is outside the allowed scheduling window",
         )
 
     with get_connection() as conn:
@@ -200,7 +200,7 @@ def get_department_calendar_month(
     if month_end < window_start or month_start > window_end:
         raise HTTPException(
             status_code=409,
-            detail="Requested month is outside the allowed booking window",
+            detail="Requested month is outside the allowed scheduling window",
         )
 
     with get_connection() as conn:
@@ -246,7 +246,7 @@ def get_department_availability_by_date(
     if not is_within_booking_window(selected_date):
         raise HTTPException(
             status_code=409,
-            detail="Requested date is outside the allowed booking window",
+            detail="Requested date is outside the allowed scheduling window",
         )
 
     with get_connection() as conn:
@@ -304,7 +304,7 @@ def create_web_appointment(
             except svc_exc.OutsideBookingWindow:
                 raise HTTPException(
                     status_code=409,
-                    detail="Requested date is outside the allowed booking window",
+                    detail="Requested date is outside the allowed scheduling window",
                 )
             except svc_exc.SlotOverlap:
                 raise HTTPException(
@@ -440,12 +440,12 @@ def reschedule_web_appointment(
             except svc_exc.OutsideBookingWindow:
                 raise HTTPException(
                     status_code=409,
-                    detail="Requested date is outside the allowed booking window",
+                    detail="Requested date is outside the allowed scheduling window",
                 )
             except svc_exc.SlotOverlap:
                 raise HTTPException(
                     status_code=409,
-                    detail="That slot was just booked by someone else",
+                    detail="That slot was just scheduled by someone else",
                 )
 
             # WEB P8: mock reschedule notification. Uses body.new_start_at

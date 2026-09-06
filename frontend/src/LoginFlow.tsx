@@ -96,7 +96,7 @@ export default function LoginFlow({ onLoggedIn }: { onLoggedIn: () => void }) {
         <div className="login-icon-badge" aria-hidden="true">
           <HeaderIcon size={28} weight="light" />
         </div>
-        <h1>Book an Appointment</h1>
+        <h1>Schedule an Appointment</h1>
         <p className="muted login-subtitle">Quick and secure — no password needed.</p>
 
         <div
@@ -163,7 +163,7 @@ export default function LoginFlow({ onLoggedIn }: { onLoggedIn: () => void }) {
                 Use a different number
               </button>
               <p className="muted otp-fallback-hint">
-                Still didn't get it? Contact the front desk — staff can book your appointment
+                Still didn't get it? Contact the front desk — staff can schedule your appointment
                 for you directly.
               </p>
             </div>
@@ -180,7 +180,7 @@ export default function LoginFlow({ onLoggedIn }: { onLoggedIn: () => void }) {
             <h2 className="register-heading">Let's get you set up</h2>
             <p className="muted register-subtext">
               We don't have an account for <strong>{whatsappNumber}</strong> yet — add your name to
-              finish booking.
+              finish scheduling.
             </p>
             <label htmlFor="name">Full name</label>
             <input
