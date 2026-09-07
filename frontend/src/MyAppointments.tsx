@@ -11,6 +11,7 @@ import type { MyAppointment, MyAppointmentsResponse, Slot } from './types'
 import Calendar from './Calendar'
 import PatientTopBar from './PatientTopBar'
 import SlotGrid from './SlotGrid'
+import StepActions from './StepActions'
 import { formatDate, formatTime } from './format'
 import { useStaggerReveal } from './useStaggerReveal'
 import {
@@ -38,9 +39,16 @@ const TAB_ICON = {
 export default function MyAppointments({
   patientName,
   onLoggedOut,
+  onScheduleNew,
 }: {
   patientName: string
   onLoggedOut: () => void
+  // "Main Menu" from the reschedule date-picker (StepActions) -- jumps
+  // straight to starting a brand new appointment, the same escape-hatch
+  // role "Main Menu" plays throughout SchedulingFlow.tsx. "Back" there
+  // already exits the reschedule sub-flow (cancelRescheduleFlow), so
+  // this is the one action that isn't otherwise reachable from here.
+  onScheduleNew: () => void
 }) {
   const [tab, setTab] = useState<Tab>('upcoming')
   const [data, setData] = useState<MyAppointmentsResponse | null>(null)
@@ -106,6 +114,16 @@ export default function MyAppointments({
     setSelectedSlot(null)
   }
 
+  // The patient's other upcoming appointments with this same doctor --
+  // feeds Calendar's same-doctor duplicate-appointment marker/nudge
+  // below, same as SchedulingFlow.tsx's Doctor-First date step. Excludes
+  // the appointment actually being rescheduled itself: it will always
+  // land on its own existing date/doctor, which isn't a real conflict,
+  // just the record about to move.
+  const otherAppointmentsWithRescheduleDoctor = rescheduling
+    ? (data?.upcoming ?? []).filter((a) => a.doctor_id === rescheduling.doctor_id && a.id !== rescheduling.id)
+    : []
+
   function chooseRescheduleDate(isoDate: string) {
     if (!rescheduling) return
     setError(null)
@@ -163,10 +181,10 @@ export default function MyAppointments({
                 doctorId={rescheduling.doctor_id}
                 appointmentTypeId={rescheduling.appointment_type_id}
                 onSelectDate={chooseRescheduleDate}
+                doctorName={rescheduling.doctor_name}
+                existingAppointments={otherAppointmentsWithRescheduleDoctor}
               />
-              <button type="button" className="link" onClick={cancelRescheduleFlow}>
-                Cancel
-              </button>
+              <StepActions onBack={cancelRescheduleFlow} onMainMenu={onScheduleNew} />
             </>
           )}
 

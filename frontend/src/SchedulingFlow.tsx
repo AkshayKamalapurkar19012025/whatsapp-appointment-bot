@@ -25,7 +25,6 @@ import { appointmentTypeIcon } from './appointmentTypeIcon'
 import Calendar from './Calendar'
 import { accentClassFor } from './cardAccent'
 import { departmentIcon } from './departmentIcon'
-import DepartmentCalendar from './DepartmentCalendar'
 import DoctorCard from './DoctorCard'
 import DoctorProfileModal from './DoctorProfileModal'
 import PatientTopBar from './PatientTopBar'
@@ -435,7 +434,7 @@ export default function SchedulingFlow({
         <>
           <h2>Choose a date</h2>
           <p className="muted">Showing every doctor with an opening -- pick a date to see who's available.</p>
-          <DepartmentCalendar
+          <Calendar
             departmentId={department.id}
             appointmentTypeId={appointmentType.id}
             onSelectDate={chooseDateFirstDate}

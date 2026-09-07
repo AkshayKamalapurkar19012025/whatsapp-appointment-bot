@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ApiError, getCalendarMonth } from './api'
+import { ApiError, getCalendarMonth, getDepartmentCalendarMonth } from './api'
 import type { CalendarMonth, MyAppointment } from './types'
 import MonthGrid from './MonthGrid'
 import { formatDate, formatTime } from './format'
@@ -14,6 +14,44 @@ import {
   AlertDialogTitle,
 } from './components/ui/alert-dialog'
 
+type CalendarProps = {
+  appointmentTypeId: number
+  onSelectDate: (isoDate: string) => void
+} & (
+  | {
+      // The per-doctor calendar (GET /web/calendar) -- SchedulingFlow.tsx's
+      // Doctor-First date step and MyAppointments.tsx's reschedule step.
+      doctorId: number
+      // Narrows to this department's schedule (migrations/0010) -- omit
+      // when there's no department in scope (e.g. rescheduling).
+      departmentId?: number
+      // The doctor's display name for the "you already have an
+      // appointment with X" copy, and the patient's own upcoming
+      // appointments already scheduled with this doctor, pre-filtered by
+      // the caller -- feeds the duplicate-appointment marker/nudge/confirm
+      // dialog below. Both omitted (defaulting existingAppointments to
+      // []) wherever this component is reused without that context (e.g.
+      // MyAppointments passing only its own doctor-scoped list), which
+      // simply renders no markers/nudge at all.
+      doctorName?: string
+      existingAppointments?: MyAppointment[]
+    }
+  | {
+      // Date-First's aggregate-across-doctors calendar (GET
+      // /web/calendar/department), SchedulingFlow.tsx's "Find by Date" --
+      // no doctor chosen yet, so departmentId is the only thing
+      // identifying which calendar to fetch, and there's no single
+      // doctor yet to duplicate-check against. Absorbs what used to be
+      // the separate DepartmentCalendar.tsx: the two were byte-for-byte
+      // the same data-fetching/window-navigation logic, differing only in
+      // which endpoint to call and this doctor-duplicate-check gap.
+      doctorId?: undefined
+      departmentId: number
+      doctorName?: undefined
+      existingAppointments?: undefined
+    }
+)
+
 export default function Calendar({
   doctorId,
   appointmentTypeId,
@@ -21,23 +59,7 @@ export default function Calendar({
   onSelectDate,
   doctorName,
   existingAppointments = [],
-}: {
-  doctorId: number
-  appointmentTypeId: number
-  // Narrows availability to this department's schedule (migrations/0010)
-  // -- omit when there's no department in scope (e.g. rescheduling).
-  departmentId?: number
-  onSelectDate: (isoDate: string) => void
-  // Doctor-first scheduling only (SchedulingFlow.tsx) -- the doctor's display
-  // name for the "you already have an appointment with X" copy below,
-  // and the patient's own upcoming appointments already scheduled with
-  // this doctor, pre-filtered by the caller. Both omitted (defaulting
-  // existingAppointments to []) wherever this component is reused
-  // without that context (e.g. MyAppointments' reschedule calendar),
-  // which simply renders no markers/nudge at all.
-  doctorName?: string
-  existingAppointments?: MyAppointment[]
-}) {
+}: CalendarProps) {
   const today = new Date()
   const [year, setYear] = useState(today.getFullYear())
   const [month, setMonth] = useState(today.getMonth() + 1)
@@ -69,7 +91,14 @@ export default function Calendar({
     let cancelled = false
     setLoading(true)
     setError(null)
-    getCalendarMonth(doctorId, appointmentTypeId, year, month, departmentId)
+    // No doctorId -- Date-First's aggregate-across-doctors calendar,
+    // which requires departmentId in its place (see this component's
+    // doctorId doc comment above).
+    const fetchMonth =
+      doctorId !== undefined
+        ? getCalendarMonth(doctorId, appointmentTypeId, year, month, departmentId)
+        : getDepartmentCalendarMonth(departmentId, appointmentTypeId, year, month)
+    fetchMonth
       .then((result) => {
         if (!cancelled) setData(result)
       })

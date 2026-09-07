@@ -79,7 +79,11 @@ export default function App() {
               onViewAppointments={() => setView('appointments')}
             />
           ) : (
-            <MyAppointments patientName={patient.name} onLoggedOut={handleLoggedOut} />
+            <MyAppointments
+              patientName={patient.name}
+              onLoggedOut={handleLoggedOut}
+              onScheduleNew={() => setView('scheduling')}
+            />
           )
         ) : (
           <LoginFlow onLoggedIn={handleLoggedIn} />
