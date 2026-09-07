@@ -111,3 +111,16 @@ export function doctorSummaryLine(doctor: {
   ].filter((part): part is string => Boolean(part))
   return parts.length > 0 ? parts.join(' · ') : null
 }
+
+// "+91 ******3210" -- masks a "+91XXXXXXXXXX" number (PhoneInput's shape)
+// for display on the OTP screen, leaving only the last 4 digits visible.
+// Falls back to the raw value unmasked for anything that doesn't match
+// that shape (e.g. mid-typing, or before a number has been entered at
+// all), rather than showing a misleading mask over data it doesn't
+// actually recognize.
+export function maskPhone(fullNumber: string): string {
+  const match = /^\+91(\d{10})$/.exec(fullNumber)
+  if (!match) return fullNumber
+  const digits = match[1]
+  return `+91 ${'*'.repeat(6)}${digits.slice(6)}`
+}

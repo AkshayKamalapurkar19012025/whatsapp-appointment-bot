@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { CalendarCheck, ChatCircleDots, Check, UserCircle } from '@phosphor-icons/react'
 import { ApiError, requestOtp, setToken, verifyOtp } from './api'
+import { maskPhone } from './format'
 import OtpInput from './OtpInput'
 import PhoneInput from './PhoneInput'
 
@@ -29,6 +30,16 @@ export default function LoginFlow({ onLoggedIn }: { onLoggedIn: () => void }) {
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // A ref, not just the `busy` state above: two near-simultaneous
+  // triggers (the auto-submit effect below and a native form-submit --
+  // e.g. a mobile keyboard's own "Go" action firing right after OTP
+  // autofill) can both call submitOtp() from closures captured in the
+  // same render, before setBusy(true) has been reflected in a
+  // re-render. Both would read the same stale `busy === false` and
+  // both pass a state-based guard. A ref is mutated synchronously and
+  // read back immediately, with no render in between, so it actually
+  // closes that gap regardless of which trigger fires first.
+  const submittingRef = useRef(false)
   const [resendCooldown, setResendCooldown] = useState(0)
   const [resendMessage, setResendMessage] = useState<string | null>(null)
 
@@ -68,7 +79,27 @@ export default function LoginFlow({ onLoggedIn }: { onLoggedIn: () => void }) {
     }
   }
 
+  // Auto-submits the instant the 6th digit lands (typed or pasted/
+  // autofilled -- OtpInput's onChange reports the same full string
+  // either way). Deliberately depends on [otp, stage] only, not `busy`:
+  // including `busy` would re-fire this the moment a failed attempt's
+  // busy flips back to false, silently resubmitting the same still-
+  // wrong code in a loop. A genuine retry needs the code to actually
+  // change (the user edits a digit) or the Verify button below, which
+  // stays as a manual fallback.
+  useEffect(() => {
+    if (stage === 'otp' && otp.length === 6 && !busy) {
+      submitOtp()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [otp, stage])
+
   async function submitOtp(withName?: string) {
+    // Reentrancy guard via the ref above, not the `busy` state -- see
+    // submittingRef's own comment for why a state read here wouldn't
+    // actually close the race this exists to prevent.
+    if (submittingRef.current) return
+    submittingRef.current = true
     setError(null)
     setBusy(true)
     try {
@@ -82,6 +113,7 @@ export default function LoginFlow({ onLoggedIn }: { onLoggedIn: () => void }) {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not verify OTP')
     } finally {
+      submittingRef.current = false
       setBusy(false)
     }
   }
@@ -139,7 +171,7 @@ export default function LoginFlow({ onLoggedIn }: { onLoggedIn: () => void }) {
               submitOtp()
             }}
           >
-            <p>Enter the code sent to {whatsappNumber}</p>
+            <p>Enter the code sent to {maskPhone(whatsappNumber)}</p>
             <span id="otp-label" className="field-label">
               Verification code
             </span>
@@ -159,8 +191,35 @@ export default function LoginFlow({ onLoggedIn }: { onLoggedIn: () => void }) {
               >
                 {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : 'Resend code'}
               </button>
-              <button type="button" className="link" onClick={() => setStage('number')}>
-                Use a different number
+              <button
+                type="button"
+                className="link"
+                // Disabled while busy: auto-submit above can have a
+                // verifyOtp() in flight the instant the 6th digit lands.
+                // Without this, clicking through mid-request resets to
+                // the number stage while that request is still pending
+                // -- if it later resolves, its result (a login under the
+                // still-showing number, or a stale error) lands on
+                // whatever screen the user has since moved to.
+                disabled={busy}
+                onClick={() => {
+                  setStage('number')
+                  // Deliberately NOT cleared, unlike a "start over" reset
+                  // -- this is "edit in place" (fix a typo in the same
+                  // number), so PhoneInput should come back prefilled
+                  // with it rather than empty. A patient who actually
+                  // wants a different number can still clear the field
+                  // themselves on the number screen.
+                  setOtp('')
+                  setError(null)
+                  // Otherwise a stale "A new code was sent." would still
+                  // show once the OTP screen renders again, before any
+                  // resend has actually happened for whatever number the
+                  // patient submits next.
+                  setResendMessage(null)
+                }}
+              >
+                Edit number
               </button>
               <p className="muted otp-fallback-hint">
                 Still didn't get it? Contact the front desk — staff can schedule your appointment
