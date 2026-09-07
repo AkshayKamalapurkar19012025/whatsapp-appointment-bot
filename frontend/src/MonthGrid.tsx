@@ -309,6 +309,13 @@ export default function MonthGrid({
                         </span>
                       </div>
                     ))}
+                    {/* available is computed independently of this
+                        popover's own existing-appointment data (see this
+                        file's module comment) -- a marked date can still
+                        be fully booked. Without this note, a patient has
+                        no explanation for why a date showing their own
+                        appointment is greyed out and unclickable. */}
+                    {!available && <p className="calendar-day-popover-note">No other openings this day</p>}
                   </div>
                 )}
               </div>

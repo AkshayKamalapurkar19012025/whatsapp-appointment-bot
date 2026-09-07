@@ -2566,6 +2566,15 @@ a.link.danger {
   font-size: 0.62rem;
 }
 
+.calendar-day-popover-note {
+  margin: var(--space-1) 0 0;
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--color-border);
+  font-size: 0.7rem;
+  font-style: italic;
+  color: var(--color-text-muted);
+}
+
 /* A pointer connecting the popover to the marked date's dot directly
    below it -- without this, the popover (wider than a single day cell)
    reads as floating over the row above rather than belonging to this
