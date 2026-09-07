@@ -6,12 +6,13 @@ POST /api/appointments/{id}/confirm, /reject, /visit, /complete.
 Every appointment now starts PENDING (create_appointment_service, used
 by WhatsApp, patient web booking, and this same admin create endpoint)
 and moves forward one step at a time:
-    PENDING -> CONFIRMED -> VISITED -> COMPLETED
+    PENDING -> CONFIRMED -> CHECKED_IN -> COMPLETED
        \\-> REJECTED
 
 Each endpoint only accepts its one specific starting status -- confirm
-only from PENDING, reject only from PENDING, visit only from CONFIRMED,
-complete only from VISITED -- rejecting everything else with 409.
+only from PENDING, reject only from PENDING, visit only from CONFIRMED
+(status -> CHECKED_IN, renamed from VISITED in migrations/0015),
+complete only from CHECKED_IN -- rejecting everything else with 409.
 """
 
 from datetime import date, datetime, timedelta, timezone as dt_timezone
@@ -192,7 +193,7 @@ def test_visit_confirmed_appointment_succeeds(client, db_connection):
         f"/api/appointments/{ctx['appointment']['id']}/visit", headers=ctx["admin_headers"]
     )
     assert response.status_code == 200
-    assert response.json()["status"] == "VISITED"
+    assert response.json()["status"] == "CHECKED_IN"
 
 
 def test_visit_pending_appointment_is_409(client, db_connection):
@@ -249,7 +250,7 @@ def test_visit_appointment_just_after_start_succeeds(client, db_connection):
         f"/api/appointments/{ctx['appointment']['id']}/visit", headers=ctx["admin_headers"]
     )
     assert response.status_code == 200
-    assert response.json()["status"] == "VISITED"
+    assert response.json()["status"] == "CHECKED_IN"
 
 
 def test_visit_same_local_day_but_still_future_slot_is_409(client, db_connection):
@@ -340,6 +341,138 @@ def test_complete_confirmed_but_not_visited_appointment_is_409(client, db_connec
         f"/api/appointments/{ctx['appointment']['id']}/complete", headers=ctx["admin_headers"]
     )
     assert response.status_code == 409
+
+
+# ---------------------------------------------------------------------
+# No-Show (migrations/0015 -- manual front-desk action only, no
+# cron/scheduler; see mark_no_show_service)
+# ---------------------------------------------------------------------
+
+
+def test_no_show_confirmed_appointment_succeeds(client, db_connection):
+    ctx = _seed_and_book(client, db_connection, "Dr. NoShow Normal")
+    client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
+
+    # _seed_and_book books 10 days out -- move start_at into the past,
+    # same as the /visit tests: you can't yet know a patient won't show
+    # up for a slot that hasn't happened yet (see mark_no_show_service's
+    # AppointmentNotStarted guard).
+    past_start = datetime.now(dt_timezone.utc) - timedelta(hours=1)
+    _set_start_at(db_connection, ctx["appointment"]["id"], past_start, past_start + timedelta(minutes=30))
+
+    response = client.post(
+        f"/api/appointments/{ctx['appointment']['id']}/no-show", headers=ctx["admin_headers"]
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "NO_SHOW"
+
+    with db_connection.cursor() as cur:
+        cur.execute("SELECT status FROM appointments WHERE id = %s", (ctx["appointment"]["id"],))
+        assert cur.fetchone()[0] == "NO_SHOW"
+
+
+def test_no_show_future_confirmed_appointment_is_409(client, db_connection):
+    # _seed_and_book already books 10 days out, so this appointment
+    # hasn't started -- no start_at manipulation needed. Mirrors
+    # test_visit_future_confirmed_appointment_is_409 above.
+    ctx = _seed_and_book(client, db_connection, "Dr. NoShow Future")
+    client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
+
+    response = client.post(
+        f"/api/appointments/{ctx['appointment']['id']}/no-show", headers=ctx["admin_headers"]
+    )
+    assert response.status_code == 409
+    assert "not started" in response.json()["detail"].lower()
+
+    with db_connection.cursor() as cur:
+        cur.execute("SELECT status FROM appointments WHERE id = %s", (ctx["appointment"]["id"],))
+        assert cur.fetchone()[0] == "CONFIRMED", "a rejected no-show attempt must not change status"
+
+
+def test_no_show_pending_appointment_is_409(client, db_connection):
+    # An unapproved request isn't a no-show -- it's a different,
+    # out-of-scope problem (see mark_no_show_service's own docstring).
+    ctx = _seed_and_book(client, db_connection, "Dr. NoShow Pending")
+
+    response = client.post(
+        f"/api/appointments/{ctx['appointment']['id']}/no-show", headers=ctx["admin_headers"]
+    )
+    assert response.status_code == 409
+
+    with db_connection.cursor() as cur:
+        cur.execute("SELECT status FROM appointments WHERE id = %s", (ctx["appointment"]["id"],))
+        assert cur.fetchone()[0] == "PENDING", "a rejected no-show attempt must not change status"
+
+
+def test_no_show_checked_in_appointment_is_409(client, db_connection):
+    # A checked-in patient is physically present -- "no-show" from
+    # CHECKED_IN is a contradiction, deliberately not a valid transition.
+    ctx = _seed_and_book(client, db_connection, "Dr. NoShow CheckedIn")
+    client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
+
+    past_start = datetime.now(dt_timezone.utc) - timedelta(hours=1)
+    _set_start_at(db_connection, ctx["appointment"]["id"], past_start, past_start + timedelta(minutes=30))
+    client.post(f"/api/appointments/{ctx['appointment']['id']}/visit", headers=ctx["admin_headers"])
+
+    response = client.post(
+        f"/api/appointments/{ctx['appointment']['id']}/no-show", headers=ctx["admin_headers"]
+    )
+    assert response.status_code == 409
+
+    with db_connection.cursor() as cur:
+        cur.execute("SELECT status FROM appointments WHERE id = %s", (ctx["appointment"]["id"],))
+        assert cur.fetchone()[0] == "CHECKED_IN", "a rejected no-show attempt must not change status"
+
+
+def test_no_show_does_not_release_the_slot(client, db_connection):
+    # Deliberately the OPPOSITE expectation from Rejected/Cancelled
+    # (migrations/0011's RELEASED_STATUSES): an earlier draft of this
+    # test assumed NO_SHOW should behave like those and release its
+    # slot, and asserted success retrying ctx["start_at_local"] -- which
+    # only passed because that's the ORIGINAL future slot, no longer
+    # occupied by this appointment at all once AppointmentNotStarted
+    # (below) forced moving it into the past first. That proved nothing.
+    #
+    # Retrying the slot the appointment actually still occupies (the
+    # past start_at it was moved to) correctly gets rejected: NO_SHOW is
+    # NOT in RELEASED_STATUSES, on purpose. Unlike Reject/Cancel, a
+    # no-show can only ever be marked on an appointment that has already
+    # started (mark_no_show_service's own AppointmentNotStarted guard,
+    # same as check-in's) -- so by the time a slot could be marked
+    # NO_SHOW, its time has already passed and no real future booking
+    # could ever target it anyway. "Does it release the slot" is
+    # consequently not a meaningful guarantee to make for NO_SHOW the
+    # way it is for Reject/Cancel, which both apply to still-future
+    # appointments.
+    ctx = _seed_and_book(client, db_connection, "Dr. NoShow SlotReuse")
+    client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
+
+    past_start = datetime.now(dt_timezone.utc) - timedelta(hours=1)
+    _set_start_at(db_connection, ctx["appointment"]["id"], past_start, past_start + timedelta(minutes=30))
+    client.post(f"/api/appointments/{ctx['appointment']['id']}/no-show", headers=ctx["admin_headers"])
+
+    other_patient = client.post(
+        "/api/patients",
+        json={"name": "NoShow Slot Reuser", "whatsapp_number": "+919912340002"},
+        headers=ctx["admin_headers"],
+    ).json()
+    retry = client.post(
+        "/api/appointments",
+        json={
+            "doctor_id": ctx["seeded"]["doctor_id"],
+            "patient_id": other_patient["id"],
+            "appointment_type_id": ctx["seeded"]["appointment_type_id"],
+            "start_at": past_start.isoformat(),
+        },
+        headers=ctx["admin_headers"],
+    )
+    assert retry.status_code == 409
+
+
+def test_no_show_requires_staff_auth(client, db_connection):
+    ctx = _seed_and_book(client, db_connection, "Dr. NoShow Auth")
+    response = client.post(f"/api/appointments/{ctx['appointment']['id']}/no-show")
+    assert response.status_code == 401
 
 
 def test_lifecycle_endpoints_usable_by_plain_staff_not_just_admin(client, db_connection):

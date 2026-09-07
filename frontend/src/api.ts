@@ -716,9 +716,11 @@ export function rescheduleAdminAppointment(
 }
 
 // Lifecycle transitions (migrations/0011_appointment_lifecycle_
-// statuses.sql): PENDING -> CONFIRMED -> VISITED -> COMPLETED, with
-// PENDING -> REJECTED or PENDING/CONFIRMED -> CANCELLED (cancelAdmin
-// Appointment above) as the two "never happened" exits.
+// statuses.sql, extended by migrations/0015): PENDING -> CONFIRMED ->
+// CHECKED_IN -> COMPLETED, with PENDING -> REJECTED, PENDING/CONFIRMED
+// -> CANCELLED (cancelAdminAppointment above), or CONFIRMED -> NO_SHOW
+// (noShowAdminAppointment below, manual front-desk action only) as
+// exits.
 
 export function confirmAdminAppointment(
   appointmentId: number,
@@ -742,6 +744,12 @@ export function completeAdminAppointment(
   appointmentId: number,
 ): Promise<{ id: number; status: string }> {
   return request(`/appointments/${appointmentId}/complete`, { method: 'POST', auth: 'staff' })
+}
+
+export function noShowAdminAppointment(
+  appointmentId: number,
+): Promise<{ id: number; status: string }> {
+  return request(`/appointments/${appointmentId}/no-show`, { method: 'POST', auth: 'staff' })
 }
 
 // Staff-only month availability for the admin date picker -- unlike

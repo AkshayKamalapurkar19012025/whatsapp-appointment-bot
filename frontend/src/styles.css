@@ -2562,14 +2562,18 @@ a.link.danger {
 }
 
 /* Appointment lifecycle statuses (migrations/0011_appointment_
-   lifecycle_statuses.sql): PENDING -> CONFIRMED -> VISITED -> COMPLETED,
-   with PENDING -> REJECTED or PENDING/CONFIRMED -> CANCELLED as the two
-   "never happened" exits. .status-confirmed reuses the same success
-   green as the pre-existing .status-booked (a Confirmed appointment is
-   today's equivalent of the old, single "booked" state) and
-   .status-rejected reuses .status-cancelled's danger red (same "never
-   happened" meaning to a viewer) rather than inventing new colors for
-   states that already read correctly with the existing ones. */
+   lifecycle_statuses.sql, extended by migrations/0015): PENDING ->
+   CONFIRMED -> CHECKED_IN -> COMPLETED, with PENDING -> REJECTED,
+   PENDING/CONFIRMED -> CANCELLED, or CONFIRMED -> NO_SHOW (manual
+   front-desk action) as exits. .status-confirmed reuses the same
+   success green as the pre-existing .status-booked (a Confirmed
+   appointment is today's equivalent of the old, single "booked"
+   state) and .status-rejected reuses .status-cancelled's danger red
+   (same "never happened" meaning to a viewer) rather than inventing
+   new colors for states that already read correctly with the existing
+   ones -- .status-no_show reuses that same danger red for the same
+   reason (the slot didn't result in a visit, same as cancelled/
+   rejected, just for a different reason). */
 .pill.status-pending {
   background: var(--color-warning-soft);
   color: var(--color-warning);
@@ -2585,7 +2589,7 @@ a.link.danger {
   color: var(--color-danger);
 }
 
-.pill.status-visited {
+.pill.status-checked_in {
   background: var(--color-primary-soft);
   color: var(--color-primary-hover);
 }
@@ -2593,6 +2597,11 @@ a.link.danger {
 .pill.status-completed {
   background: var(--color-bg-subtle);
   color: var(--color-text-secondary);
+}
+
+.pill.status-no_show {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
 }
 
 .pill.token-pill {

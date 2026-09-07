@@ -6,11 +6,16 @@ these counts is no more sensitive than viewing the appointments list,
 which any STAFF session can already do via GET /appointments.
 
 Appointments move through a real lifecycle (migrations/0011_appointment_
-lifecycle_statuses.sql): PENDING -> CONFIRMED -> VISITED -> COMPLETED,
-with PENDING -> REJECTED or PENDING/CONFIRMED -> CANCELLED as the two
-"never happened" exits. /stats reports a count for every one of those
-six statuses plus the two time-based cuts (today's / upcoming) already
-used before this lifecycle existed.
+lifecycle_statuses.sql, extended by migrations/0015): PENDING ->
+CONFIRMED -> CHECKED_IN -> COMPLETED, with PENDING -> REJECTED or
+PENDING/CONFIRMED -> CANCELLED, or CONFIRMED -> NO_SHOW (manual
+front-desk action, migrations/0015) as exits. /stats reports a count
+for every one of the original six statuses plus the two time-based
+cuts (today's / upcoming) already used before this lifecycle existed --
+NO_SHOW is not yet broken out as its own stat here (deliberately out of
+scope for the migration that introduced it; add a
+no_show_appointments count the same way as the others above if/when
+front-desk visibility into no-show counts is wanted).
 """
 
 from datetime import date, timedelta
@@ -56,7 +61,7 @@ def get_dashboard_stats(staff: dict = Depends(get_current_staff)):
                     COUNT(*) FILTER (WHERE a.status = 'CONFIRMED') AS confirmed_appointments,
                     COUNT(*) FILTER (WHERE a.status = 'REJECTED') AS rejected_appointments,
                     COUNT(*) FILTER (WHERE a.status = 'CANCELLED') AS cancelled_appointments,
-                    COUNT(*) FILTER (WHERE a.status = 'VISITED') AS visited_appointments,
+                    COUNT(*) FILTER (WHERE a.status = 'CHECKED_IN') AS visited_appointments,
                     COUNT(*) FILTER (WHERE a.status = 'COMPLETED') AS completed_appointments
                 FROM appointments a
                 JOIN doctors d ON d.id = a.doctor_id

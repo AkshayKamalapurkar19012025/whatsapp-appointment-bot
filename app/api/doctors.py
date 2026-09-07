@@ -609,13 +609,13 @@ def get_doctor_queue(
 ):
     """
     Today's walk-in queue for this doctor (migrations/0012_appointment_
-    queue_tokens.sql): patients checked in today (status VISITED or
+    queue_tokens.sql): patients checked in today (status CHECKED_IN or
     COMPLETED, token_number assigned at check-in -- see mark_visited_
     service), split into "now serving" (the lowest still-waiting token
     -- this app has no separate "in consultation" status, so the
-    lowest-numbered VISITED row still waiting is the working definition
-    of who's up), the rest of the VISITED rows waiting behind them, and
-    today's already-Completed patients for reference.
+    lowest-numbered CHECKED_IN row still waiting is the working
+    definition of who's up), the rest of the CHECKED_IN rows waiting
+    behind them, and today's already-Completed patients for reference.
 
     "Today" is the doctor's own local calendar day, matching every other
     per-doctor-per-day cut in this app (dashboard stats, this queue's own
@@ -644,7 +644,7 @@ def get_doctor_queue(
                 FROM appointments a
                 JOIN patients p ON p.id = a.patient_id
                 WHERE a.doctor_id = %s
-                  AND a.status IN ('VISITED', 'COMPLETED')
+                  AND a.status IN ('CHECKED_IN', 'COMPLETED')
                   AND (a.visited_at AT TIME ZONE %s)::date = %s
                 ORDER BY a.token_number
                 """,
@@ -667,7 +667,7 @@ def get_doctor_queue(
             "patient_name": row[5],
         }
 
-    waiting = [entry(r) for r in rows if r[1] == "VISITED"]
+    waiting = [entry(r) for r in rows if r[1] == "CHECKED_IN"]
     completed = [entry(r) for r in rows if r[1] == "COMPLETED"]
     now_serving = waiting.pop(0) if waiting else None
 
