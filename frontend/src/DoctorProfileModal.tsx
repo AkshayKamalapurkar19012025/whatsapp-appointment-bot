@@ -115,9 +115,15 @@ export default function DoctorProfileModal({
                 {profile.education.map((entry) => (
                   <li key={entry.id} className={entry.is_primary ? 'education-entry featured' : 'education-entry'}>
                     <div>
+                      {/* The tinted background (.featured, from is_primary)
+                          is enough to set this entry apart -- "Featured"
+                          itself is the admin picker's own label for
+                          choosing among entries (DoctorProfileSection.tsx's
+                          "Feature on card" toggle) and is meaningless to a
+                          patient looking at a profile with no other
+                          entries competing for attention. */}
                       <strong>{entry.qualification}</strong> — {entry.institution}, {entry.city},{' '}
                       {entry.country} ({entry.completion_year})
-                      {entry.is_primary && <span className="pill role-admin">Featured</span>}
                     </div>
                   </li>
                 ))}
