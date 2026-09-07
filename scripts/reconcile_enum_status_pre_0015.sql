@@ -1,0 +1,34 @@
+-- One-time reconciliation for a database whose appointments.status
+-- column is a native `appointment_status` ENUM rather than 0001's TEXT
+-- (see scripts/reconcile_pre_0001_baseline.sql's note on this exact
+-- divergence, and scripts/reconcile_enum_status_pre_0011.sql, which
+-- this one follows up on).
+--
+-- migrations/0015_appointment_checkin_and_no_show.sql assumes a TEXT
+-- column that accepts any string literal. Against an ENUM-typed column
+-- whose type has never been taught the new lifecycle values, its very
+-- first statement fails:
+--   invalid input value for enum appointment_status: "CHECKED_IN"
+--
+-- This script only ADDS enum values -- it does not touch any row, drop
+-- anything, or change the column's type. Each is a separate statement
+-- (required: Postgres does not let a value added by ALTER TYPE ... ADD
+-- VALUE be *used* in the same transaction that added it, so this must
+-- not be wrapped in one shared BEGIN/COMMIT the way ordinary migrations
+-- are -- run it with psql's default autocommit-per-statement behavior).
+--
+-- Confirm you actually need this before running it:
+--   SELECT typname FROM pg_type WHERE typname = 'appointment_status';
+-- returns a row -- if it returns nothing, your status column is TEXT
+-- (0001's default) and you should never run this file; migrations/0015
+-- already applies cleanly against TEXT with no help needed.
+--
+-- If you're on this file because migrations/0011 already needed
+-- reconcile_enum_status_pre_0011.sql, you don't need to re-run that one
+-- -- this only adds the two values 0015 introduces on top of it.
+--
+-- Run this once, then re-run `python scripts/migrate.py` to continue
+-- from 0015 onward as normal.
+
+ALTER TYPE appointment_status ADD VALUE IF NOT EXISTS 'CHECKED_IN';
+ALTER TYPE appointment_status ADD VALUE IF NOT EXISTS 'NO_SHOW';
