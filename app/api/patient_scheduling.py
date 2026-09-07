@@ -237,11 +237,11 @@ def get_department_availability_by_date(
 ):
     """
     Date-First's per-date doctor list: every doctor in the department
-    offering this appointment type with at least one real slot on this
-    date, each with their actual slots -- a doctor with zero valid slots
-    is never included (list_doctors_with_slots_for_date already filters
-    this), so the frontend never has to filter again or show a doctor
-    with nothing to pick.
+    offering this appointment type, each with their actual slots and
+    that day's total_slots capacity -- unlike the WhatsApp equivalent,
+    a doctor with zero valid slots is still included here (include_
+    unavailable=True), so the web UI can show them as a disabled
+    "Unavailable" card rather than silently omitting them.
     """
     if not is_within_scheduling_window(selected_date):
         raise HTTPException(
@@ -256,6 +256,7 @@ def get_department_availability_by_date(
                 department_id,
                 appointment_type_id,
                 selected_date,
+                include_unavailable=True,
             )
 
     return {

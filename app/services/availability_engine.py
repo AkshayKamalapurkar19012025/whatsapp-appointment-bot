@@ -158,6 +158,7 @@ def get_available_slots(
     appointment_type_id: int,
     selected_date: date,
     department_id: int | None = None,
+    count_total: bool = False,
 ):
     """
     Calculate available appointment slots.
@@ -176,6 +177,15 @@ def get_available_slots(
     scoped or not -- which is exactly the pre-0010 behavior every
     caller that doesn't yet have a department in scope (admin scheduling,
     reschedule) still gets unchanged.
+
+    count_total (default False): returns (slots, total_count) instead
+    of just slots. total_count is every candidate window the schedule
+    generates for the day, regardless of whether it's already past,
+    blocked, or booked -- the day's fixed capacity, for the web
+    availability-color feature's fullness ratio (remaining/total).
+    Every existing caller omits this and keeps getting exactly the
+    same plain list as before -- this is additive, not a behavior
+    change to the WhatsApp flow or any other existing caller.
     """
 
     # ---------------------------------------------------------
@@ -189,7 +199,7 @@ def get_available_slots(
     )
 
     if appointment_type is None:
-        return []
+        return ([], 0) if count_total else []
 
     duration_minutes = appointment_type["duration_minutes"]
 
@@ -218,7 +228,7 @@ def get_available_slots(
     # never have a schedulable slot -- short-circuit before even querying
     # schedule/blocks/appointments for it.
     if selected_date < now.date():
-        return []
+        return ([], 0) if count_total else []
 
     # ---------------------------------------------------------
     # Weekday
@@ -258,7 +268,7 @@ def get_available_slots(
     schedules = cur.fetchall()
 
     if not schedules:
-        return []
+        return ([], 0) if count_total else []
 
     # ---------------------------------------------------------
     # Full requested day
@@ -342,6 +352,13 @@ def get_available_slots(
     # ---------------------------------------------------------
 
     slots = []
+    # Every candidate window the schedule generates, regardless of
+    # whether it's already past/blocked/booked -- the day's total
+    # capacity, used only when count_total=True (the availability-
+    # color feature's fullness ratio). Counted unconditionally so it
+    # stays a fixed number for the whole day, not one that shrinks as
+    # "now" advances -- see get_available_slots's docstring.
+    total_count = 0
 
     for schedule_start, schedule_end in schedules:
 
@@ -373,6 +390,8 @@ def get_available_slots(
                 current_start
                 + timedelta(minutes=duration_minutes)
             )
+
+            total_count += 1
 
             # A slot that has already started (relevant when
             # selected_date is the doctor's local "today" -- for any
@@ -437,7 +456,7 @@ def get_available_slots(
 
             current_start = current_end
 
-    return slots
+    return (slots, total_count) if count_total else slots
 
 
 def scheduling_window(today: date | None = None) -> tuple[date, date]:
@@ -605,6 +624,7 @@ def list_doctors_with_slots_for_date(
     department_id: int,
     appointment_type_id: int,
     selected_date: date,
+    include_unavailable: bool = False,
 ):
     """
     Date-First's per-date doctor list: every doctor in the department
@@ -618,6 +638,16 @@ def list_doctors_with_slots_for_date(
     summary fields -- ordered by doctor name. Each doctor's slots are
     exactly what get_available_slots() already returns for that doctor
     -- no new slot-shape or duration logic here.
+
+    include_unavailable (default False): when True, zero-slot doctors
+    are included too (with "slots": []), and every doctor also carries
+    "total_slots" (that day's fixed capacity, for the web availability-
+    color feature's fullness ratio) -- for the web "show doctors as
+    disabled rather than hiding them" case only. The WhatsApp Date-First
+    flow (app/api/scheduling.py) omits this and keeps getting exactly
+    the same "only doctors with a real slot, no total_slots key" list
+    as before, in the same order -- its own numbered-selection and
+    "no doctors available" logic both depend on that.
     """
     doctors = get_doctors_offering_appointment_type(
         cur, department_id, appointment_type_id
@@ -625,16 +655,19 @@ def list_doctors_with_slots_for_date(
 
     results = []
     for doctor in doctors:
-        slots = get_available_slots(
+        slots, total_slots = get_available_slots(
             cur,
             doctor["id"],
             appointment_type_id,
             selected_date,
             department_id=department_id,
+            count_total=True,
         )
-        if slots:
-            results.append({**doctor, "slots": slots})
-
+        if slots or include_unavailable:
+            entry = {**doctor, "slots": slots}
+            if include_unavailable:
+                entry["total_slots"] = total_slots
+            results.append(entry)
     return results
 
 

@@ -202,7 +202,11 @@ export function getSlotsForDate(
   appointmentTypeId: number,
   isoDate: string,
   departmentId?: number,
-): Promise<{ slots: { start_at: string; end_at: string }[]; duration_minutes: number }> {
+): Promise<{
+  slots: { start_at: string; end_at: string }[]
+  duration_minutes: number
+  total_slots: number
+}> {
   return request('/availability', {
     method: 'POST',
     body: {

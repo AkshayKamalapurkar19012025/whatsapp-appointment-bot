@@ -99,12 +99,13 @@ def get_available_slots(request: AvailabilityRequest):
 
             duration_minutes = appointment_type[1]
 
-            slots = compute_available_slots(
+            slots, total_slots = compute_available_slots(
                 cur,
                 doctor_id,
                 appointment_type_id,
                 requested_date,
                 department_id=request.department_id,
+                count_total=True,
             )
 
     return {
@@ -113,4 +114,10 @@ def get_available_slots(request: AvailabilityRequest):
         "date": requested_date.isoformat(),
         "duration_minutes": duration_minutes,
         "slots": slots,
+        # That day's fixed capacity (see get_available_slots's
+        # count_total docstring) -- the web Doctor-First Slot step's
+        # availability-color banner uses this alongside len(slots) for
+        # its fullness ratio. Additive: existing callers of this
+        # endpoint (the patient reschedule flow) simply don't read it.
+        "total_slots": total_slots,
     }

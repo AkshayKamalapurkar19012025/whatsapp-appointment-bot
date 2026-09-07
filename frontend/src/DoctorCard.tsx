@@ -16,17 +16,23 @@ export default function DoctorCard({
   extra,
   onSelect,
   onViewProfile,
+  disabled,
 }: {
   doctor: DoctorProfileSummary & { id: number; name: string }
   extra?: ReactNode
   onSelect: () => void
   onViewProfile: () => void
+  // Date-First's zero-slot doctors (shown, not omitted, so the patient
+  // sees who's unavailable rather than wondering why a doctor is
+  // missing) -- blocks proceeding to slot selection while still
+  // allowing "View Profile", which isn't date-scoped.
+  disabled?: boolean
 }) {
   const summaryLine = doctorSummaryLine(doctor)
 
   return (
     <li className="doctor-option">
-      <button type="button" className="doctor-option-select" onClick={onSelect}>
+      <button type="button" className="doctor-option-select" onClick={onSelect} disabled={disabled}>
         <DoctorAvatar photoUrl={doctor.photo_url} name={doctor.name} size={48} />
         <span className="doctor-option-info">
           <span className="doctor-option-name">{doctor.name}</span>

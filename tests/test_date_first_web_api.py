@@ -101,7 +101,12 @@ def test_web_department_calendar_rejects_out_of_window_month(client, db_connecti
     assert response.status_code == 409
 
 
-def test_web_availability_by_date_excludes_doctor_with_no_slots(client, db_connection):
+def test_web_availability_by_date_includes_zero_slot_doctor_as_unavailable(client, db_connection):
+    # Deliberately the opposite of the WhatsApp equivalent
+    # (list_doctors_with_slots_for_date's default): the web endpoint
+    # opts into include_unavailable=True so the frontend can render a
+    # disabled "Unavailable" card instead of silently omitting the
+    # doctor, and needs total_slots to compute its fullness ratio.
     seeded = seed_basic_doctor(
         client,
         db_connection,
@@ -133,11 +138,15 @@ def test_web_availability_by_date_excludes_doctor_with_no_slots(client, db_conne
     )
     assert response.status_code == 200
     body = response.json()
-    doctor_ids = [d["id"] for d in body["doctors"]]
-    assert seeded["doctor_id"] in doctor_ids
-    assert doctor_b_id not in doctor_ids
-    for doctor in body["doctors"]:
-        assert doctor["slots"]
+    doctors_by_id = {d["id"]: d for d in body["doctors"]}
+    assert seeded["doctor_id"] in doctors_by_id
+    assert doctor_b_id in doctors_by_id
+
+    assert doctors_by_id[seeded["doctor_id"]]["slots"]
+    assert doctors_by_id[seeded["doctor_id"]]["total_slots"] > 0
+
+    assert doctors_by_id[doctor_b_id]["slots"] == []
+    assert doctors_by_id[doctor_b_id]["total_slots"] == 0
 
 
 def test_web_availability_by_date_rejects_out_of_window_date(client, db_connection):
