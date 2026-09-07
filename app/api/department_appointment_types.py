@@ -18,7 +18,7 @@ def get_department_appointment_types(department_id: int):
     existing GET /doctors/{doctor_id}/appointment-types, which requires
     a doctor up front). Thin wrapper around
     app.services.availability_engine.get_appointment_types_for_department
-    -- the exact same function app/api/booking.py's WhatsApp Date-First
+    -- the exact same function app/api/scheduling.py's WhatsApp Date-First
     flow calls, so both channels see identical results.
     """
     with get_connection() as conn:

@@ -9,14 +9,14 @@ appointment history -- plus the two required cross-channel checks:
 Web cancellation <-> WhatsApp, Web rescheduling <-> WhatsApp. (The phase
 spec's "concurrency during reschedule" item is covered by
 tests/test_concurrency.py::test_concurrent_reschedule_vs_fresh_booking_same_target_slot,
-which continues to pass unchanged after booking.py's reschedule handler
+which continues to pass unchanged after scheduling.py's reschedule handler
 was refactored to call the same shared service these endpoints use --
 not duplicated here.)
 """
 
 from datetime import date, timedelta
 
-from app.services.availability_engine import booking_window
+from app.services.availability_engine import scheduling_window
 
 from tests.helpers import (
     seed_basic_doctor,
@@ -32,7 +32,7 @@ def _next_weekday_matching(schedule_days, start_from_days_ahead=1):
     return candidate
 
 
-def _book_via_web(client, token, seeded, hour, day=None):
+def _schedule_via_web(client, token, seeded, hour, day=None):
     day = day or _next_weekday_matching((1, 2, 3, 4, 5))
     response = client.post(
         "/api/web/appointments",
@@ -49,7 +49,7 @@ def _book_via_web(client, token, seeded, hour, day=None):
 
 def _send_whatsapp(client, whatsapp_number, message):
     return client.post(
-        "/api/booking", json={"whatsapp_number": whatsapp_number, "message": message}
+        "/api/scheduling", json={"whatsapp_number": whatsapp_number, "message": message}
     ).json()
 
 
@@ -67,8 +67,8 @@ def test_my_appointments_lists_upcoming_history_and_cancelled(client, db_connect
     number = "+919840000001"
     token = register_and_login_web_patient(client, number, "History Patient")
 
-    upcoming = _book_via_web(client, token, seeded, 9)
-    to_cancel = _book_via_web(client, token, seeded, 11)
+    upcoming = _schedule_via_web(client, token, seeded, 9)
+    to_cancel = _schedule_via_web(client, token, seeded, 11)
 
     cancel_response = client.delete(
         f"/api/web/appointments/{to_cancel['id']}",
@@ -77,7 +77,7 @@ def test_my_appointments_lists_upcoming_history_and_cancelled(client, db_connect
     assert cancel_response.status_code == 200
 
     # A "history" appointment (Confirmed, in the past) can't be produced
-    # through the web creation endpoint at all -- enforce_booking_window
+    # through the web creation endpoint at all -- enforce_scheduling_window
     # rejects past dates by design. Insert one directly, matching this
     # repo's established pattern for scenarios the API itself can't
     # produce (see tests/test_exclusion_constraint.py).
@@ -116,8 +116,8 @@ def test_my_appointments_only_shows_own_appointments(client, db_connection):
     token_a = register_and_login_web_patient(client, "+919840000002", "Patient A")
     token_b = register_and_login_web_patient(client, "+919840000003", "Patient B")
 
-    _book_via_web(client, token_a, seeded, 9)
-    _book_via_web(client, token_b, seeded, 11)
+    _schedule_via_web(client, token_a, seeded, 9)
+    _schedule_via_web(client, token_b, seeded, 11)
 
     listing_a = client.get(
         "/api/web/appointments/me",
@@ -135,26 +135,26 @@ def test_my_appointments_only_shows_own_appointments(client, db_connection):
 def test_cancel_web_appointment_requires_authentication(client, db_connection):
     seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Cancel Auth")
     token = register_and_login_web_patient(client, "+919840000004", "Cancel Auth Patient")
-    booked = _book_via_web(client, token, seeded, 9)
+    scheduled = _schedule_via_web(client, token, seeded, 9)
 
-    response = client.delete(f"/api/web/appointments/{booked['id']}")
+    response = client.delete(f"/api/web/appointments/{scheduled['id']}")
     assert response.status_code == 401
 
 
 def test_cancel_web_appointment_by_owner_succeeds(client, db_connection):
     seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Cancel Normal")
     token = register_and_login_web_patient(client, "+919840000005", "Cancel Normal Patient")
-    booked = _book_via_web(client, token, seeded, 9)
+    scheduled = _schedule_via_web(client, token, seeded, 9)
 
     response = client.delete(
-        f"/api/web/appointments/{booked['id']}",
+        f"/api/web/appointments/{scheduled['id']}",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
     assert response.json()["status"] == "CANCELLED"
 
     with db_connection.cursor() as cur:
-        cur.execute("SELECT status FROM appointments WHERE id = %s", (booked["id"],))
+        cur.execute("SELECT status FROM appointments WHERE id = %s", (scheduled["id"],))
         assert cur.fetchone()[0] == "CANCELLED"
 
 
@@ -165,17 +165,17 @@ def test_cancel_web_appointment_rejects_non_owner_as_404(client, db_connection):
     seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Cancel WrongOwner")
     owner_token = register_and_login_web_patient(client, "+919840000006", "Rightful Owner")
     other_token = register_and_login_web_patient(client, "+919840000007", "Someone Else")
-    booked = _book_via_web(client, owner_token, seeded, 9)
+    scheduled = _schedule_via_web(client, owner_token, seeded, 9)
 
     response = client.delete(
-        f"/api/web/appointments/{booked['id']}",
+        f"/api/web/appointments/{scheduled['id']}",
         headers={"Authorization": f"Bearer {other_token}"},
     )
     assert response.status_code == 404
     assert response.json()["detail"] == "Appointment not found"
 
     with db_connection.cursor() as cur:
-        cur.execute("SELECT status FROM appointments WHERE id = %s", (booked["id"],))
+        cur.execute("SELECT status FROM appointments WHERE id = %s", (scheduled["id"],))
         assert cur.fetchone()[0] == "PENDING", "a rejected cancel attempt must not touch the appointment"
 
 
@@ -191,16 +191,16 @@ def test_cancel_web_appointment_rejects_nonexistent(client, db_connection):
 def test_cancel_web_appointment_rejects_already_cancelled(client, db_connection):
     seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Cancel Twice")
     token = register_and_login_web_patient(client, "+919840000009", "Cancel Twice Patient")
-    booked = _book_via_web(client, token, seeded, 9)
+    scheduled = _schedule_via_web(client, token, seeded, 9)
 
     first = client.delete(
-        f"/api/web/appointments/{booked['id']}",
+        f"/api/web/appointments/{scheduled['id']}",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert first.status_code == 200
 
     second = client.delete(
-        f"/api/web/appointments/{booked['id']}",
+        f"/api/web/appointments/{scheduled['id']}",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert second.status_code == 409
@@ -213,11 +213,11 @@ def test_cancel_web_appointment_rejects_already_cancelled(client, db_connection)
 def test_reschedule_web_appointment_requires_authentication(client, db_connection):
     seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Reschedule Auth")
     token = register_and_login_web_patient(client, "+919840000010", "Reschedule Auth Patient")
-    booked = _book_via_web(client, token, seeded, 9)
+    scheduled = _schedule_via_web(client, token, seeded, 9)
 
     new_day = _next_weekday_matching((1, 2, 3, 4, 5), start_from_days_ahead=2)
     response = client.post(
-        f"/api/web/appointments/{booked['id']}/reschedule",
+        f"/api/web/appointments/{scheduled['id']}/reschedule",
         json={"new_start_at": f"{new_day.isoformat()}T11:00:00+05:30"},
     )
     assert response.status_code == 401
@@ -226,11 +226,11 @@ def test_reschedule_web_appointment_requires_authentication(client, db_connectio
 def test_reschedule_web_appointment_normal(client, db_connection):
     seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Reschedule Web Normal")
     token = register_and_login_web_patient(client, "+919840000011", "Reschedule Normal Patient")
-    booked = _book_via_web(client, token, seeded, 9)
+    scheduled = _schedule_via_web(client, token, seeded, 9)
 
     new_day = _next_weekday_matching((1, 2, 3, 4, 5), start_from_days_ahead=2)
     response = client.post(
-        f"/api/web/appointments/{booked['id']}/reschedule",
+        f"/api/web/appointments/{scheduled['id']}/reschedule",
         headers={"Authorization": f"Bearer {token}"},
         json={"new_start_at": f"{new_day.isoformat()}T11:00:00+05:30"},
     )
@@ -238,10 +238,10 @@ def test_reschedule_web_appointment_normal(client, db_connection):
     body = response.json()
     assert body["status"] == "PENDING"
     assert body["doctor_id"] == seeded["doctor_id"]
-    assert body["id"] != booked["id"]
+    assert body["id"] != scheduled["id"]
 
     with db_connection.cursor() as cur:
-        cur.execute("SELECT status FROM appointments WHERE id = %s", (booked["id"],))
+        cur.execute("SELECT status FROM appointments WHERE id = %s", (scheduled["id"],))
         assert cur.fetchone()[0] == "CANCELLED"
 
 
@@ -249,11 +249,11 @@ def test_reschedule_web_appointment_rejects_non_owner_as_404(client, db_connecti
     seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Reschedule WrongOwner")
     owner_token = register_and_login_web_patient(client, "+919840000012", "Reschedule Owner")
     other_token = register_and_login_web_patient(client, "+919840000013", "Reschedule Intruder")
-    booked = _book_via_web(client, owner_token, seeded, 9)
+    scheduled = _schedule_via_web(client, owner_token, seeded, 9)
 
     new_day = _next_weekday_matching((1, 2, 3, 4, 5), start_from_days_ahead=2)
     response = client.post(
-        f"/api/web/appointments/{booked['id']}/reschedule",
+        f"/api/web/appointments/{scheduled['id']}/reschedule",
         headers={"Authorization": f"Bearer {other_token}"},
         json={"new_start_at": f"{new_day.isoformat()}T11:00:00+05:30"},
     )
@@ -266,11 +266,11 @@ def test_reschedule_web_appointment_rejects_overlap(client, db_connection):
     token_b = register_and_login_web_patient(client, "+919840000015", "Reschedule Overlap B")
 
     target_day = _next_weekday_matching((1, 2, 3, 4, 5), start_from_days_ahead=2)
-    booked_a = _book_via_web(client, token_a, seeded, 9)
-    _book_via_web(client, token_b, seeded, 11, day=target_day)
+    scheduled_a = _schedule_via_web(client, token_a, seeded, 9)
+    _schedule_via_web(client, token_b, seeded, 11, day=target_day)
 
     response = client.post(
-        f"/api/web/appointments/{booked_a['id']}/reschedule",
+        f"/api/web/appointments/{scheduled_a['id']}/reschedule",
         headers={"Authorization": f"Bearer {token_a}"},
         json={"new_start_at": f"{target_day.isoformat()}T11:00:00+05:30"},
     )
@@ -285,14 +285,14 @@ def test_reschedule_web_appointment_rejects_time_outside_doctor_schedule(client,
     # tests/test_reschedule_service.py::test_reschedule_rejects_time_outside_doctor_schedule.
     seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Reschedule Web Schedule")
     token = register_and_login_web_patient(client, "+919840000099", "Reschedule Schedule Patient")
-    booked = _book_via_web(client, token, seeded, 9)
+    scheduled = _schedule_via_web(client, token, seeded, 9)
 
     saturday = date.today() + timedelta(days=2)
     while saturday.isoweekday() != 6:
         saturday += timedelta(days=1)
 
     response = client.post(
-        f"/api/web/appointments/{booked['id']}/reschedule",
+        f"/api/web/appointments/{scheduled['id']}/reschedule",
         headers={"Authorization": f"Bearer {token}"},
         json={"new_start_at": f"{saturday.isoformat()}T10:00:00+05:30"},
     )
@@ -303,15 +303,15 @@ def test_reschedule_web_appointment_rejects_time_outside_doctor_schedule(client,
 def test_reschedule_web_appointment_enforces_booking_window(client, db_connection):
     seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Reschedule Web Window")
     token = register_and_login_web_patient(client, "+919840000016", "Reschedule Window Patient")
-    booked = _book_via_web(client, token, seeded, 9)
+    scheduled = _schedule_via_web(client, token, seeded, 9)
 
-    _, window_end = booking_window()
+    _, window_end = scheduling_window()
     outside_date = window_end + timedelta(days=1)
     while (outside_date.weekday() + 1) not in (1, 2, 3, 4, 5):
         outside_date += timedelta(days=1)
 
     response = client.post(
-        f"/api/web/appointments/{booked['id']}/reschedule",
+        f"/api/web/appointments/{scheduled['id']}/reschedule",
         headers={"Authorization": f"Bearer {token}"},
         json={"new_start_at": f"{outside_date.isoformat()}T09:00:00+05:30"},
     )
@@ -337,10 +337,10 @@ def test_web_cancellation_is_visible_to_whatsapp(client, db_connection):
     register_patient(client, number, "Cross Channel Patient")
     token = register_and_login_web_patient(client, number, "Cross Channel Patient")
 
-    booked = _book_via_web(client, token, seeded, 9)
+    scheduled = _schedule_via_web(client, token, seeded, 9)
 
     cancel_response = client.delete(
-        f"/api/web/appointments/{booked['id']}",
+        f"/api/web/appointments/{scheduled['id']}",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert cancel_response.status_code == 200
@@ -360,7 +360,7 @@ def test_whatsapp_reschedule_is_visible_to_web(client, db_connection):
     register_patient(client, number, "WA Reschedule Patient")
     token = register_and_login_web_patient(client, number, "WA Reschedule Patient")
 
-    original = _book_via_web(client, token, seeded, 9)
+    original = _schedule_via_web(client, token, seeded, 9)
 
     # Drive the WhatsApp reschedule flow: menu -> reschedule -> pick the
     # only appointment -> confirm intent -> pick a date -> pick a slot ->

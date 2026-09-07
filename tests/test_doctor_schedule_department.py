@@ -222,7 +222,7 @@ def test_availability_respects_department_scoping(client, db_connection):
 
     assert slot_starts(seeded["department_a_id"]) == {"09:00", "09:30"}
     assert slot_starts(seeded["department_b_id"]) == {"14:00", "14:30"}
-    # No department in scope (e.g. admin booking/reschedule) sees every
+    # No department in scope (e.g. admin scheduling/reschedule) sees every
     # row regardless of department -- the pre-0010 behavior, unchanged.
     assert slot_starts(None) == {"09:00", "09:30", "14:00", "14:30"}
 
@@ -236,7 +236,7 @@ def test_web_calendar_respects_department_scoping(client, db_connection):
     # Department A works Mondays, department B works Tuesdays -- so a
     # given day is available only through the department whose schedule
     # actually covers it. Both dates need to fall within GET /web/
-    # calendar's rolling booking window (current month + 3), so they're
+    # calendar's rolling scheduling window (current month + 3), so they're
     # picked relative to today rather than fixed, unlike the date-range
     # tests elsewhere in this suite that deliberately use fixed
     # far-future dates for a window-unrestricted endpoint.

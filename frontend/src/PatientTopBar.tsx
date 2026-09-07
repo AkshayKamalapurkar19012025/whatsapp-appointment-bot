@@ -1,9 +1,9 @@
 import { CloudSun, Moon, Sun } from '@phosphor-icons/react'
 import LiveClock from './LiveClock'
 
-// The in-card greeting header for BookingFlow.tsx and MyAppointments.tsx
+// The in-card greeting header for SchedulingFlow.tsx and MyAppointments.tsx
 // -- just the greeting and the clock now. Account navigation (My
-// appointments / Book an appointment / Log out) moved up to the global
+// appointments / Schedule an appointment / Log out) moved up to the global
 // AppHeader, since it's the same action regardless of which of these
 // two screens is showing, rather than being duplicated in both.
 export default function PatientTopBar({

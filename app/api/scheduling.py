@@ -41,12 +41,12 @@ from app.services.exceptions import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/booking",
-    tags=["Booking"],
+    prefix="/scheduling",
+    tags=["Scheduling"],
 )
 
 
-class BookingRequest(BaseModel):
+class SchedulingRequest(BaseModel):
     whatsapp_number: str
     message: str
 
@@ -164,10 +164,10 @@ def get_appointment_types_for_doctor(cur, doctor_id: int):
 
 
 # -------------------------------------------------------------------------
-# Booking session helpers
+# Scheduling session helpers
 # -------------------------------------------------------------------------
 
-def get_booking_session(cur, whatsapp_number: str):
+def get_scheduling_session(cur, whatsapp_number: str):
     cur.execute(
         """
         SELECT
@@ -181,8 +181,8 @@ def get_booking_session(cur, whatsapp_number: str):
             selected_date,
             selected_start_at,
             selected_appointment_id,
-            booking_mode
-        FROM booking_sessions
+            scheduling_mode
+        FROM scheduling_sessions
         WHERE whatsapp_number = %s
         """,
         (whatsapp_number,),
@@ -206,7 +206,7 @@ def get_booking_session(cur, whatsapp_number: str):
         "selected_appointment_id": row[9],
         # NULL (default) = Doctor-First. 'DATE_FIRST' = inside the
         # Date-First state chain -- see migrations/0013's header comment.
-        "booking_mode": row[10],
+        "scheduling_mode": row[10],
     }
 
 
@@ -223,7 +223,7 @@ def create_or_update_session(
 ):
     cur.execute(
         """
-        INSERT INTO booking_sessions (
+        INSERT INTO scheduling_sessions (
             patient_id,
             whatsapp_number,
             step,
@@ -282,19 +282,19 @@ def update_session(
     selected_date=None,
     selected_start_at=None,
     selected_appointment_id=None,
-    booking_mode=None,
+    scheduling_mode=None,
 ):
-    # booking_mode follows the exact same convention every other
+    # scheduling_mode follows the exact same convention every other
     # parameter here already does: every call site sets the full row,
     # and any call that doesn't pass it explicitly resets it to NULL --
     # by design, not an oversight. Doctor-First transitions and every
     # MAIN_MENU/start-over/cancel/reschedule reset never pass it, so they
     # correctly clear it; only the Date-First state chain passes
-    # booking_mode="DATE_FIRST" explicitly, at every one of its own
+    # scheduling_mode="DATE_FIRST" explicitly, at every one of its own
     # transitions, to keep carrying it forward. See migrations/0013.
     cur.execute(
         """
-        UPDATE booking_sessions
+        UPDATE scheduling_sessions
         SET
             step = %s,
             department_id = %s,
@@ -303,7 +303,7 @@ def update_session(
             selected_date = %s,
             selected_start_at = %s,
             selected_appointment_id = %s,
-            booking_mode = %s,
+            scheduling_mode = %s,
             updated_at = NOW()
         WHERE id = %s
         """,
@@ -315,7 +315,7 @@ def update_session(
             selected_date,
             selected_start_at,
             selected_appointment_id,
-            booking_mode,
+            scheduling_mode,
             session_id,
         ),
     )
@@ -328,7 +328,7 @@ def update_session_patient(
 ):
     cur.execute(
         """
-        UPDATE booking_sessions
+        UPDATE scheduling_sessions
         SET
             patient_id = %s,
             updated_at = NOW()
@@ -344,7 +344,7 @@ def update_session_patient(
 def clear_session(cur, whatsapp_number: str):
     cur.execute(
         """
-        DELETE FROM booking_sessions
+        DELETE FROM scheduling_sessions
         WHERE whatsapp_number = %s
         """,
         (whatsapp_number,),
@@ -486,7 +486,7 @@ def slot_selection_message(slot_options):
 # formatting and a department-scoped sibling of get_available_dates().
 # -------------------------------------------------------------------------
 
-def booking_mode_selection_message():
+def scheduling_mode_selection_message():
     return (
         "How would you like to find your appointment?\n\n"
         "1. Choose a Doctor\n"
@@ -505,7 +505,7 @@ def get_available_dates_for_department(
     """Date-First's version of get_available_dates(): the next dates
     (within the same 60-day/5-date window) on which at least one doctor
     in the department offering this appointment type has a real,
-    bookable slot -- 'available' means exactly what it means everywhere
+    schedulable slot -- 'available' means exactly what it means everywhere
     else in this flow (get_available_slots found one), not merely a
     doctor being scheduled to work that day."""
     doctors = get_doctors_offering_appointment_type(
@@ -671,9 +671,9 @@ def try_build_doctor_profile_reply(cur, message, numbered_doctors):
     update_session call anywhere near it: the two call sites below both
     return this text alongside the *unchanged* current step's own
     listing, so asking to view a profile never advances, resets, or
-    otherwise perturbs the booking session -- satisfying "an optional
+    otherwise perturbs the scheduling session -- satisfying "an optional
     way to view more profile information, without adding unnecessary
-    booking states."
+    scheduling states."
     """
     match = _PROFILE_COMMAND_PATTERN.match(message.strip())
     if not match:
@@ -693,21 +693,21 @@ def try_build_doctor_profile_reply(cur, message, numbered_doctors):
 
 def _select_date_or_available_doctors_response(cur, patient, session, error=None):
     """
-    Shared fallback for both flows whenever a booking interaction needs
+    Shared fallback for both flows whenever a scheduling interaction needs
     to send the patient back to date-adjacent selection: Doctor-First
     returns to SELECT_DATE (pick another date for the doctor already
     chosen, its existing behavior, unchanged); Date-First returns to
     SELECT_AVAILABLE_DOCTOR_DATE_FIRST (pick a different doctor for the
-    date already chosen). session["booking_mode"] is what tells these
-    apart -- by this point (SELECT_SLOT/CONFIRM_BOOKING) both flows share
+    date already chosen). session["scheduling_mode"] is what tells these
+    apart -- by this point (SELECT_SLOT/CONFIRM_SCHEDULING) both flows share
     an otherwise identical session shape (department_id/doctor_id/
     appointment_type_id/selected_date all set), so the mode flag is the
     only way left to know which flow got the patient here. Used by both
-    the explicit "back" command handler and CONFIRM_BOOKING's own
-    change/expired/blocked/already-booked fallbacks -- previously each of
+    the explicit "back" command handler and CONFIRM_SCHEDULING's own
+    change/expired/blocked/already-scheduled fallbacks -- previously each of
     those had its own copy of the Doctor-First half of this logic.
     """
-    if session.get("booking_mode") == "DATE_FIRST":
+    if session.get("scheduling_mode") == "DATE_FIRST":
         selected_date = session["selected_date"]
         update_session(
             cur=cur,
@@ -719,7 +719,7 @@ def _select_date_or_available_doctors_response(cur, patient, session, error=None
             selected_date=selected_date,
             selected_start_at=None,
             selected_appointment_id=None,
-            booking_mode="DATE_FIRST",
+            scheduling_mode="DATE_FIRST",
         )
 
         doctors_with_slots = list_doctors_with_slots_for_date(
@@ -777,18 +777,18 @@ def _select_date_or_available_doctors_response(cur, patient, session, error=None
     return response
 
 
-def get_upcoming_booked_appointments(cur, patient_id: int):
+def get_upcoming_scheduled_appointments(cur, patient_id: int):
     """
     Bug fix (WEB P4): this used to return a.start_at/a.end_at exactly as
     psycopg deserializes them from the TIMESTAMPTZ columns -- which is
     always normalized to the database session's own timezone (UTC in
     this app), never the offset the row was originally inserted with.
-    Confirmed live: an appointment booked for 2:00 PM in a doctor's
+    Confirmed live: an appointment scheduled for 2:00 PM in a doctor's
     Asia/Kolkata (+05:30) timezone was coming back as 8:30 AM here,
     which cancellation_details_message()/reschedule_selection_message()
     then displayed verbatim to WhatsApp users trying to cancel or
     reschedule -- a real, pre-existing production bug, not something
-    introduced by this phase. (Booking/slot-selection was never affected:
+    introduced by this phase. (Scheduling/slot-selection was never affected:
     those times are computed fresh via make_aware_datetime, never read
     back from a stored row.) Fixed by converting to the doctor's own
     timezone here, the single place both the WhatsApp flow and WEB P4's
@@ -912,7 +912,7 @@ def reschedule_details_message(appointment):
 def add_navigation(response):
     """Add backend navigation actions to every chatbot response.
 
-    The current /api/booking endpoint still accepts text input. The future
+    The current /api/scheduling endpoint still accepts text input. The future
     WhatsApp webhook can render these action IDs as interactive buttons.
     """
     if not isinstance(response, dict):
@@ -932,7 +932,7 @@ def add_navigation(response):
                 "main_menu": {"id": "MAIN_MENU", "label": "Main Menu"},
             },
         )
-    elif next_step in {"BOOKED", "CANCELLED", "RESCHEDULED"}:
+    elif next_step in {"SCHEDULED", "CANCELLED", "RESCHEDULED"}:
         response.setdefault(
             "navigation",
             {
@@ -971,12 +971,12 @@ def main_menu_message():
     )
 
 # -------------------------------------------------------------------------
-# Booking endpoint
+# Scheduling endpoint
 # -------------------------------------------------------------------------
 
 @router.post("")
 @navigation_response
-def booking(request: BookingRequest):
+def scheduling(request: SchedulingRequest):
 
     whatsapp_number = request.whatsapp_number.strip()
     message = request.message.strip()
@@ -994,7 +994,7 @@ def booking(request: BookingRequest):
             # 1. Find patient
             # =============================================================
 
-            session = get_booking_session(
+            session = get_scheduling_session(
                 cur,
                 whatsapp_number,
             )
@@ -1002,7 +1002,7 @@ def booking(request: BookingRequest):
             patient = get_patient(cur, whatsapp_number)
 
             # Rescheduling and cancellation are available only to
-            # registered numbers with existing booked appointments.
+            # registered numbers with existing scheduled appointments.
             if patient is None and message.lower() in {
                 "reschedule",
                 "reschedule appointment",
@@ -1165,7 +1165,7 @@ def booking(request: BookingRequest):
                     update_session(
                         cur=cur,
                         session_id=session["id"],
-                        step="SELECT_BOOKING_MODE",
+                        step="SELECT_SCHEDULING_MODE",
                         department_id=None,
                         doctor_id=None,
                         appointment_type_id=None,
@@ -1176,8 +1176,8 @@ def booking(request: BookingRequest):
 
                     return {
                         "patient": patient,
-                        "next_step": "SELECT_BOOKING_MODE",
-                        "message": booking_mode_selection_message(),
+                        "next_step": "SELECT_SCHEDULING_MODE",
+                        "message": scheduling_mode_selection_message(),
                     }
 
                 if message == "2":
@@ -1204,7 +1204,7 @@ def booking(request: BookingRequest):
             # =============================================================
             # GLOBAL NAVIGATION
             # =============================================================
-            # Navigation is handled centrally so every booking, reschedule,
+            # Navigation is handled centrally so every scheduling, reschedule,
             # and cancellation state supports Back and Main Menu.
             #
             # The current API still accepts text commands. The future
@@ -1245,17 +1245,17 @@ def booking(request: BookingRequest):
                 current_step = session["step"]
 
                 # ---------------------------------------------------------
-                # BOOKING
+                # SCHEDULING
                 # ---------------------------------------------------------
 
                 if current_step == "SELECT_DEPARTMENT":
                     # Back target changed from MAIN_MENU to
-                    # SELECT_BOOKING_MODE: the mode fork is now the step
+                    # SELECT_SCHEDULING_MODE: the mode fork is now the step
                     # between them (see the "1"/"book" handler above).
                     update_session(
                         cur=cur,
                         session_id=session["id"],
-                        step="SELECT_BOOKING_MODE",
+                        step="SELECT_SCHEDULING_MODE",
                         department_id=None,
                         doctor_id=None,
                         appointment_type_id=None,
@@ -1265,15 +1265,15 @@ def booking(request: BookingRequest):
                     )
                     return {
                         "patient": patient,
-                        "next_step": "SELECT_BOOKING_MODE",
+                        "next_step": "SELECT_SCHEDULING_MODE",
                         "navigation": {
                             "back": {"id": "BACK", "label": "Back"},
                             "main_menu": {"id": "MAIN_MENU", "label": "Main Menu"},
                         },
-                        "message": booking_mode_selection_message(),
+                        "message": scheduling_mode_selection_message(),
                     }
 
-                if current_step == "SELECT_BOOKING_MODE":
+                if current_step == "SELECT_SCHEDULING_MODE":
                     update_session(
                         cur=cur,
                         session_id=session["id"],
@@ -1299,7 +1299,7 @@ def booking(request: BookingRequest):
                     update_session(
                         cur=cur,
                         session_id=session["id"],
-                        step="SELECT_BOOKING_MODE",
+                        step="SELECT_SCHEDULING_MODE",
                         department_id=None,
                         doctor_id=None,
                         appointment_type_id=None,
@@ -1309,12 +1309,12 @@ def booking(request: BookingRequest):
                     )
                     return {
                         "patient": patient,
-                        "next_step": "SELECT_BOOKING_MODE",
+                        "next_step": "SELECT_SCHEDULING_MODE",
                         "navigation": {
                             "back": {"id": "BACK", "label": "Back"},
                             "main_menu": {"id": "MAIN_MENU", "label": "Main Menu"},
                         },
-                        "message": booking_mode_selection_message(),
+                        "message": scheduling_mode_selection_message(),
                     }
 
                 if current_step == "SELECT_APPOINTMENT_TYPE_DATE_FIRST":
@@ -1329,7 +1329,7 @@ def booking(request: BookingRequest):
                         selected_date=None,
                         selected_start_at=None,
                         selected_appointment_id=None,
-                        booking_mode="DATE_FIRST",
+                        scheduling_mode="DATE_FIRST",
                     )
                     return {
                         "patient": patient,
@@ -1353,7 +1353,7 @@ def booking(request: BookingRequest):
                         selected_date=None,
                         selected_start_at=None,
                         selected_appointment_id=None,
-                        booking_mode="DATE_FIRST",
+                        scheduling_mode="DATE_FIRST",
                     )
                     return {
                         "patient": patient,
@@ -1379,7 +1379,7 @@ def booking(request: BookingRequest):
                         selected_date=None,
                         selected_start_at=None,
                         selected_appointment_id=None,
-                        booking_mode="DATE_FIRST",
+                        scheduling_mode="DATE_FIRST",
                     )
                     date_options = format_date_options(
                         get_available_dates_for_department(cur, department_id, appointment_type_id)
@@ -1471,7 +1471,7 @@ def booking(request: BookingRequest):
                 if current_step == "SELECT_SLOT":
                     return _select_date_or_available_doctors_response(cur, patient, session)
 
-                if current_step == "CONFIRM_BOOKING":
+                if current_step == "CONFIRM_SCHEDULING":
                     doctor_id = session["doctor_id"]
                     appointment_type_id = session["appointment_type_id"]
                     selected_date = session["selected_date"]
@@ -1496,7 +1496,7 @@ def booking(request: BookingRequest):
                         selected_date=selected_date,
                         selected_start_at=None,
                         selected_appointment_id=None,
-                        booking_mode=session.get("booking_mode"),
+                        scheduling_mode=session.get("scheduling_mode"),
                     )
                     slot_options = format_slot_options(slots)
                     return {
@@ -1538,7 +1538,7 @@ def booking(request: BookingRequest):
                     }
 
                 if current_step == "CANCEL_CONFIRM":
-                    appointments = get_upcoming_booked_appointments(cur, patient["id"])
+                    appointments = get_upcoming_scheduled_appointments(cur, patient["id"])
                     if not appointments:
                         update_session(
                             cur=cur,
@@ -1619,7 +1619,7 @@ def booking(request: BookingRequest):
 
                 if current_step == "RESCHEDULE_CONFIRM":
                     appointment_id = session["selected_appointment_id"]
-                    appointments = get_upcoming_booked_appointments(cur, patient["id"])
+                    appointments = get_upcoming_scheduled_appointments(cur, patient["id"])
                     appointment = next(
                         (item for item in appointments if item["id"] == appointment_id),
                         None,
@@ -1677,7 +1677,7 @@ def booking(request: BookingRequest):
                     }
 
                 if current_step == "RESCHEDULE_DATE":
-                    appointment = get_upcoming_booked_appointments(cur, patient["id"])
+                    appointment = get_upcoming_scheduled_appointments(cur, patient["id"])
                     appointment = next(
                         (item for item in appointment if item["id"] == session["selected_appointment_id"]),
                         None,
@@ -1821,7 +1821,7 @@ def booking(request: BookingRequest):
 
             if message.lower() in {"cancel", "cancel appointment", "cancel my appointment"}:
 
-                appointments = get_upcoming_booked_appointments(
+                appointments = get_upcoming_scheduled_appointments(
                     cur,
                     patient["id"],
                 )
@@ -1929,7 +1929,7 @@ def booking(request: BookingRequest):
                 "reschedule my appointment",
             }:
 
-                appointments = get_upcoming_booked_appointments(
+                appointments = get_upcoming_scheduled_appointments(
                     cur,
                     patient["id"],
                 )
@@ -2001,7 +2001,7 @@ def booking(request: BookingRequest):
                         "message": main_menu_message(),
                     }
 
-                appointments = get_upcoming_booked_appointments(
+                appointments = get_upcoming_scheduled_appointments(
                     cur,
                     patient["id"],
                 )
@@ -2091,7 +2091,7 @@ def booking(request: BookingRequest):
             if session["step"] == "RESCHEDULE_CONFIRM":
 
                 if message.lower() == "back":
-                    appointments = get_upcoming_booked_appointments(
+                    appointments = get_upcoming_scheduled_appointments(
                         cur,
                         patient["id"],
                     )
@@ -2159,7 +2159,7 @@ def booking(request: BookingRequest):
                     }
 
                 if message != "1":
-                    appointment = get_upcoming_booked_appointments(
+                    appointment = get_upcoming_scheduled_appointments(
                         cur,
                         patient["id"],
                     )
@@ -2246,7 +2246,7 @@ def booking(request: BookingRequest):
                         "message": main_menu_message(),
                     }
 
-                appointments = get_upcoming_booked_appointments(cur, patient["id"])
+                appointments = get_upcoming_scheduled_appointments(cur, patient["id"])
 
                 if not appointments:
                     update_session(
@@ -2323,7 +2323,7 @@ def booking(request: BookingRequest):
             if session["step"] == "CANCEL_CONFIRM":
 
                 if message.lower() == "back":
-                    appointments = get_upcoming_booked_appointments(cur, patient["id"])
+                    appointments = get_upcoming_scheduled_appointments(cur, patient["id"])
 
                     if not appointments:
                         update_session(
@@ -2389,7 +2389,7 @@ def booking(request: BookingRequest):
                     }
 
                 if message != "1":
-                    appointment = get_upcoming_booked_appointments(cur, patient["id"])
+                    appointment = get_upcoming_scheduled_appointments(cur, patient["id"])
                     appointment = next(
                         (
                             item
@@ -2639,7 +2639,7 @@ def booking(request: BookingRequest):
                     }
 
                 if current_step == "CANCEL_CONFIRM":
-                    appointments = get_upcoming_booked_appointments(
+                    appointments = get_upcoming_scheduled_appointments(
                         cur,
                         patient["id"],
                     )
@@ -2690,7 +2690,7 @@ def booking(request: BookingRequest):
                         "message": cancellation_selection_message(appointments),
                     }
 
-                if current_step == "CONFIRM_BOOKING":
+                if current_step == "CONFIRM_SCHEDULING":
 
                     slots = get_available_slots(
                         cur,
@@ -2750,7 +2750,7 @@ def booking(request: BookingRequest):
                     }
 
             # =============================================================
-            # SELECT BOOKING MODE (Doctor-First vs Date-First)
+            # SELECT SCHEDULING MODE (Doctor-First vs Date-First)
             # =============================================================
             # The fork inserted between "Book Appointment" and Department
             # selection. Both options land on the SAME SELECT_DEPARTMENT-
@@ -2759,7 +2759,7 @@ def booking(request: BookingRequest):
             # which step it's stored as (and therefore what comes next)
             # differs.
 
-            if session["step"] == "SELECT_BOOKING_MODE":
+            if session["step"] == "SELECT_SCHEDULING_MODE":
 
                 if message == "1":
                     update_session(
@@ -2789,7 +2789,7 @@ def booking(request: BookingRequest):
                         appointment_type_id=None,
                         selected_date=None,
                         selected_start_at=None,
-                        booking_mode="DATE_FIRST",
+                        scheduling_mode="DATE_FIRST",
                     )
 
                     return {
@@ -2800,9 +2800,9 @@ def booking(request: BookingRequest):
 
                 return {
                     "patient": patient,
-                    "next_step": "SELECT_BOOKING_MODE",
+                    "next_step": "SELECT_SCHEDULING_MODE",
                     "error": "Please reply 1 or 2.",
-                    "message": booking_mode_selection_message(),
+                    "message": scheduling_mode_selection_message(),
                 }
 
             # =============================================================
@@ -2861,7 +2861,7 @@ def booking(request: BookingRequest):
                     appointment_type_id=None,
                     selected_date=None,
                     selected_start_at=None,
-                    booking_mode="DATE_FIRST",
+                    scheduling_mode="DATE_FIRST",
                 )
 
                 return {
@@ -2919,7 +2919,7 @@ def booking(request: BookingRequest):
                     appointment_type_id=appointment_type["id"],
                     selected_date=None,
                     selected_start_at=None,
-                    booking_mode="DATE_FIRST",
+                    scheduling_mode="DATE_FIRST",
                 )
 
                 date_options = format_date_options(
@@ -3020,7 +3020,7 @@ def booking(request: BookingRequest):
                     appointment_type_id=appointment_type_id,
                     selected_date=selected_date,
                     selected_start_at=None,
-                    booking_mode="DATE_FIRST",
+                    scheduling_mode="DATE_FIRST",
                 )
 
                 doctor_options = format_available_doctors(doctors_with_slots)
@@ -3042,10 +3042,10 @@ def booking(request: BookingRequest):
             # step, unchanged -- department_id/doctor_id/appointment_type_
             # id/selected_date are now set exactly as Doctor-First would
             # have set them, so SELECT_SLOT's own logic (re-fetch slots,
-            # validate, move to CONFIRM_BOOKING) needs no Date-First-
-            # specific branch at all. booking_mode="DATE_FIRST" is carried
+            # validate, move to CONFIRM_SCHEDULING) needs no Date-First-
+            # specific branch at all. scheduling_mode="DATE_FIRST" is carried
             # forward explicitly so SELECT_SLOT's "back" and CONFIRM_
-            # BOOKING's fallbacks know to return here rather than to
+            # SCHEDULING's fallbacks know to return here rather than to
             # SELECT_DATE (see _select_date_or_available_doctors_response).
 
             if session["step"] == "SELECT_AVAILABLE_DOCTOR_DATE_FIRST":
@@ -3105,7 +3105,7 @@ def booking(request: BookingRequest):
                     appointment_type_id=appointment_type_id,
                     selected_date=selected_date,
                     selected_start_at=None,
-                    booking_mode="DATE_FIRST",
+                    scheduling_mode="DATE_FIRST",
                 )
 
                 slot_options = format_slot_options(chosen_doctor["slots"])
@@ -3857,19 +3857,19 @@ def booking(request: BookingRequest):
                 update_session(
                     cur=cur,
                     session_id=session["id"],
-                    step="CONFIRM_BOOKING",
+                    step="CONFIRM_SCHEDULING",
                     department_id=session["department_id"],
                     doctor_id=session["doctor_id"],
                     appointment_type_id=session["appointment_type_id"],
                     selected_date=session["selected_date"],
                     selected_start_at=selected_start_at,
-                    # Carry booking_mode forward -- SELECT_SLOT is a
+                    # Carry scheduling_mode forward -- SELECT_SLOT is a
                     # shared step reached from both flows, so this must
                     # not silently reset it to NULL (which would make
-                    # CONFIRM_BOOKING's change/expired/blocked/occupied
-                    # fallbacks wrongly treat a Date-First booking as
+                    # CONFIRM_SCHEDULING's change/expired/blocked/occupied
+                    # fallbacks wrongly treat a Date-First scheduling as
                     # Doctor-First). See migrations/0013.
-                    booking_mode=session.get("booking_mode"),
+                    scheduling_mode=session.get("scheduling_mode"),
                 )
 
                 appointment_type = get_appointment_type_for_doctor(
@@ -3899,15 +3899,15 @@ def booking(request: BookingRequest):
                     "date": session["selected_date"].isoformat(),
                     "start_at": selected_slot["start_at"],
                     "end_at": selected_slot["end_at"],
-                    "next_step": "CONFIRM_BOOKING",
+                    "next_step": "CONFIRM_SCHEDULING",
                     "message": "Please confirm your appointment. Reply 1 to confirm or 2 to change.",
                 }
 
             # =============================================================
-            # 11. CONFIRM BOOKING
+            # 11. CONFIRM SCHEDULING
             # =============================================================
 
-            if session["step"] == "CONFIRM_BOOKING":
+            if session["step"] == "CONFIRM_SCHEDULING":
 
                 if message == "2":
                     return _select_date_or_available_doctors_response(cur, patient, session)
@@ -3915,15 +3915,15 @@ def booking(request: BookingRequest):
                 if message != "1":
                     return {
                         "patient": patient,
-                        "next_step": "CONFIRM_BOOKING",
+                        "next_step": "CONFIRM_SCHEDULING",
                         "error": "Please reply 1 to confirm or 2 to change.",
                     }
 
                 # ---------------------------------------------------------
-                # Re-check availability immediately before booking.
+                # Re-check availability immediately before scheduling.
                 #
                 # This is important because another customer may have
-                # booked the slot after the slot was originally shown.
+                # scheduled the slot after the slot was originally shown.
                 # ---------------------------------------------------------
 
                 if session["selected_start_at"] is None:
@@ -3972,7 +3972,7 @@ def booking(request: BookingRequest):
                 try:
                     doctor_tz = get_doctor_timezone(cur, session["doctor_id"])
                 except Exception as e:
-                    logger.error(f"Failed to get timezone for booking confirmation: {e}")
+                    logger.error(f"Failed to get timezone for scheduling confirmation: {e}")
                     doctor_tz = "Asia/Kolkata"
 
                 # ---------------------------------------------------------
@@ -4022,7 +4022,7 @@ def booking(request: BookingRequest):
                     )
 
                 # ---------------------------------------------------------
-                # Serialize booking attempts for this doctor.
+                # Serialize scheduling attempts for this doctor.
                 #
                 # The earlier availability check is only advisory. Two
                 # concurrent requests can both observe the slot as free unless
@@ -4143,7 +4143,7 @@ def booking(request: BookingRequest):
                 except psycopg.errors.ExclusionViolation:
                     conn.rollback()
                     logger.warning(
-                        f"Exclusion constraint rejected overlapping booking for "
+                        f"Exclusion constraint rejected overlapping scheduling for "
                         f"doctor_id={session['doctor_id']} (advisory lock should "
                         f"normally prevent reaching this point -- backstop triggered)"
                     )
@@ -4158,7 +4158,7 @@ def booking(request: BookingRequest):
                 row = cur.fetchone()
 
                 # ---------------------------------------------------------
-                # Return to the main menu after successful booking.
+                # Return to the main menu after successful scheduling.
                 # ---------------------------------------------------------
 
                 update_session(
@@ -4184,7 +4184,7 @@ def booking(request: BookingRequest):
                         "end_at": row[5].isoformat(),
                         "status": row[6],
                     },
-                    "next_step": "BOOKED",
+                    "next_step": "SCHEDULED",
                     "message": (
                         "Your appointment request has been received and is awaiting "
                         "confirmation from our staff.\n\n" + main_menu_message()

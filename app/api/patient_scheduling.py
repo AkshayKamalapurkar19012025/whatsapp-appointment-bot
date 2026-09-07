@@ -1,25 +1,25 @@
 """
-Patient-facing web booking API (WEB P3 + P4 + P8).
+Patient-facing web scheduling API (WEB P3 + P4 + P8).
 
 Every endpoint here is a thin wrapper reusing WEB P1/P2's already-built,
-already-tested pieces rather than a third implementation of booking
+already-tested pieces rather than a third implementation of scheduling
 rules (global rule 4):
 
 - GET /web/calendar: wraps availability_engine.list_available_dates_in_range,
-  intersected with is_within_booking_window so a date outside the current
+  intersected with is_within_scheduling_window so a date outside the current
   month + 3 window (including a past date) is always reported
   unavailable regardless of what raw slot computation would say. Left
   unauthenticated, matching the existing (also unauthenticated)
   POST /api/availability single-day endpoint's security posture -- this
   is doctor schedule/capacity information, not patient data.
 
-- POST /web/appointments: the booking-creation step (WEB P3). Requires a
+- POST /web/appointments: the scheduling-creation step (WEB P3). Requires a
   valid patient session (Depends(get_current_patient)) and always uses
   the session's own patient id -- the request body has no patient_id
   field at all, so there is nothing to spoof. Calls
-  create_appointment_service(..., enforce_booking_window=True), the
+  create_appointment_service(..., enforce_scheduling_window=True), the
   exact function app/api/appointments.py's REST endpoint and
-  app/api/booking.py's WhatsApp flow both call, so this patient-facing
+  app/api/scheduling.py's WhatsApp flow both call, so this patient-facing
   path gets the identical concurrency guarantees (advisory lock +
   EXCLUDE constraint) for free.
 
@@ -43,7 +43,7 @@ GET /api/doctors/{id}/appointment-types endpoints directly -- they are
 already public, already tested, and not patient-specific, so this file
 does not duplicate them under a new prefix.
 
-WEB P8: booking creation, cancellation, and reschedule each now also
+WEB P8: scheduling creation, cancellation, and reschedule each now also
 "send" a mock confirmation notification (app/services/notifications.py)
 to the patient's WhatsApp number -- closing the gap the WEB P3
 confirmation screen's own placeholder text used to flag ("Mock SMS
@@ -71,14 +71,14 @@ from app.services.appointment_services import (
     list_patient_appointments_service,
 )
 from app.services.availability_engine import (
-    booking_window,
-    is_within_booking_window,
+    scheduling_window,
+    is_within_scheduling_window,
     list_available_dates_in_range,
     list_available_dates_for_department,
     list_doctors_with_slots_for_date,
 )
 from app.services.notifications import (
-    KIND_BOOKING_CONFIRMATION,
+    KIND_SCHEDULING_CONFIRMATION,
     KIND_CANCELLATION,
     KIND_RESCHEDULE,
     send_mock_notification,
@@ -87,12 +87,12 @@ from app.utils.timezone import convert_to_timezone, validate_timezone
 
 router = APIRouter(
     prefix="/web",
-    tags=["Patient Web Booking"],
+    tags=["Patient Web Scheduling"],
 )
 
 
 def _format_date_time(dt: datetime) -> tuple[str, str]:
-    """Same date/time label style as app/api/booking.py's WhatsApp
+    """Same date/time label style as app/api/scheduling.py's WhatsApp
     messages ("Sat, 04 Dec 2027" / "9:00 AM") -- one consistent voice
     across both channels' notifications."""
     date_label = dt.strftime("%a, %d %b %Y")
@@ -124,7 +124,7 @@ def get_calendar_month(
     month: int,
     # Optional (migrations/0010) -- see AvailabilityRequest.department_id
     # in app/api/availability.py for the exact semantics. The web
-    # booking flow (BookingFlow.tsx) already selects department before
+    # scheduling flow (SchedulingFlow.tsx) already selects department before
     # doctor and passes it here; the reschedule flow has no department
     # in scope and omits it, seeing every active schedule row.
     department_id: int | None = None,
@@ -136,7 +136,7 @@ def get_calendar_month(
     month_start = date(year, month, 1)
     month_end = date(year, month, last_day)
 
-    window_start, window_end = booking_window()
+    window_start, window_end = scheduling_window()
 
     if month_end < window_start or month_start > window_end:
         raise HTTPException(
@@ -156,7 +156,7 @@ def get_calendar_month(
             )
 
     dates = {
-        iso_date: (is_available and is_within_booking_window(date.fromisoformat(iso_date)))
+        iso_date: (is_available and is_within_scheduling_window(date.fromisoformat(iso_date)))
         for iso_date, is_available in raw.items()
     }
 
@@ -165,8 +165,8 @@ def get_calendar_month(
         "appointment_type_id": appointment_type_id,
         "year": year,
         "month": month,
-        "booking_window_start": window_start.isoformat(),
-        "booking_window_end": window_end.isoformat(),
+        "scheduling_window_start": window_start.isoformat(),
+        "scheduling_window_end": window_end.isoformat(),
         "dates": dates,
     }
 
@@ -195,7 +195,7 @@ def get_department_calendar_month(
     month_start = date(year, month, 1)
     month_end = date(year, month, last_day)
 
-    window_start, window_end = booking_window()
+    window_start, window_end = scheduling_window()
 
     if month_end < window_start or month_start > window_end:
         raise HTTPException(
@@ -214,7 +214,7 @@ def get_department_calendar_month(
             )
 
     dates = {
-        iso_date: (is_available and is_within_booking_window(date.fromisoformat(iso_date)))
+        iso_date: (is_available and is_within_scheduling_window(date.fromisoformat(iso_date)))
         for iso_date, is_available in raw.items()
     }
 
@@ -223,8 +223,8 @@ def get_department_calendar_month(
         "appointment_type_id": appointment_type_id,
         "year": year,
         "month": month,
-        "booking_window_start": window_start.isoformat(),
-        "booking_window_end": window_end.isoformat(),
+        "scheduling_window_start": window_start.isoformat(),
+        "scheduling_window_end": window_end.isoformat(),
         "dates": dates,
     }
 
@@ -243,7 +243,7 @@ def get_department_availability_by_date(
     this), so the frontend never has to filter again or show a doctor
     with nothing to pick.
     """
-    if not is_within_booking_window(selected_date):
+    if not is_within_scheduling_window(selected_date):
         raise HTTPException(
             status_code=409,
             detail="Requested date is outside the allowed scheduling window",
@@ -280,7 +280,7 @@ def create_web_appointment(
                     patient_id=patient["id"],
                     appointment_type_id=body.appointment_type_id,
                     start_at=body.start_at,
-                    enforce_booking_window=True,
+                    enforce_scheduling_window=True,
                 )
             except svc_exc.DoctorNotFound:
                 raise HTTPException(status_code=404, detail="Doctor not found")
@@ -301,7 +301,7 @@ def create_web_appointment(
                     status_code=409,
                     detail="Appointment overlaps with doctor block",
                 )
-            except svc_exc.OutsideBookingWindow:
+            except svc_exc.OutsideSchedulingWindow:
                 raise HTTPException(
                     status_code=409,
                     detail="Requested date is outside the allowed scheduling window",
@@ -316,7 +316,7 @@ def create_web_appointment(
             # (the doctor-local instant the client actually requested)
             # rather than result["start_at"] (round-tripped through
             # Postgres and UTC-normalized on read-back -- the same
-            # characteristic documented at BookingFlow.tsx's confirmation
+            # characteristic documented at SchedulingFlow.tsx's confirmation
             # screen since WEB P3) so the message shows the right
             # wall-clock time.
             doctor_name = _get_doctor_name(cur, body.doctor_id)
@@ -324,7 +324,7 @@ def create_web_appointment(
             send_mock_notification(
                 cur,
                 patient["whatsapp_number"],
-                KIND_BOOKING_CONFIRMATION,
+                KIND_SCHEDULING_CONFIRMATION,
                 (
                     f"Your appointment request with {doctor_name} on {date_label} at "
                     f"{time_label} has been received and is awaiting confirmation."
@@ -362,7 +362,7 @@ def cancel_web_appointment(
             # WEB P8: mock cancellation notification. cancel_appointment_
             # service's own return doesn't carry display fields (doctor
             # name, appointment time), so those are read back here
-            # separately -- and, like get_upcoming_booked_appointments
+            # separately -- and, like get_upcoming_scheduled_appointments
             # and list_patient_appointments_service before it, start_at
             # needs an explicit convert_to_timezone() since a value read
             # back from Postgres is UTC-normalized, not the doctor's
@@ -413,7 +413,7 @@ def reschedule_web_appointment(
                     appointment_id,
                     patient_id=patient["id"],
                     new_start_at=body.new_start_at,
-                    enforce_booking_window=True,
+                    enforce_scheduling_window=True,
                 )
             except svc_exc.AppointmentNotFound:
                 raise HTTPException(status_code=404, detail="Appointment not found")
@@ -437,7 +437,7 @@ def reschedule_web_appointment(
                     status_code=409,
                     detail="That slot is no longer available because the doctor is unavailable",
                 )
-            except svc_exc.OutsideBookingWindow:
+            except svc_exc.OutsideSchedulingWindow:
                 raise HTTPException(
                     status_code=409,
                     detail="Requested date is outside the allowed scheduling window",
@@ -451,7 +451,7 @@ def reschedule_web_appointment(
             # WEB P8: mock reschedule notification. Uses body.new_start_at
             # (client-supplied, doctor-local) rather than
             # result["start_at"] for the same UTC-round-trip reason as
-            # the booking-confirmation notification above.
+            # the scheduling-confirmation notification above.
             doctor_name = _get_doctor_name(cur, result["doctor_id"])
             date_label, time_label = _format_date_time(body.new_start_at)
             send_mock_notification(
@@ -471,7 +471,7 @@ def reschedule_web_appointment(
 def notifications_dev_lookup(whatsapp_number: str, kind: str | None = None):
     """
     Dev/test-only: returns the most recent mock notification sent to a
-    number, of the given kind if specified (KIND_BOOKING_CONFIRMATION /
+    number, of the given kind if specified (KIND_SCHEDULING_CONFIRMATION /
     KIND_CANCELLATION / KIND_RESCHEDULE, or 'OTP' -- though the sibling
     /auth/patient/otp/_dev_lookup endpoint is the intended way to
     retrieve those). Same mock-provider outbox as that endpoint (see

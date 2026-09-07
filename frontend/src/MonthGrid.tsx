@@ -23,7 +23,7 @@ function firstWeekdayColumn(year: number, month: number): number {
 
 // The presentational month-grid every calendar picker in this app
 // renders -- extracted from what used to be Calendar.tsx's own JSX so
-// the patient booking calendar (window-limited, via GET /web/calendar)
+// the patient scheduling calendar (window-limited, via GET /web/calendar)
 // and the admin date picker (unrestricted, via GET /appointments/
 // calendar) can share the exact same grid/legend/nav-button rendering
 // while each keeps its own data-fetching and window rules, which
@@ -56,7 +56,7 @@ export default function MonthGrid({
   nextDisabled: boolean
   // The "Unavailable/Available" legend below only makes sense when
   // `dates` reflects real appointment-slot availability (the patient/
-  // admin booking calendars). AdminDatePicker reuses this same grid for
+  // admin scheduling calendars). AdminDatePicker reuses this same grid for
   // plain administrative dates (schedule start/end, one-off block
   // dates) where greyed-out just means "in the past" -- showing the
   // availability legend there would misleadingly imply doctor
@@ -65,12 +65,12 @@ export default function MonthGrid({
   // The currently-chosen date (if any), highlighted distinctly from a
   // merely-available one. Only meaningful for a caller whose calendar
   // and its downstream slot picker stay visible together after picking
-  // a date (AdminSlotPicker.tsx) -- the patient booking flow advances
+  // a date (AdminSlotPicker.tsx) -- the patient scheduling flow advances
   // past the calendar entirely on selection, so it never has a
   // "selected but still looking at the calendar" state to show and
   // simply omits this prop.
   selectedDate?: string | null
-  // Doctor-first booking only (via Calendar.tsx) -- dates the patient
+  // Doctor-first scheduling only (via Calendar.tsx) -- dates the patient
   // already has an upcoming appointment with this doctor on, keyed by
   // "YYYY-MM-DD". Undefined/empty everywhere else this grid is reused
   // (admin picker, reschedule calendar), which simply renders no
@@ -167,7 +167,7 @@ export default function MonthGrid({
   }, [openMarkerDate])
   // The clinic's own current date (not the viewer's device date) --
   // display-only, for the "Today" ring below; never the source of
-  // truth for which dates are actually bookable (that's `dates`
+  // truth for which dates are actually schedulable (that's `dates`
   // itself, computed server-side per doctor's own timezone).
   const today = useClinicToday()
   const totalDays = daysInMonth(year, month)

@@ -4,7 +4,7 @@ in migrations/0011_appointment_lifecycle_statuses.sql:
 POST /api/appointments/{id}/confirm, /reject, /visit, /complete.
 
 Every appointment now starts PENDING (create_appointment_service, used
-by WhatsApp, patient web booking, and this same admin create endpoint)
+by WhatsApp, patient web scheduling, and this same admin create endpoint)
 and moves forward one step at a time:
     PENDING -> CONFIRMED -> CHECKED_IN -> COMPLETED
        \\-> REJECTED
@@ -27,7 +27,7 @@ def _next_weekday(from_date: date | None = None) -> date:
     return d
 
 
-def _seed_and_book(client, db_connection, doctor_name: str) -> dict:
+def _seed_and_schedule(client, db_connection, doctor_name: str) -> dict:
     admin_headers = create_admin_and_get_headers(db_connection)
     seeded = seed_basic_doctor(
         client,
@@ -41,7 +41,7 @@ def _seed_and_book(client, db_connection, doctor_name: str) -> dict:
         json={"name": f"{doctor_name} Patient", "whatsapp_number": f"+9199{abs(hash(doctor_name)) % 10**8:08d}"},
         headers=admin_headers,
     ).json()
-    booking_date = _next_weekday(date.today() + timedelta(days=10))
+    scheduling_date = _next_weekday(date.today() + timedelta(days=10))
     # Doctor-local wall-clock string, deliberately kept alongside the
     # response below -- create_appointment_service's returned start_at
     # is read back from Postgres and comes back UTC-labeled (the same
@@ -52,7 +52,7 @@ def _seed_and_book(client, db_connection, doctor_name: str) -> dict:
     # which doctor_schedule row it's checked against and spuriously fail
     # -- callers that need to re-target this exact slot must reuse this
     # original request string, not the response.
-    start_at_local = f"{booking_date.isoformat()}T09:00:00+05:30"
+    start_at_local = f"{scheduling_date.isoformat()}T09:00:00+05:30"
     created = client.post(
         "/api/appointments",
         json={
@@ -80,13 +80,13 @@ def _seed_and_book(client, db_connection, doctor_name: str) -> dict:
 
 
 def test_confirm_requires_staff_auth(client, db_connection):
-    ctx = _seed_and_book(client, db_connection, "Dr. Confirm Auth")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. Confirm Auth")
     response = client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm")
     assert response.status_code == 401
 
 
 def test_confirm_pending_appointment_succeeds(client, db_connection):
-    ctx = _seed_and_book(client, db_connection, "Dr. Confirm Normal")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. Confirm Normal")
     response = client.post(
         f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"]
     )
@@ -105,7 +105,7 @@ def test_confirm_nonexistent_appointment_is_404(client, db_connection):
 
 
 def test_confirm_already_confirmed_appointment_is_409(client, db_connection):
-    ctx = _seed_and_book(client, db_connection, "Dr. Confirm Twice")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. Confirm Twice")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
 
     response = client.post(
@@ -120,7 +120,7 @@ def test_confirm_already_confirmed_appointment_is_409(client, db_connection):
 
 
 def test_reject_pending_appointment_succeeds_and_releases_slot(client, db_connection):
-    ctx = _seed_and_book(client, db_connection, "Dr. Reject Normal")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. Reject Normal")
 
     response = client.post(
         f"/api/appointments/{ctx['appointment']['id']}/reject", headers=ctx["admin_headers"]
@@ -129,7 +129,7 @@ def test_reject_pending_appointment_succeeds_and_releases_slot(client, db_connec
     assert response.json()["status"] == "REJECTED"
 
     # A Rejected appointment releases its slot (migrations/0011's
-    # RELEASED_STATUSES) -- a brand new booking for the exact same
+    # RELEASED_STATUSES) -- a brand new scheduling for the exact same
     # doctor/time must now succeed rather than 409 on overlap.
     other_patient = client.post(
         "/api/patients",
@@ -150,7 +150,7 @@ def test_reject_pending_appointment_succeeds_and_releases_slot(client, db_connec
 
 
 def test_reject_confirmed_appointment_is_409(client, db_connection):
-    ctx = _seed_and_book(client, db_connection, "Dr. Reject Confirmed")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. Reject Confirmed")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
 
     response = client.post(
@@ -167,10 +167,10 @@ def test_reject_confirmed_appointment_is_409(client, db_connection):
 def _set_start_at(db_connection, appointment_id: int, start_at: datetime, end_at: datetime) -> None:
     """Directly rewrite an appointment's scheduled start/end -- same
     direct-DB-manipulation pattern as test_reschedule_service.py and
-    test_exclusion_constraint.py, used here because _seed_and_book
-    deliberately books 10 days out (see its own comment) and the tests
+    test_exclusion_constraint.py, used here because _seed_and_schedule
+    deliberately schedules 10 days out (see its own comment) and the tests
     below need to control exactly how far in the past/future start_at
-    is relative to "now" at assertion time, which the booking API
+    is relative to "now" at assertion time, which the scheduling API
     itself has no lever for."""
     with db_connection.cursor() as cur:
         cur.execute(
@@ -181,10 +181,10 @@ def _set_start_at(db_connection, appointment_id: int, start_at: datetime, end_at
 
 
 def test_visit_confirmed_appointment_succeeds(client, db_connection):
-    ctx = _seed_and_book(client, db_connection, "Dr. Visit Normal")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. Visit Normal")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
 
-    # _seed_and_book books 10 days out -- move start_at into the past so
+    # _seed_and_schedule schedules 10 days out -- move start_at into the past so
     # this exercises the ordinary "appointment already started" case.
     past_start = datetime.now(dt_timezone.utc) - timedelta(hours=1)
     _set_start_at(db_connection, ctx["appointment"]["id"], past_start, past_start + timedelta(minutes=30))
@@ -197,7 +197,7 @@ def test_visit_confirmed_appointment_succeeds(client, db_connection):
 
 
 def test_visit_pending_appointment_is_409(client, db_connection):
-    ctx = _seed_and_book(client, db_connection, "Dr. Visit Pending")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. Visit Pending")
 
     response = client.post(
         f"/api/appointments/{ctx['appointment']['id']}/visit", headers=ctx["admin_headers"]
@@ -206,9 +206,9 @@ def test_visit_pending_appointment_is_409(client, db_connection):
 
 
 def test_visit_future_confirmed_appointment_is_409(client, db_connection):
-    # _seed_and_book already books 10 days out, so this appointment
+    # _seed_and_schedule already schedules 10 days out, so this appointment
     # hasn't started -- no start_at manipulation needed.
-    ctx = _seed_and_book(client, db_connection, "Dr. Visit Future")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. Visit Future")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
 
     response = client.post(
@@ -225,7 +225,7 @@ def test_visit_future_confirmed_appointment_is_409(client, db_connection):
 def test_visit_appointment_a_minute_before_start_is_409(client, db_connection):
     # Boundary case: still-future by a small margin, not merely "far in
     # the future" -- proves the check compares real instants, not dates.
-    ctx = _seed_and_book(client, db_connection, "Dr. Visit Boundary Future")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. Visit Boundary Future")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
 
     future_start = datetime.now(dt_timezone.utc) + timedelta(minutes=1)
@@ -240,7 +240,7 @@ def test_visit_appointment_a_minute_before_start_is_409(client, db_connection):
 def test_visit_appointment_just_after_start_succeeds(client, db_connection):
     # Boundary case: just started, not "long past" -- the other half of
     # the same instant-comparison proof as the test above.
-    ctx = _seed_and_book(client, db_connection, "Dr. Visit Boundary Past")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. Visit Boundary Past")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
 
     just_started = datetime.now(dt_timezone.utc) - timedelta(seconds=5)
@@ -261,7 +261,7 @@ def test_visit_same_local_day_but_still_future_slot_is_409(client, db_connection
     # regardless of time-of-day. seed_basic_doctor's default timezone is
     # Asia/Kolkata (UTC+5:30), deliberately not UTC, so this also proves
     # the comparison isn't accidentally UTC-datebound either.
-    ctx = _seed_and_book(client, db_connection, "Dr. Visit Same Day Future")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. Visit Same Day Future")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
 
     doctor_tz = dt_timezone(timedelta(hours=5, minutes=30))
@@ -278,7 +278,7 @@ def test_visit_same_local_day_but_still_future_slot_is_409(client, db_connection
 
 
 def test_visit_cancelled_appointment_is_409(client, db_connection):
-    ctx = _seed_and_book(client, db_connection, "Dr. Visit Cancelled")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. Visit Cancelled")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
     client.delete(f"/api/appointments/{ctx['appointment']['id']}", headers=ctx["admin_headers"])
 
@@ -293,7 +293,7 @@ def test_visit_cancelled_appointment_is_409(client, db_connection):
 
 
 def test_visit_already_visited_appointment_is_409(client, db_connection):
-    ctx = _seed_and_book(client, db_connection, "Dr. Visit Twice")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. Visit Twice")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
 
     past_start = datetime.now(dt_timezone.utc) - timedelta(hours=1)
@@ -316,10 +316,10 @@ def test_visit_already_visited_appointment_is_409(client, db_connection):
 
 
 def test_complete_visited_appointment_succeeds(client, db_connection):
-    ctx = _seed_and_book(client, db_connection, "Dr. Complete Normal")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. Complete Normal")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
 
-    # _seed_and_book books 10 days out -- move start_at into the past so
+    # _seed_and_schedule schedules 10 days out -- move start_at into the past so
     # /visit (now gated on the appointment having started) succeeds.
     past_start = datetime.now(dt_timezone.utc) - timedelta(hours=1)
     _set_start_at(db_connection, ctx["appointment"]["id"], past_start, past_start + timedelta(minutes=30))
@@ -334,7 +334,7 @@ def test_complete_visited_appointment_succeeds(client, db_connection):
 
 
 def test_complete_confirmed_but_not_visited_appointment_is_409(client, db_connection):
-    ctx = _seed_and_book(client, db_connection, "Dr. Complete Skip Visit")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. Complete Skip Visit")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
 
     response = client.post(
@@ -350,10 +350,10 @@ def test_complete_confirmed_but_not_visited_appointment_is_409(client, db_connec
 
 
 def test_no_show_confirmed_appointment_succeeds(client, db_connection):
-    ctx = _seed_and_book(client, db_connection, "Dr. NoShow Normal")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. NoShow Normal")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
 
-    # _seed_and_book books 10 days out -- move start_at into the past,
+    # _seed_and_schedule schedules 10 days out -- move start_at into the past,
     # same as the /visit tests: you can't yet know a patient won't show
     # up for a slot that hasn't happened yet (see mark_no_show_service's
     # AppointmentNotStarted guard).
@@ -372,10 +372,10 @@ def test_no_show_confirmed_appointment_succeeds(client, db_connection):
 
 
 def test_no_show_future_confirmed_appointment_is_409(client, db_connection):
-    # _seed_and_book already books 10 days out, so this appointment
+    # _seed_and_schedule already schedules 10 days out, so this appointment
     # hasn't started -- no start_at manipulation needed. Mirrors
     # test_visit_future_confirmed_appointment_is_409 above.
-    ctx = _seed_and_book(client, db_connection, "Dr. NoShow Future")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. NoShow Future")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
 
     response = client.post(
@@ -392,7 +392,7 @@ def test_no_show_future_confirmed_appointment_is_409(client, db_connection):
 def test_no_show_pending_appointment_is_409(client, db_connection):
     # An unapproved request isn't a no-show -- it's a different,
     # out-of-scope problem (see mark_no_show_service's own docstring).
-    ctx = _seed_and_book(client, db_connection, "Dr. NoShow Pending")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. NoShow Pending")
 
     response = client.post(
         f"/api/appointments/{ctx['appointment']['id']}/no-show", headers=ctx["admin_headers"]
@@ -407,7 +407,7 @@ def test_no_show_pending_appointment_is_409(client, db_connection):
 def test_no_show_checked_in_appointment_is_409(client, db_connection):
     # A checked-in patient is physically present -- "no-show" from
     # CHECKED_IN is a contradiction, deliberately not a valid transition.
-    ctx = _seed_and_book(client, db_connection, "Dr. NoShow CheckedIn")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. NoShow CheckedIn")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
 
     past_start = datetime.now(dt_timezone.utc) - timedelta(hours=1)
@@ -439,12 +439,12 @@ def test_no_show_does_not_release_the_slot(client, db_connection):
     # no-show can only ever be marked on an appointment that has already
     # started (mark_no_show_service's own AppointmentNotStarted guard,
     # same as check-in's) -- so by the time a slot could be marked
-    # NO_SHOW, its time has already passed and no real future booking
+    # NO_SHOW, its time has already passed and no real future scheduling
     # could ever target it anyway. "Does it release the slot" is
     # consequently not a meaningful guarantee to make for NO_SHOW the
     # way it is for Reject/Cancel, which both apply to still-future
     # appointments.
-    ctx = _seed_and_book(client, db_connection, "Dr. NoShow SlotReuse")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. NoShow SlotReuse")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
 
     past_start = datetime.now(dt_timezone.utc) - timedelta(hours=1)
@@ -470,7 +470,7 @@ def test_no_show_does_not_release_the_slot(client, db_connection):
 
 
 def test_no_show_requires_staff_auth(client, db_connection):
-    ctx = _seed_and_book(client, db_connection, "Dr. NoShow Auth")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. NoShow Auth")
     response = client.post(f"/api/appointments/{ctx['appointment']['id']}/no-show")
     assert response.status_code == 401
 
@@ -478,7 +478,7 @@ def test_no_show_requires_staff_auth(client, db_connection):
 def test_lifecycle_endpoints_usable_by_plain_staff_not_just_admin(client, db_connection):
     # Same RBAC as cancel/reschedule on this router -- any authenticated
     # STAFF session, not require_role("ADMIN").
-    ctx = _seed_and_book(client, db_connection, "Dr. Lifecycle Staff")
+    ctx = _seed_and_schedule(client, db_connection, "Dr. Lifecycle Staff")
     staff_headers = create_staff_and_get_headers(db_connection, role="STAFF")
 
     response = client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=staff_headers)

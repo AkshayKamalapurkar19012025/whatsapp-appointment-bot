@@ -2,14 +2,14 @@
 Tests for app/services/availability_engine.py, added in the WEB P1
 phase.
 
-booking_window()/is_within_booking_window() are pure functions (no DB)
-covering the "current month + next 3 calendar months" web booking window
+scheduling_window()/is_within_scheduling_window() are pure functions (no DB)
+covering the "current month + next 3 calendar months" web scheduling window
 -- calendar-month based, not a fixed day count, per the product spec.
 
 test_availability_endpoint_handles_overnight_schedule is a regression
 test proving the P1 consolidation: app/api/availability.py's old inline
 slot logic did not handle overnight schedules (schedule_end <=
-schedule_start), unlike app/api/booking.py's. Both now call the same
+schedule_start), unlike app/api/scheduling.py's. Both now call the same
 app/services/availability_engine.get_available_slots, so the REST
 endpoint must now handle it too -- this documents that as a deliberate
 fix, not a silent behavior change.
@@ -21,8 +21,8 @@ no endpoint calls it yet in this phase.
 from datetime import date, datetime, timedelta
 
 from app.services.availability_engine import (
-    booking_window,
-    is_within_booking_window,
+    scheduling_window,
+    is_within_scheduling_window,
     list_available_dates_in_range,
 )
 
@@ -30,12 +30,12 @@ from tests.helpers import seed_basic_doctor
 
 
 # ---------------------------------------------------------------------
-# booking_window() / is_within_booking_window() -- pure, no DB needed.
+# scheduling_window() / is_within_scheduling_window() -- pure, no DB needed.
 # ---------------------------------------------------------------------
 
 def test_booking_window_is_calendar_month_based_within_year():
     today = date(2026, 9, 2)
-    window_start, window_end = booking_window(today)
+    window_start, window_end = scheduling_window(today)
     assert window_start == date(2026, 9, 2)
     # September + 3 more calendar months = December, last day 31.
     assert window_end == date(2026, 12, 31)
@@ -43,7 +43,7 @@ def test_booking_window_is_calendar_month_based_within_year():
 
 def test_booking_window_rolls_over_year_boundary():
     today = date(2026, 11, 15)
-    window_start, window_end = booking_window(today)
+    window_start, window_end = scheduling_window(today)
     # November + 3 more calendar months = February 2027, last day 28
     # (2027 is not a leap year).
     assert window_end == date(2027, 2, 28)
@@ -51,26 +51,26 @@ def test_booking_window_rolls_over_year_boundary():
 
 def test_is_within_booking_window_allows_today():
     today = date(2026, 9, 2)
-    assert is_within_booking_window(today, today=today) is True
+    assert is_within_scheduling_window(today, today=today) is True
 
 
 def test_is_within_booking_window_allows_last_day_of_window():
     today = date(2026, 9, 2)
-    _, window_end = booking_window(today)
-    assert is_within_booking_window(window_end, today=today) is True
+    _, window_end = scheduling_window(today)
+    assert is_within_scheduling_window(window_end, today=today) is True
 
 
 def test_is_within_booking_window_rejects_day_after_window():
     today = date(2026, 9, 2)
-    _, window_end = booking_window(today)
+    _, window_end = scheduling_window(today)
     day_after = window_end + timedelta(days=1)
-    assert is_within_booking_window(day_after, today=today) is False
+    assert is_within_scheduling_window(day_after, today=today) is False
 
 
 def test_is_within_booking_window_rejects_past_date():
     today = date(2026, 9, 2)
     yesterday = today - timedelta(days=1)
-    assert is_within_booking_window(yesterday, today=today) is False
+    assert is_within_scheduling_window(yesterday, today=today) is False
 
 
 # ---------------------------------------------------------------------
@@ -88,7 +88,7 @@ def test_availability_endpoint_handles_overnight_schedule(client, db_connection)
     reasoning -- but the API layer above it does), separate from this
     phase's engine-consolidation work; flagged in the WEB P1 report as a
     finding for WEB P7 (doctor availability management), not fixed here.
-    The engine itself has always handled it (it's booking.py's original
+    The engine itself has always handled it (it's scheduling.py's original
     logic), so this test proves the REST endpoint now shares that
     handling too, however the schedule row gets in.
     """

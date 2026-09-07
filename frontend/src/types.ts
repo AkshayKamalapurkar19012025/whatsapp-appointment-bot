@@ -89,12 +89,12 @@ export interface CalendarMonth {
   appointment_type_id: number
   year: number
   month: number
-  booking_window_start: string
-  booking_window_end: string
+  scheduling_window_start: string
+  scheduling_window_end: string
   dates: Record<string, boolean>
 }
 
-export interface BookedAppointment {
+export interface ScheduledAppointment {
   id: number
   doctor_id: number
   patient_id: number
@@ -109,7 +109,7 @@ export interface BookedAppointment {
 // Note: start_at/end_at here are already correct in the doctor's own
 // local time (app/services/appointment_services.py's
 // list_patient_appointments_service converts them before returning --
-// unlike BookedAppointment's fields above, which come straight off a
+// unlike ScheduledAppointment's fields above, which come straight off a
 // create/reschedule INSERT ... RETURNING and are UTC-labeled; see
 // format.ts and the WEB P3/P4 reports for why that distinction matters).
 export interface MyAppointment {

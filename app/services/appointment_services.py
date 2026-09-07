@@ -4,7 +4,7 @@ Shared appointment create/cancel logic.
 create_appointment_service() and cancel_appointment_service() are a pure
 move of the bodies of app/api/appointments.py's POST/DELETE handlers --
 extracted so a future authenticated web endpoint can call the exact same
-booking rules (schedule/block/overlap checks, the pg_advisory_xact_lock
+scheduling rules (schedule/block/overlap checks, the pg_advisory_xact_lock
 serialization, the EXCLUDE-constraint backstop) instead of a third
 reimplementation. app/api/appointments.py's router functions are now
 thin wrappers: build the connection/cursor, call the service, translate
@@ -16,12 +16,12 @@ tests/test_exclusion_constraint.py) passing unchanged.
 Two parameters were added on top of the moved logic, both opt-in and
 both defaulting to today's exact behavior:
 
-- create_appointment_service(..., enforce_booking_window=False): when
+- create_appointment_service(..., enforce_scheduling_window=False): when
   True, rejects a start_at outside the current-month+3-calendar-months
-  web booking window (app/services/availability_engine.py). Defaults to
+  web scheduling window (app/services/availability_engine.py). Defaults to
   False so the existing REST endpoint and every existing test keeps
-  booking any future date, same as before this phase. A future web
-  booking endpoint (WEB P3/P4) passes True.
+  scheduling any future date, same as before this phase. A future web
+  scheduling endpoint (WEB P3/P4) passes True.
 
 - cancel_appointment_service(..., requesting_patient_id=None): when
   given a patient id that does not own the appointment, raises
@@ -49,7 +49,7 @@ import psycopg
 from app.utils.timezone import overlaps, convert_to_timezone, validate_timezone
 from app.services.availability_engine import (
     get_appointment_type_for_doctor,
-    is_within_booking_window,
+    is_within_scheduling_window,
 )
 from app.services.exceptions import (
     DoctorNotFound,
@@ -58,7 +58,7 @@ from app.services.exceptions import (
     OutsideDoctorSchedule,
     DoctorBlockConflict,
     SlotOverlap,
-    OutsideBookingWindow,
+    OutsideSchedulingWindow,
     AppointmentNotFound,
     AlreadyCancelled,
     NotAppointmentOwner,
@@ -90,7 +90,7 @@ def create_appointment_service(
     patient_id: int,
     appointment_type_id: int,
     start_at,
-    enforce_booking_window: bool = False,
+    enforce_scheduling_window: bool = False,
 ):
     # Normalize seconds/microseconds.
     start_at = start_at.replace(
@@ -98,8 +98,8 @@ def create_appointment_service(
         microsecond=0,
     )
 
-    if enforce_booking_window and not is_within_booking_window(start_at.date()):
-        raise OutsideBookingWindow()
+    if enforce_scheduling_window and not is_within_scheduling_window(start_at.date()):
+        raise OutsideSchedulingWindow()
 
     # ---------------------------------------------------------
     # 1. Check doctor.
@@ -109,7 +109,7 @@ def create_appointment_service(
     # would serialize appointment creation for that doctor) --
     # that was removed while adding the pg_advisory_xact_lock
     # below, for two reasons: (a) it never actually serialized
-    # against the WhatsApp path anyway, since booking.py doesn't
+    # against the WhatsApp path anyway, since scheduling.py doesn't
     # take that same lock (this is exactly the cross-path gap
     # documented in docs/DATABASE_P1_NOTES.md item 4), and
     # (b) worse, it actively caused a real, reproduced deadlock
@@ -250,9 +250,9 @@ def create_appointment_service(
             raise DoctorBlockConflict()
 
     # ---------------------------------------------------------
-    # 6. Serialize booking attempts for this doctor.
+    # 6. Serialize scheduling attempts for this doctor.
     #
-    # Standardized on the same primitive app/api/booking.py's
+    # Standardized on the same primitive app/api/scheduling.py's
     # WhatsApp flow uses: pg_advisory_xact_lock(doctor_id). This
     # is a session/transaction-scoped Postgres advisory lock,
     # released automatically on commit or rollback -- it is NOT
@@ -260,16 +260,16 @@ def create_appointment_service(
     # taken in step 1 above (that lock only blocks other
     # transactions that also do a FOR UPDATE read of the same
     # doctors row; it does not block a transaction that only
-    # takes this advisory lock, or vice versa). Both booking
+    # takes this advisory lock, or vice versa). Both scheduling
     # paths must take the *same* lock, on the *same* key
     # (doctor_id, cast to bigint for pg_advisory_xact_lock's
-    # signature), or a WhatsApp booking and a direct REST booking
+    # signature), or a WhatsApp scheduling and a direct REST scheduling
     # for the same doctor/slot can both pass their overlap check
     # and both insert -- this was confirmed to happen in testing
     # before this change (see docs/DATABASE_P1_NOTES.md item 4).
     #
     # Position matters: acquired after the doctor-block check
-    # above (matching app/api/booking.py's CONFIRM_BOOKING flow
+    # above (matching app/api/scheduling.py's CONFIRM_SCHEDULING flow
     # exactly) and before the final existing-appointments
     # overlap re-check below, held until this transaction
     # commits or rolls back (i.e. through the INSERT).
@@ -367,7 +367,7 @@ def create_appointment_service(
         )
     except psycopg.errors.ExclusionViolation:
         logger.warning(
-            f"Exclusion constraint rejected overlapping booking for "
+            f"Exclusion constraint rejected overlapping scheduling for "
             f"doctor_id={doctor_id} (advisory lock should normally "
             f"prevent reaching this point -- backstop triggered)"
         )
@@ -453,24 +453,24 @@ def reschedule_appointment_service(
     *,
     patient_id: int,
     new_start_at,
-    enforce_booking_window: bool = False,
+    enforce_scheduling_window: bool = False,
 ):
     """
     Reschedule keeps the original appointment's doctor and appointment
     type -- only the date/time changes. This is a faithful move of
-    app/api/booking.py's RESCHEDULE_FINAL_CONFIRM logic (verified against
+    app/api/scheduling.py's RESCHEDULE_FINAL_CONFIRM logic (verified against
     the running WhatsApp flow line-by-line while writing this, not
     written from memory of what reschedule "should" do), extracted here
     for WEB P4 so the web reschedule endpoint shares the exact same rules
     instead of a second, hand-written copy that could silently drift.
-    booking.py's own reschedule handler is refactored to call this same
+    scheduling.py's own reschedule handler is refactored to call this same
     function (see its own comment at the call site) -- so there is now
     exactly one implementation of these rules, not two kept in sync by
     hand.
 
     patient_id is required and baked directly into the ownership check
     (WHERE id = %s AND patient_id = %s), deliberately matching
-    booking.py's own pattern: a wrong-owner lookup raises the same
+    scheduling.py's own pattern: a wrong-owner lookup raises the same
     AppointmentNotFound as a genuinely nonexistent id, so neither this
     function's caller nor an attacker probing ids can distinguish "not
     yours" from "doesn't exist" (unlike cancel_appointment_service's
@@ -479,7 +479,7 @@ def reschedule_appointment_service(
     compatible with -- reschedule has no such history, so it can be
     stricter from the start).
 
-    One known omission, inherited unchanged from booking.py rather than
+    One known omission, inherited unchanged from scheduling.py rather than
     silently "fixed": this does not re-check doctors.active. Neither does
     the original WhatsApp flow -- the doctor_id comes from the existing
     appointment being rescheduled, not a fresh lookup, in both places.
@@ -519,29 +519,29 @@ def reschedule_appointment_service(
 
     new_start_at = new_start_at.replace(second=0, microsecond=0)
 
-    if enforce_booking_window and not is_within_booking_window(new_start_at.date()):
-        raise OutsideBookingWindow()
+    if enforce_scheduling_window and not is_within_scheduling_window(new_start_at.date()):
+        raise OutsideSchedulingWindow()
 
     new_end_at = new_start_at + timedelta(minutes=duration_minutes)
 
     # ---------------------------------------------------------
     # Re-check doctor's schedule for the new slot -- the same check
     # create_appointment_service's own step 4 makes (and, like that
-    # step, unconditional: not gated behind enforce_booking_window,
+    # step, unconditional: not gated behind enforce_scheduling_window,
     # since a doctor's working hours are a different rule from the
-    # patient-facing calendar-month booking window; staff/admin
+    # patient-facing calendar-month scheduling window; staff/admin
     # reschedule bypasses the latter but never the former). Previously
     # missing here entirely -- a known, documented gap (WEB P7 and WEB
     # P10 reports both flagged it) that let a reschedule land outside
-    # every defined doctor_schedule row, something a fresh booking has
+    # every defined doctor_schedule row, something a fresh scheduling has
     # never been able to do.
     #
     # doctor_schedule.day_of_week/start_time/end_time are defined in
     # the doctor's own local time -- unlike create_appointment_service's
     # step 4, new_start_at here cannot be assumed to already carry the
-    # doctor-local offset: app/api/booking.py's WhatsApp reschedule flow
+    # doctor-local offset: app/api/scheduling.py's WhatsApp reschedule flow
     # passes session["selected_start_at"], read back from the
-    # booking_sessions TIMESTAMPTZ column, which (like every TIMESTAMPTZ
+    # scheduling_sessions TIMESTAMPTZ column, which (like every TIMESTAMPTZ
     # read-back in this codebase -- see app/utils/timezone.py's module
     # docstring) comes back UTC-labeled: the correct instant, but the
     # wrong wall-clock digits for a day-of-week/time-of-day comparison.
@@ -610,7 +610,7 @@ def reschedule_appointment_service(
     # ---------------------------------------------------------
     # Serialize against this doctor -- same primitive, same position
     # (after the block check, before the final overlap re-check) as
-    # create_appointment_service and booking.py's own CONFIRM_BOOKING.
+    # create_appointment_service and scheduling.py's own CONFIRM_SCHEDULING.
     # ---------------------------------------------------------
     cur.execute(
         "SELECT pg_advisory_xact_lock(%s::bigint)",
@@ -666,7 +666,7 @@ def reschedule_appointment_service(
     if cur.fetchone() is None:
         # Lost a race between the FOR UPDATE read above and here --
         # shouldn't happen given the row lock, kept as a defensive
-        # mirror of booking.py's own equivalent check.
+        # mirror of scheduling.py's own equivalent check.
         raise AlreadyCancelled()
 
     try:
@@ -701,7 +701,7 @@ def reschedule_appointment_service(
         # Unlike create_appointment_service's equivalent catch, this one
         # must explicitly roll back before raising: a caught Postgres
         # error leaves the transaction aborted until a ROLLBACK is
-        # issued, and reschedule's caller (booking.py's
+        # issued, and reschedule's caller (scheduling.py's
         # RESCHEDULE_FINAL_CONFIRM handler) needs to keep using this
         # same cursor afterward (to look up fresh available dates and
         # update the session) -- it can't just let the exception
@@ -738,8 +738,8 @@ def list_patient_appointments_service(cur, patient_id: int):
     """
     For WEB P4's "My Appointments" page: a patient's appointments split
     into upcoming / history / cancelled. The split uses exactly the
-    status/start_at semantics app/api/booking.py's own
-    get_upcoming_booked_appointments() already relies on for its
+    status/start_at semantics app/api/scheduling.py's own
+    get_upcoming_scheduled_appointments() already relies on for its
     "upcoming" filter (status IN ACTIONABLE_STATUSES AND start_at > now)
     -- no new business rule invented for the web. CANCELLED and REJECTED
     appointments both go to "cancelled" (a Rejected request never
@@ -748,7 +748,7 @@ def list_patient_appointments_service(cur, patient_id: int):
     has already passed without being resolved, or one marked CHECKED_IN/
     COMPLETED/NO_SHOW, is "history".
 
-    Same fix as get_upcoming_booked_appointments (see that function's
+    Same fix as get_upcoming_scheduled_appointments (see that function's
     docstring for the full story): start_at/end_at are converted to the
     doctor's own timezone before returning, since a value read from a
     stored TIMESTAMPTZ column always comes back UTC-normalized from
@@ -891,7 +891,7 @@ def mark_visited_service(cur, appointment_id: int):
     check-in order: the next integer after the highest token_number
     already issued to this doctor today. Concurrent check-ins for the
     same doctor are serialized with pg_advisory_xact_lock, the same
-    primitive create_appointment_service uses to serialize bookings --
+    primitive create_appointment_service uses to serialize schedulings --
     a second lock key (the day's epoch-day number) scopes it to "this
     doctor, today" specifically, so it can't collide with that other
     lock's (doctor_id) key space or with a different day's queue.

@@ -3,16 +3,16 @@ import { clearToken, getMe, getToken, logout } from './api'
 import type { Patient } from './types'
 import AppHeader from './AppHeader'
 import LoginFlow from './LoginFlow'
-import BookingFlow from './BookingFlow'
+import SchedulingFlow from './SchedulingFlow'
 import MyAppointments from './MyAppointments'
 import './styles.css'
 
-type View = 'booking' | 'appointments'
+type View = 'scheduling' | 'appointments'
 
 export default function App() {
   const [patient, setPatient] = useState<Patient | null>(null)
   const [checkingSession, setCheckingSession] = useState(true)
-  const [view, setView] = useState<View>('booking')
+  const [view, setView] = useState<View>('scheduling')
 
   useEffect(() => {
     if (!getToken()) {
@@ -38,7 +38,7 @@ export default function App() {
   function handleLoggedOut() {
     clearToken()
     setPatient(null)
-    setView('booking')
+    setView('scheduling')
   }
 
   async function handleLogout() {
@@ -65,15 +65,15 @@ export default function App() {
       <AppHeader
         loggedIn={patient !== null}
         patientName={patient?.name}
-        primaryLabel={view === 'booking' ? 'My appointments' : 'Schedule an appointment'}
-        primaryLabelShort={view === 'booking' ? 'Appointments' : 'Schedule'}
-        onPrimaryAction={() => setView(view === 'booking' ? 'appointments' : 'booking')}
+        primaryLabel={view === 'scheduling' ? 'My appointments' : 'Schedule an appointment'}
+        primaryLabelShort={view === 'scheduling' ? 'Appointments' : 'Schedule'}
+        onPrimaryAction={() => setView(view === 'scheduling' ? 'appointments' : 'scheduling')}
         onLogout={handleLogout}
       />
       <div className="page">
         {patient ? (
-          view === 'booking' ? (
-            <BookingFlow
+          view === 'scheduling' ? (
+            <SchedulingFlow
               patientName={patient.name}
               onLoggedOut={handleLoggedOut}
               onViewAppointments={() => setView('appointments')}

@@ -1,5 +1,5 @@
 """
-Tests for the "past dates/times are never bookable" fix in
+Tests for the "past dates/times are never schedulable" fix in
 app/services/availability_engine.py's get_available_slots().
 
 Before this fix, get_available_slots() computed slots purely from
@@ -8,13 +8,13 @@ entirely in the past, or a slot on today whose start time had already
 passed, would still be reported as open as long as the doctor's weekly
 schedule matched. This was masked for the patient-facing web calendar
 (app/api/patient_booking.py's GET /web/calendar*, via
-is_within_booking_window(), whose window_start is always today) but not
+is_within_scheduling_window(), whose window_start is always today) but not
 for the admin calendar (GET /appointments/calendar, deliberately exempt
-from that window so staff can book far in the future) -- which is
+from that window so staff can schedule far in the future) -- which is
 exactly the bug reported against the admin "Book Appointment" screen:
 2 Sep showing as available when today was 5 Sep.
 
-The fix lives in the one shared engine function every booking path
+The fix lives in the one shared engine function every scheduling path
 (admin REST, patient web both flows, WhatsApp) calls, so it's verified
 here directly against that function plus the two REST endpoints most
 directly implicated (the admin calendar, and the admin/WhatsApp-shared
@@ -38,7 +38,7 @@ def _doctor_local_now() -> datetime:
 
 
 # ---------------------------------------------------------------------
-# Past dates -- never bookable, regardless of what the weekly schedule
+# Past dates -- never schedulable, regardless of what the weekly schedule
 # says about that weekday.
 # ---------------------------------------------------------------------
 
@@ -288,7 +288,7 @@ def test_uses_doctor_timezone_not_utc_for_past_date_check(client, db_connection)
     # be *yesterday* in the doctor's own local time -- if the past-date
     # check used UTC (or the server's local clock, which this sandbox
     # also runs as UTC) instead of the doctor's configured timezone, it
-    # would wrongly treat UTC's still-current date as bookable for this
+    # would wrongly treat UTC's still-current date as schedulable for this
     # doctor.
     ahead_tz = "Pacific/Kiritimati"  # UTC+14
     utc_today = datetime.now(ZoneInfo("UTC")).date()

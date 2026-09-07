@@ -9,7 +9,7 @@ CRUD logic itself is complex.
 
 POST is ADMIN-gated as of WEB P6 -- these tests authenticate as a fresh
 admin via tests/helpers.py's create_admin_and_get_headers. GET stays
-public (unchanged), matching the patient booking flow's own reliance on
+public (unchanged), matching the patient scheduling flow's own reliance on
 public reference-data reads elsewhere.
 
 PUT/DELETE (rename and soft-delete) were added later -- RBAC gating for

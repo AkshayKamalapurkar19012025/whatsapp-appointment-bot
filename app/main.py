@@ -14,7 +14,7 @@ from app.api.app_config import router as app_config_router
 from app.api.dashboard import router as dashboard_router
 from app.api.patient_auth import router as patient_auth_router
 from app.api.staff_auth import router as staff_auth_router
-from app.api.patient_booking import router as patient_booking_router
+from app.api.patient_scheduling import router as patient_scheduling_router
 from app.api.appointment_types import router as appointment_types_router
 from app.api.departments import router as departments_router
 from app.api.doctors import router as doctors_router
@@ -28,7 +28,7 @@ from app.api.department_doctors import router as department_doctors_router
 from app.api.department_appointment_types import (
     router as department_appointment_types_router,
 )
-from app.api.booking import router as booking_router
+from app.api.scheduling import router as scheduling_router
 from app.api.doctor_appointment_types import (
     router as doctor_appointment_types_router,
 )
@@ -130,7 +130,7 @@ app.include_router(
 )
 
 app.include_router(
-    patient_booking_router,
+    patient_scheduling_router,
     prefix="/api",
 )
 
@@ -165,7 +165,7 @@ app.include_router(
 )
 
 app.include_router(
-    booking_router,
+    scheduling_router,
     prefix="/api",
 )
 

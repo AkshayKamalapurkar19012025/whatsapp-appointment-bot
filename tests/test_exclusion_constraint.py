@@ -1,15 +1,15 @@
 """
 Tests for the database-level EXCLUDE constraint added in
 migrations/0003_prevent_overlapping_bookings.sql -- the second line of
-defense underneath the pg_advisory_xact_lock used by both booking paths.
+defense underneath the pg_advisory_xact_lock used by both scheduling paths.
 
 test_exclusion_constraint_rejects_overlap_bypassing_app_lock is "Test D"
 from the concurrency remediation: it inserts directly via two separate
 raw psycopg connections that never call get_connection() or go through
-either app/api/booking.py or app/api/appointments.py at all -- so no
+either app/api/scheduling.py or app/api/appointments.py at all -- so no
 advisory lock is ever taken. This proves the constraint itself, not the
 locking discipline layered on top of it, is what makes an overlapping
-double-booking physically impossible to persist.
+double-scheduling physically impossible to persist.
 
 The rest of this file covers the constraint's boundary behaviour
 directly (back-to-back allowed, partial overlap rejected, different
@@ -84,7 +84,7 @@ def _insert_synthetic_patient(cur, label: str):
 def test_exclusion_constraint_rejects_overlap_bypassing_app_lock(seeded_doctor, db_connection):
     """Test D: two raw connections race to INSERT overlapping Confirmed
     appointments directly, with NO advisory lock taken by either --
-    neither goes through app/api/booking.py or app/api/appointments.py
+    neither goes through app/api/scheduling.py or app/api/appointments.py
     at all. Exactly one must succeed; the constraint alone must reject
     the other.
 
@@ -96,8 +96,8 @@ def test_exclusion_constraint_rejects_overlap_bypassing_app_lock(seeded_doctor, 
     transaction -- a real, separately-documented Postgres behavior for
     GiST-based exclusion constraints under true concurrency, confirmed
     while writing this test). Both are Postgres correctly preventing the
-    double booking; this scenario is exactly why the application code
-    (app/api/booking.py, app/api/appointments.py) takes the advisory
+    double scheduling; this scenario is exactly why the application code
+    (app/api/scheduling.py, app/api/appointments.py) takes the advisory
     lock *before* its INSERT -- that serializes the two paths so
     neither ever reaches this raw, lock-free race in practice. Only
     catching ExclusionViolation there (not DeadlockDetected) is
@@ -156,9 +156,9 @@ def test_exclusion_constraint_rejects_overlap_bypassing_app_lock(seeded_doctor, 
             "SELECT count(*) FROM appointments WHERE doctor_id = %s AND status = 'CONFIRMED'",
             (seeded_doctor["doctor_id"],),
         )
-        booked_count = cur.fetchone()[0]
+        scheduled_count = cur.fetchone()[0]
 
-    assert booked_count == 1, f"expected exactly one Confirmed appointment, found {booked_count}"
+    assert scheduled_count == 1, f"expected exactly one Confirmed appointment, found {scheduled_count}"
 
 
 def test_back_to_back_appointments_are_allowed(seeded_doctor, db_connection):
@@ -219,7 +219,7 @@ def test_partial_overlap_is_rejected(seeded_doctor, db_connection):
 
 def test_different_doctors_can_have_identical_overlapping_times(db_connection):
     """The exclusion constraint keys on (doctor_id, time range) --
-    two different doctors booked at the exact same instant must both
+    two different doctors scheduled at the exact same instant must both
     be allowed."""
     with db_connection.cursor() as cur:
         cur.execute("INSERT INTO doctors (name) VALUES (%s) RETURNING id", ("Dr. Overlap A",))

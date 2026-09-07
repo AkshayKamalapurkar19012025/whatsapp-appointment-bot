@@ -52,7 +52,7 @@ export default function DepartmentCalendar({
   const isCurrentMonth = year === today.getFullYear() && month === today.getMonth() + 1
   const nextMonthDate = new Date(year, month, 1)
   const nextMonthKey = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth() + 1).padStart(2, '0')}`
-  const windowEndKey = data ? data.booking_window_end.slice(0, 7) : null
+  const windowEndKey = data ? data.scheduling_window_end.slice(0, 7) : null
   const nextDisabled = windowEndKey !== null && nextMonthKey > windowEndKey
 
   function goPrev() {

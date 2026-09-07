@@ -53,7 +53,7 @@ def get_current_patient(authorization: str | None = Header(default=None)):
     FastAPI dependency resolving the bearer session token in the
     Authorization header to the patient it belongs to. Shared by this
     router's own /me and /logout below, and intended for WEB P4's
-    patient-facing booking endpoints to depend on too, so a patient's
+    patient-facing scheduling endpoints to depend on too, so a patient's
     identity always comes from a verified session -- never from a
     client-supplied patient_id (see app/services/appointment_services.py's
     requesting_patient_id, which this is meant to feed).
@@ -174,7 +174,7 @@ def otp_dev_lookup(whatsapp_number: str):
     Filters on kind='OTP' explicitly (added in WEB P8) -- without it,
     this would return whatever mock_sms_outbox row for this number is
     newest regardless of kind, which silently breaks the moment a
-    patient's first action after OTP login is a web booking/cancel/
+    patient's first action after OTP login is a web scheduling/cancel/
     reschedule (now also written to this same table).
     """
     if config.ENVIRONMENT == "production":

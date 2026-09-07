@@ -35,7 +35,7 @@ Security notes:
     (SESSION_TTL_HOURS from login) and a shorter idle cap
     (SESSION_IDLE_TIMEOUT_MINUTES since the last authenticated request) --
     whichever is stricter wins. Set longer than staff's own idle cap
-    (app/services/staff_auth.py) since a booking session can legitimately
+    (app/services/staff_auth.py) since a scheduling session can legitimately
     sit idle mid-flow (reviewing dates, stepping away) and a patient
     session's blast radius if stolen is that patient's own data, not the
     admin surface a staff session reaches.

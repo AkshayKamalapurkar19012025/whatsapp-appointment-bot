@@ -2,27 +2,27 @@
 Shared availability/slot-computation engine.
 
 get_appointment_type_for_doctor() and get_available_slots() are a pure
-move from app/api/booking.py (the WhatsApp conversational flow) -- both
-booking.py and app/api/availability.py (the REST endpoint) now call this
+move from app/api/scheduling.py (the WhatsApp conversational flow) -- both
+scheduling.py and app/api/availability.py (the REST endpoint) now call this
 one implementation instead of two independently-maintained copies.
 
-Behavior is unchanged from booking.py's prior version. That version was
+Behavior is unchanged from scheduling.py's prior version. That version was
 already the more complete of the two: it alone handled overnight
 schedules (schedule_end <= schedule_start meaning "past midnight"),
 while app/api/availability.py's old inline copy did not. Consolidating
-onto booking.py's version is a deliberate, documented behavior change for
+onto scheduling.py's version is a deliberate, documented behavior change for
 availability.py specifically -- verified to have no existing test
 coverage depending on the old, incomplete behavior (see git history).
-booking.py's own behavior is byte-for-byte unchanged: this is a pure
+scheduling.py's own behavior is byte-for-byte unchanged: this is a pure
 move, not a rewrite.
 
-list_available_dates_in_range(), booking_window(), and
-is_within_booking_window() are new for the web expansion. They are not
-used by booking.py's WhatsApp flow (which keeps its own
+list_available_dates_in_range(), scheduling_window(), and
+is_within_scheduling_window() are new for the web expansion. They are not
+used by scheduling.py's WhatsApp flow (which keeps its own
 get_available_dates() -- a different consumer: "first N dates with
 availability within a rolling window" -- untouched by this file) or by
 the existing app/api/appointments.py REST endpoint (calendar-window
-enforcement there is opt-in via enforce_booking_window=False by default,
+enforcement there is opt-in via enforce_scheduling_window=False by default,
 see app/services/appointment_services.py) so that neither the WhatsApp
 UX nor the existing REST/test behavior changes as a side effect of this
 phase.
@@ -43,16 +43,16 @@ from app.utils.timezone import (
 logger = logging.getLogger(__name__)
 
 # "Current month + next 3 calendar months" per the web product spec.
-BOOKING_WINDOW_EXTRA_MONTHS = 3
+SCHEDULING_WINDOW_EXTRA_MONTHS = 3
 
 
 # -------------------------------------------------------------------------
 # Doctor profile summary (compact card fields)
 # -------------------------------------------------------------------------
 #
-# Shared by every doctor-listing query on both booking flows and both
+# Shared by every doctor-listing query on both scheduling flows and both
 # channels (app/api/department_doctors.py's Web Doctor-First listing,
-# app/api/booking.py's WhatsApp Doctor-First listing, and this module's
+# app/api/scheduling.py's WhatsApp Doctor-First listing, and this module's
 # own Date-First aggregation below) so the "compact card" field set --
 # specialization, years_of_experience, qualifications, and an optional
 # education/training location -- is computed identically everywhere,
@@ -174,7 +174,7 @@ def get_available_slots(
     department_id=None here (the default) applies no department filter
     at all -- every active row for this doctor/day counts, department-
     scoped or not -- which is exactly the pre-0010 behavior every
-    caller that doesn't yet have a department in scope (admin booking,
+    caller that doesn't yet have a department in scope (admin scheduling,
     reschedule) still gets unchanged.
     """
 
@@ -205,7 +205,7 @@ def get_available_slots(
         doctor_tz = "Asia/Kolkata"
 
     # ---------------------------------------------------------
-    # "Now", in the doctor's own timezone -- a slot can only be booked
+    # "Now", in the doctor's own timezone -- a slot can only be scheduled
     # if it hasn't started yet. Compared against this doctor-local
     # instant (never the server's or a caller's own timezone) so a
     # doctor in a zone ahead of or behind the server gets the correct
@@ -215,7 +215,7 @@ def get_available_slots(
     now = datetime.now(get_timezone(doctor_tz))
 
     # A date that has already ended in the doctor's own local time can
-    # never have a bookable slot -- short-circuit before even querying
+    # never have a schedulable slot -- short-circuit before even querying
     # schedule/blocks/appointments for it.
     if selected_date < now.date():
         return []
@@ -377,7 +377,7 @@ def get_available_slots(
             # A slot that has already started (relevant when
             # selected_date is the doctor's local "today" -- for any
             # later date current_start is always > now already) is not
-            # bookable. Comparing two aware datetimes here compares real
+            # schedulable. Comparing two aware datetimes here compares real
             # instants regardless of either side's tzinfo, so this is
             # correct without any further timezone conversion.
             slot_available = current_start > now
@@ -440,12 +440,12 @@ def get_available_slots(
     return slots
 
 
-def booking_window(today: date | None = None) -> tuple[date, date]:
+def scheduling_window(today: date | None = None) -> tuple[date, date]:
     """
-    Return (window_start, window_end), both inclusive: the web booking
-    window is "current month + next BOOKING_WINDOW_EXTRA_MONTHS calendar
+    Return (window_start, window_end), both inclusive: the web scheduling
+    window is "current month + next SCHEDULING_WINDOW_EXTRA_MONTHS calendar
     months" per the product spec -- a calendar-month boundary, not a
-    fixed day count (e.g. booking in September: window_end is 31 Dec,
+    fixed day count (e.g. scheduling in September: window_end is 31 Dec,
     regardless of September having 30 days).
     """
     if today is None:
@@ -454,7 +454,7 @@ def booking_window(today: date | None = None) -> tuple[date, date]:
     window_start = today
 
     end_year = today.year
-    end_month = today.month + BOOKING_WINDOW_EXTRA_MONTHS
+    end_month = today.month + SCHEDULING_WINDOW_EXTRA_MONTHS
     while end_month > 12:
         end_month -= 12
         end_year += 1
@@ -465,15 +465,15 @@ def booking_window(today: date | None = None) -> tuple[date, date]:
     return window_start, window_end
 
 
-def is_within_booking_window(candidate: date, today: date | None = None) -> bool:
+def is_within_scheduling_window(candidate: date, today: date | None = None) -> bool:
     """
     True if candidate is not in the past and falls on or before the last
-    day of the current month + BOOKING_WINDOW_EXTRA_MONTHS.
+    day of the current month + SCHEDULING_WINDOW_EXTRA_MONTHS.
     """
     if today is None:
         today = date.today()
 
-    window_start, window_end = booking_window(today)
+    window_start, window_end = scheduling_window(today)
 
     return window_start <= candidate <= window_end
 
@@ -520,7 +520,7 @@ def get_appointment_types_for_department(cur, department_id: int):
     department -- the Date-First flow's "Appointment Type" step needs
     this before any doctor is chosen, unlike the existing per-doctor
     get_appointment_types_for_doctor()/get_doctor_appointment_types()
-    (app/api/booking.py / app/api/doctor_appointment_types.py), which
+    (app/api/scheduling.py / app/api/doctor_appointment_types.py), which
     both require a doctor_id up front. Duration is deliberately not
     returned here -- it is per doctor+type (doctor_appointment_types.
     duration_minutes), so it is only meaningful once a specific doctor
@@ -564,7 +564,7 @@ def list_available_dates_for_department(
     """
     Date-First's aggregate month calendar: for every date in range,
     whether ANY doctor in the department who offers this appointment
-    type has at least one real, bookable slot -- not merely whether a
+    type has at least one real, schedulable slot -- not merely whether a
     doctor is scheduled to work that day (a day fully consumed by
     existing appointments/blocks is correctly reported unavailable,
     since this loops the exact same get_available_slots() a single-

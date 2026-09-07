@@ -1,5 +1,5 @@
 """
-Centralized timezone handling for appointment booking system.
+Centralized timezone handling for appointment scheduling system.
 
 Provides utilities for:
 - Timezone validation
@@ -188,7 +188,7 @@ def get_doctor_timezone(cur, doctor_id: int) -> str:
     Get the timezone for a doctor.
 
     The single canonical implementation -- previously duplicated
-    separately in app/api/booking.py and app/api/availability.py.
+    separately in app/api/scheduling.py and app/api/availability.py.
 
     Args:
         cur: Database cursor

@@ -36,10 +36,10 @@ function todayIsoIn(timezone: string): string {
 }
 
 // Today's date (YYYY-MM-DD), in the clinic's own configured timezone --
-// not the viewer's device timezone. Used to mark "today" on a booking
+// not the viewer's device timezone. Used to mark "today" on a scheduling
 // calendar: this is a display affordance only (which cell gets a
 // "Today" ring), never the source of truth for which dates are
-// actually bookable -- that's computed server-side, in each doctor's
+// actually schedulable -- that's computed server-side, in each doctor's
 // own timezone, by app/services/availability_engine.py.
 export function useClinicToday(): string | null {
   const [today, setToday] = useState<string | null>(null)

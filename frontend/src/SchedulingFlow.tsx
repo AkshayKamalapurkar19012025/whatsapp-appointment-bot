@@ -20,7 +20,7 @@ import {
   listDepartments,
   listDoctorsInDepartment,
 } from './api'
-import type { BookedAppointment, Department, Doctor, DoctorWithSlots, MyAppointment, Slot } from './types'
+import type { ScheduledAppointment, Department, Doctor, DoctorWithSlots, MyAppointment, Slot } from './types'
 import { appointmentTypeIcon } from './appointmentTypeIcon'
 import Calendar from './Calendar'
 import { accentClassFor } from './cardAccent'
@@ -32,7 +32,7 @@ import PatientTopBar from './PatientTopBar'
 import SlotGrid from './SlotGrid'
 import { formatDate, formatTime } from './format'
 
-type BookingMode = 'doctor-first' | 'date-first'
+type SchedulingMode = 'doctor-first' | 'date-first'
 
 // A minimal shape covering both the Doctor-First appointment-type list
 // (app/api/doctor_appointment_types.py's GET, duration_minutes always
@@ -42,7 +42,7 @@ type BookingMode = 'doctor-first' | 'date-first'
 // before a doctor is chosen). One shared "selected type" state can hold
 // either, since every place that reads duration_minutes from it only
 // does so in a Doctor-First-only render branch (see the appointmentType
-// step below) -- everywhere else (booking calls, review labels) only
+// step below) -- everywhere else (scheduling calls, review labels) only
 // ever needs id/name, which both shapes always have.
 interface SelectableAppointmentType {
   id: number
@@ -54,7 +54,7 @@ interface SelectableAppointmentType {
 // created_by (GET /departments/{id}/doctors); Date-First's per-date
 // doctor list (GET /web/availability/by-date) only ever has id/name.
 // The SELECTED doctor is held in this narrower shape since nothing
-// downstream (booking calls, review labels) needs more than that.
+// downstream (scheduling calls, review labels) needs more than that.
 interface SelectableDoctor {
   id: number
   name: string
@@ -71,17 +71,17 @@ type Step =
   | 'review'
   | 'confirmation'
 
-// Doctor-First's step order deliberately matches app/api/booking.py's
+// Doctor-First's step order deliberately matches app/api/scheduling.py's
 // WhatsApp Doctor-First flow (Department -> Doctor -> Appointment Type
 // -> Date -> Slot); Date-First's matches its WhatsApp counterpart too
 // (Department -> Appointment Type -> Date -> Available Doctors -> Slot).
 // Both converge onto the same Slot -> Review -> Confirm tail and the
-// same POST /web/appointments call -- one booking engine, two entry
-// orders, exactly like the WhatsApp side (see app/api/booking.py's
+// same POST /web/appointments call -- one scheduling engine, two entry
+// orders, exactly like the WhatsApp side (see app/api/scheduling.py's
 // _select_date_or_available_doctors_response and its module-level
 // comments for the equivalent server-side design).
 
-export default function BookingFlow({
+export default function SchedulingFlow({
   patientName,
   onLoggedOut,
   onViewAppointments,
@@ -91,7 +91,7 @@ export default function BookingFlow({
   onViewAppointments: () => void
 }) {
   const [step, setStep] = useState<Step>('mode')
-  const [mode, setMode] = useState<BookingMode | null>(null)
+  const [mode, setMode] = useState<SchedulingMode | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const [departments, setDepartments] = useState<Department[]>([])
@@ -100,10 +100,10 @@ export default function BookingFlow({
   const [availableDoctors, setAvailableDoctors] = useState<DoctorWithSlots[]>([])
   const [slots, setSlots] = useState<Slot[]>([])
   // Doctor-first only: the patient's own upcoming appointments already
-  // booked with the currently selected doctor, fetched alongside
+  // scheduled with the currently selected doctor, fetched alongside
   // appointment types in chooseDoctor -- feeds Calendar's same-doctor
   // duplicate-appointment markers/nudge below. Best-effort: a failed
-  // fetch here must never block booking, so it's just left empty.
+  // fetch here must never block scheduling, so it's just left empty.
   const [existingAppointmentsWithDoctor, setExistingAppointmentsWithDoctor] = useState<MyAppointment[]>([])
   // Always holds the most recently chosen doctor's id, read inside
   // chooseDoctor's getMyAppointments().then below to discard a stale
@@ -117,12 +117,12 @@ export default function BookingFlow({
   const [appointmentType, setAppointmentType] = useState<SelectableAppointmentType | null>(null)
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null)
-  const [confirmed, setConfirmed] = useState<BookedAppointment | null>(null)
+  const [confirmed, setConfirmed] = useState<ScheduledAppointment | null>(null)
   const [busy, setBusy] = useState(false)
   // "View Profile" from a compact doctor card (DoctorCard.tsx) -- an
   // overlay on top of whichever step is currently showing, not a Step
   // of its own, so closing it never changes where the patient is in
-  // the booking flow.
+  // the scheduling flow.
   const [viewingProfileDoctorId, setViewingProfileDoctorId] = useState<number | null>(null)
 
   useEffect(() => {
@@ -131,7 +131,7 @@ export default function BookingFlow({
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load departments'))
   }, [])
 
-  function chooseMode(chosen: BookingMode) {
+  function chooseMode(chosen: SchedulingMode) {
     setMode(chosen)
     setError(null)
     setStep('department')
@@ -221,7 +221,7 @@ export default function BookingFlow({
     setStep('review')
   }
 
-  async function confirmBooking() {
+  async function confirmScheduling() {
     if (!doctor || !appointmentType || !selectedSlot) return
     setBusy(true)
     setError(null)
@@ -263,7 +263,7 @@ export default function BookingFlow({
   // calendar (Date); Date-First returns to Available Doctors (pick a
   // different doctor for the same date), not the calendar -- the one
   // place both flows share a step (Slot) but need different "back"
-  // targets, matching app/api/booking.py's SELECT_SLOT back-handler
+  // targets, matching app/api/scheduling.py's SELECT_SLOT back-handler
   // (_select_date_or_available_doctors_response).
   function backFromSlot() {
     setStep(mode === 'date-first' ? 'availableDoctors' : 'date')
@@ -563,7 +563,7 @@ export default function BookingFlow({
               {formatTime(selectedSlot.start_at)} – {formatTime(selectedSlot.end_at)}
             </dd>
           </dl>
-          <button type="button" onClick={confirmBooking} disabled={busy}>
+          <button type="button" onClick={confirmScheduling} disabled={busy}>
             {busy ? 'Scheduling…' : 'Confirm appointment'}
           </button>
           <div className="step-actions">
@@ -587,7 +587,7 @@ export default function BookingFlow({
             <dt>Doctor</dt>
             <dd>{doctor.name}</dd>
             <dt>Date</dt>
-            {/* selectedSlot, not confirmed: the booking-creation response's
+            {/* selectedSlot, not confirmed: the scheduling-creation response's
                 start_at has round-tripped through Postgres and comes back
                 UTC-normalized (a pre-existing characteristic of
                 create_appointment_service, inherited unchanged from

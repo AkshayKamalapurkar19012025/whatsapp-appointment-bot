@@ -1,12 +1,12 @@
 """
 Tests for the WhatsApp "PROFILE <number>" side-channel
-(app/api/booking.py's try_build_doctor_profile_reply): an optional way
+(app/api/scheduling.py's try_build_doctor_profile_reply): an optional way
 to view a doctor's full profile from either doctor-listing step
 (SELECT_DOCTOR for Doctor-First, SELECT_AVAILABLE_DOCTOR_DATE_FIRST for
 Date-First) without advancing, resetting, or otherwise changing the
-booking session -- the reply always lands back on the exact same step,
+scheduling session -- the reply always lands back on the exact same step,
 still showing the same numbered list, ready for a normal numeric
-selection to continue booking.
+selection to continue scheduling.
 """
 
 from tests.helpers import (
@@ -19,7 +19,7 @@ from tests.helpers import (
 
 def send(client, whatsapp_number, message):
     return client.post(
-        "/api/booking", json={"whatsapp_number": whatsapp_number, "message": message}
+        "/api/scheduling", json={"whatsapp_number": whatsapp_number, "message": message}
     ).json()
 
 
@@ -61,7 +61,7 @@ def test_profile_command_at_select_doctor_shows_profile_and_stays_on_step(client
     number = "+919000000301"
     register_patient(client, number, "Profile Patient")
 
-    send(client, number, "1")  # MAIN_MENU -> SELECT_BOOKING_MODE
+    send(client, number, "1")  # MAIN_MENU -> SELECT_SCHEDULING_MODE
     send(client, number, "1")  # Choose a Doctor -> SELECT_DEPARTMENT
     send(client, number, "1")  # department 1 -> SELECT_DOCTOR
 
@@ -146,7 +146,7 @@ def test_profile_command_at_select_available_doctor_date_first(client, db_connec
     number = "+919000000305"
     register_patient(client, number, "Date First Patient")
 
-    send(client, number, "1")  # MAIN_MENU -> SELECT_BOOKING_MODE
+    send(client, number, "1")  # MAIN_MENU -> SELECT_SCHEDULING_MODE
     send(client, number, "2")  # Find by Date -> SELECT_DEPARTMENT_DATE_FIRST
     send(client, number, "1")  # department 1 -> SELECT_APPOINTMENT_TYPE_DATE_FIRST
     send(client, number, "1")  # appointment type 1 -> SELECT_DATE_DATE_FIRST

@@ -8,10 +8,10 @@ import {
 } from './components/ui/dropdown-menu'
 
 // The one persistent brand bar across the whole patient-facing app --
-// shown above the login card, the booking flow, and My Appointments
+// shown above the login card, the scheduling flow, and My Appointments
 // alike. Only the account actions on the right are conditional on
 // being logged in; the brand on the left is always there. Account
-// navigation (switching between "booking" and "appointments") stays a
+// navigation (switching between "scheduling" and "appointments") stays a
 // plain, always-labelled button; logging out lives inside a small
 // account menu (same DropdownMenu primitive as AdminTopBar.tsx's
 // account menu) rather than a second competing text link, so the one

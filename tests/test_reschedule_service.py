@@ -7,7 +7,7 @@ ownership/ordering guarantees documented in the service's own docstring.
 Cross-path concurrency safety for reschedule (WhatsApp vs. web, web vs.
 web) is already covered end-to-end by
 tests/test_concurrency.py::test_concurrent_reschedule_vs_fresh_booking_same_target_slot,
-which continues to pass unchanged after booking.py's RESCHEDULE_FINAL_CONFIRM
+which continues to pass unchanged after scheduling.py's RESCHEDULE_FINAL_CONFIRM
 was refactored to call this same service -- that test is not duplicated
 here. What IS added here is a deterministic proof of the specific
 recovery mechanism the service's ExclusionViolation catch relies on (see
@@ -30,7 +30,7 @@ from app.services.appointment_services import (
     create_appointment_service,
     reschedule_appointment_service,
 )
-from app.services.availability_engine import booking_window
+from app.services.availability_engine import scheduling_window
 
 from tests.helpers import seed_basic_doctor
 
@@ -126,7 +126,7 @@ def test_reschedule_rejects_nonexistent_appointment(client, db_connection):
 def test_reschedule_rejects_appointment_belonging_to_another_patient(client, db_connection):
     """Ownership is baked into the same query as existence -- a wrong
     owner raises the identical AppointmentNotFound a truly-missing id
-    would, matching booking.py's own WHERE id=%s AND patient_id=%s
+    would, matching scheduling.py's own WHERE id=%s AND patient_id=%s
     pattern (no existence leak)."""
     seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Reschedule WrongOwner")
 
@@ -287,19 +287,19 @@ def test_reschedule_enforces_booking_window_when_requested(client, db_connection
         original = _book(cur, seeded, patient_id, 9)
     db_connection.commit()
 
-    _, window_end = booking_window()
+    _, window_end = scheduling_window()
     outside_date = window_end + timedelta(days=1)
     while (outside_date.weekday() + 1) not in (1, 2, 3, 4, 5):
         outside_date += timedelta(days=1)
 
     with db_connection.cursor() as cur:
-        with pytest.raises(svc_exc.OutsideBookingWindow):
+        with pytest.raises(svc_exc.OutsideSchedulingWindow):
             reschedule_appointment_service(
                 cur,
                 original["id"],
                 patient_id=patient_id,
                 new_start_at=_at(outside_date, 9),
-                enforce_booking_window=True,
+                enforce_scheduling_window=True,
             )
     db_connection.rollback()
 
@@ -373,7 +373,7 @@ def test_rollback_after_exclusion_violation_restores_cursor_usability(db_connect
     original inline WhatsApp code called conn.rollback() immediately
     after catching ExclusionViolation, because Postgres aborts a
     transaction on any caught error until an explicit ROLLBACK -- and
-    booking.py's RESCHEDULE_FINAL_CONFIRM handler needs to keep using
+    scheduling.py's RESCHEDULE_FINAL_CONFIRM handler needs to keep using
     the same cursor afterward (update_session, get_available_dates) to
     return its friendly fallback message. The first extraction of this
     logic into reschedule_appointment_service dropped that rollback;

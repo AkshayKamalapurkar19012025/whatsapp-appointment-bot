@@ -1,7 +1,7 @@
 import { UserCircle } from '@phosphor-icons/react'
 
 // Shared between the admin Doctors panel, the patient-facing compact
-// booking cards (Doctor-First and Date-First), and the "View Profile"
+// scheduling cards (Doctor-First and Date-First), and the "View Profile"
 // modal -- one place decides what a missing photo looks like, rather
 // than each caller inventing its own fallback.
 export default function DoctorAvatar({

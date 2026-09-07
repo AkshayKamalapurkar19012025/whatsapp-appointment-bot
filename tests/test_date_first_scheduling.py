@@ -1,6 +1,6 @@
 """
-Integration tests for the Date-First WhatsApp booking flow added to
-app/api/booking.py:
+Integration tests for the Date-First WhatsApp scheduling flow added to
+app/api/scheduling.py:
 
     Department -> Appointment Type -> Date -> Available Doctors
         -> Select Doctor -> Slot -> Review -> Confirm
@@ -9,8 +9,8 @@ driven exactly the way the real endpoint is, same as
 tests/test_booking_flow.py's Doctor-First tests. These specifically
 cover what's NEW about this flow (the mode fork, aggregation across
 doctors, and the mode-aware "back"/"change" targets at the SELECT_SLOT/
-CONFIRM_BOOKING convergence point) -- slot computation itself,
-timezones, and booking safety are already covered by
+CONFIRM_SCHEDULING convergence point) -- slot computation itself,
+timezones, and scheduling safety are already covered by
 test_booking_flow.py, test_availability_engine.py, and
 test_concurrency.py, and are exercised here only insofar as this flow
 reuses them unchanged.
@@ -28,7 +28,7 @@ from tests.helpers import (
 
 def send(client, whatsapp_number, message):
     return client.post(
-        "/api/booking", json={"whatsapp_number": whatsapp_number, "message": message}
+        "/api/scheduling", json={"whatsapp_number": whatsapp_number, "message": message}
     ).json()
 
 
@@ -38,7 +38,7 @@ def test_select_booking_mode_offered_after_book_appointment(client, db_connectio
     register_patient(client, number, "Mode Choice Patient")
 
     response = send(client, number, "1")  # Book Appointment
-    assert response["next_step"] == "SELECT_BOOKING_MODE"
+    assert response["next_step"] == "SELECT_SCHEDULING_MODE"
 
 
 def test_select_booking_mode_invalid_option_reprompts(client, db_connection):
@@ -46,9 +46,9 @@ def test_select_booking_mode_invalid_option_reprompts(client, db_connection):
     number = "+919700000002"
     register_patient(client, number, "Mode Invalid Patient")
 
-    send(client, number, "1")  # book -> SELECT_BOOKING_MODE
+    send(client, number, "1")  # book -> SELECT_SCHEDULING_MODE
     response = send(client, number, "9")
-    assert response["next_step"] == "SELECT_BOOKING_MODE"
+    assert response["next_step"] == "SELECT_SCHEDULING_MODE"
     assert "error" in response
 
 
@@ -63,7 +63,7 @@ def test_date_first_full_flow_books_appointment(client, db_connection):
     number = "+919700000003"
     register_patient(client, number, "Date First Patient")
 
-    send(client, number, "1")  # book -> SELECT_BOOKING_MODE
+    send(client, number, "1")  # book -> SELECT_SCHEDULING_MODE
     send(client, number, "2")  # Find by Date -> SELECT_DEPARTMENT_DATE_FIRST
     at_type = send(client, number, "1")  # department -> SELECT_APPOINTMENT_TYPE_DATE_FIRST
     assert at_type["next_step"] == "SELECT_APPOINTMENT_TYPE_DATE_FIRST"
@@ -83,18 +83,18 @@ def test_date_first_full_flow_books_appointment(client, db_connection):
     assert at_slot["next_step"] == "SELECT_SLOT"
     assert at_slot["slots"]
 
-    at_confirm = send(client, number, "1")  # slot -> CONFIRM_BOOKING (shared step)
-    assert at_confirm["next_step"] == "CONFIRM_BOOKING"
+    at_confirm = send(client, number, "1")  # slot -> CONFIRM_SCHEDULING (shared step)
+    assert at_confirm["next_step"] == "CONFIRM_SCHEDULING"
 
-    booked = send(client, number, "1")  # confirm
-    assert booked["next_step"] == "BOOKED"
-    assert booked["appointment"]["status"] == "PENDING"
-    assert booked["appointment"]["doctor_id"] == seeded["doctor_id"]
+    scheduled = send(client, number, "1")  # confirm
+    assert scheduled["next_step"] == "SCHEDULED"
+    assert scheduled["appointment"]["status"] == "PENDING"
+    assert scheduled["appointment"]["doctor_id"] == seeded["doctor_id"]
 
     with db_connection.cursor() as cur:
         cur.execute(
             "SELECT status, doctor_id FROM appointments WHERE id = %s",
-            (booked["appointment"]["id"],),
+            (scheduled["appointment"]["id"],),
         )
         row = cur.fetchone()
     assert row == ("PENDING", seeded["doctor_id"])
@@ -122,7 +122,7 @@ def test_date_first_lists_multiple_doctors_with_their_own_slot_counts(client, db
     number = "+919700000004"
     register_patient(client, number, "Multi Doctor Patient")
 
-    send(client, number, "1")  # book -> SELECT_BOOKING_MODE
+    send(client, number, "1")  # book -> SELECT_SCHEDULING_MODE
     send(client, number, "2")  # find by date -> SELECT_DEPARTMENT_DATE_FIRST
     send(client, number, "1")  # department -> SELECT_APPOINTMENT_TYPE_DATE_FIRST
     send(client, number, "1")  # appointment type -> SELECT_DATE_DATE_FIRST
@@ -182,7 +182,7 @@ def test_date_first_back_navigation_through_full_chain(client, db_connection):
     assert back_to_department["next_step"] == "SELECT_DEPARTMENT_DATE_FIRST"
 
     back_to_mode = send(client, number, "back")
-    assert back_to_mode["next_step"] == "SELECT_BOOKING_MODE"
+    assert back_to_mode["next_step"] == "SELECT_SCHEDULING_MODE"
 
     back_to_main_menu = send(client, number, "back")
     assert back_to_main_menu["next_step"] == "MAIN_MENU"
@@ -205,9 +205,9 @@ def test_date_first_confirm_change_returns_to_available_doctors(client, db_conne
     send(client, number, "1")
     send(client, number, "1")
     send(client, number, "1")  # doctor -> SELECT_SLOT
-    send(client, number, "1")  # slot -> CONFIRM_BOOKING
+    send(client, number, "1")  # slot -> CONFIRM_SCHEDULING
 
-    changed = send(client, number, "2")  # "change" while at CONFIRM_BOOKING
+    changed = send(client, number, "2")  # "change" while at CONFIRM_SCHEDULING
     assert changed["next_step"] == "SELECT_AVAILABLE_DOCTOR_DATE_FIRST"
 
 
@@ -281,7 +281,7 @@ def test_concurrent_date_first_bookings_same_slot(client, db_connection):
     """Two patients race, via the Date-First flow, to book the identical
     doctor/slot -- exactly test_concurrency.py's Test A, but reached via
     Date-First's extra steps, proving it converges onto the same
-    advisory-lock-protected CONFIRM_BOOKING logic Doctor-First uses, not
+    advisory-lock-protected CONFIRM_SCHEDULING logic Doctor-First uses, not
     a separate, unprotected copy."""
     seed_basic_doctor(
         client,
@@ -296,13 +296,13 @@ def test_concurrent_date_first_bookings_same_slot(client, db_connection):
     register_patient(client, number_b, "Racer B")
 
     for number in (number_a, number_b):
-        send(client, number, "1")  # book -> SELECT_BOOKING_MODE
+        send(client, number, "1")  # book -> SELECT_SCHEDULING_MODE
         send(client, number, "2")  # find by date
         send(client, number, "1")  # department
         send(client, number, "1")  # appointment type
         send(client, number, "1")  # date
         send(client, number, "1")  # doctor -> SELECT_SLOT
-        send(client, number, "1")  # slot -> CONFIRM_BOOKING
+        send(client, number, "1")  # slot -> CONFIRM_SCHEDULING
 
     results = {}
     barrier = threading.Barrier(2)
@@ -321,11 +321,11 @@ def test_concurrent_date_first_bookings_same_slot(client, db_connection):
         t.join()
 
     outcomes = [results["a"]["next_step"], results["b"]["next_step"]]
-    assert outcomes.count("BOOKED") == 1
+    assert outcomes.count("SCHEDULED") == 1
     # The loser is routed back to SELECT_AVAILABLE_DOCTOR_DATE_FIRST (pick
     # a different doctor/slot), not SELECT_DATE -- the Date-First-aware
     # fallback this whole feature added; see
-    # _select_date_or_available_doctors_response in app/api/booking.py.
+    # _select_date_or_available_doctors_response in app/api/scheduling.py.
     assert outcomes.count("SELECT_AVAILABLE_DOCTOR_DATE_FIRST") == 1
 
     with db_connection.cursor() as cur:
