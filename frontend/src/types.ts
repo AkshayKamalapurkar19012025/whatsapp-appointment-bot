@@ -116,6 +116,7 @@ export interface MyAppointment {
   id: number
   doctor_id: number
   doctor_name: string
+  doctor_specialization: string | null
   appointment_type_id: number
   appointment_type_name: string
   start_at: string

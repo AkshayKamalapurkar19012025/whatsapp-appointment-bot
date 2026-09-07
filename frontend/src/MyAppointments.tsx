@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { CalendarBlank, CalendarCheck, ClockCounterClockwise, XCircle } from '@phosphor-icons/react'
+import { CalendarBlank, CalendarCheck, CaretRight, ClockCounterClockwise, MinusCircle, XCircle } from '@phosphor-icons/react'
 import {
   ApiError,
   cancelWebAppointment,
@@ -9,6 +9,7 @@ import {
 } from './api'
 import type { MyAppointment, MyAppointmentsResponse, Slot } from './types'
 import Calendar from './Calendar'
+import DoctorProfileModal from './DoctorProfileModal'
 import PatientTopBar from './PatientTopBar'
 import SlotGrid from './SlotGrid'
 import StepActions from './StepActions'
@@ -83,6 +84,10 @@ export default function MyAppointments({
   useEffect(load, [])
 
   const [cancelTarget, setCancelTarget] = useState<MyAppointment | null>(null)
+  // Which doctor's profile card is open, if any -- same modal, same
+  // one-state-var pattern as SchedulingFlow.tsx's viewingProfileDoctorId,
+  // reused here rather than building a second profile view.
+  const [viewingProfileDoctorId, setViewingProfileDoctorId] = useState<number | null>(null)
 
   async function confirmCancel() {
     if (!cancelTarget) return
@@ -246,7 +251,7 @@ export default function MyAppointments({
                 className={t === tab ? 'tab active' : 'tab'}
                 onClick={() => setTab(t)}
               >
-                {t[0].toUpperCase() + t.slice(1)}
+                {t[0].toUpperCase() + t.slice(1)} ({data ? data[t].length : 0})
               </button>
             ))}
           </div>
@@ -276,22 +281,53 @@ export default function MyAppointments({
                     <TabIcon size={20} weight="duotone" />
                   </span>
                   <div className="appointment-card-body">
-                    <strong>{appointment.doctor_name}</strong>
-                    <div className="muted">{appointment.appointment_type_name}</div>
-                    <div>
-                      {formatDate(appointment.start_at)} · {formatTime(appointment.start_at)} –{' '}
-                      {formatTime(appointment.end_at)}
+                    <div className="appointment-card-toprow">
+                      <div>
+                        {formatDate(appointment.start_at)} · {formatTime(appointment.start_at)} –{' '}
+                        {formatTime(appointment.end_at)}
+                      </div>
+                      <span className={`pill status-${appointment.status.toLowerCase()}`}>
+                        {appointment.status.replace(/_/g, ' ')}
+                      </span>
                     </div>
+                    <button
+                      type="button"
+                      className="appointment-card-doctor"
+                      onClick={() => setViewingProfileDoctorId(appointment.doctor_id)}
+                    >
+                      <span className="appointment-card-doctor-info">
+                        <strong>{appointment.doctor_name}</strong>
+                        {appointment.doctor_specialization && (
+                          <span className="option-subtitle">{appointment.doctor_specialization}</span>
+                        )}
+                        <span className="muted">{appointment.appointment_type_name}</span>
+                      </span>
+                      <CaretRight size={14} className="appointment-card-doctor-arrow" aria-hidden="true" />
+                    </button>
                     {appointment.token_number !== null && (
                       <div className="muted">Token #{appointment.token_number}</div>
                     )}
                   </div>
                   {tab === 'upcoming' && (
                     <div className="appointment-actions">
-                      <button type="button" onClick={() => startReschedule(appointment)}>
+                      <button
+                        type="button"
+                        className="step-action-btn appointment-action-btn"
+                        onClick={() => startReschedule(appointment)}
+                      >
+                        <span className="step-action-icon" aria-hidden="true">
+                          <CalendarCheck size={10} weight="bold" />
+                        </span>
                         Reschedule
                       </button>
-                      <button type="button" className="danger" onClick={() => setCancelTarget(appointment)}>
+                      <button
+                        type="button"
+                        className="step-action-btn appointment-action-btn danger"
+                        onClick={() => setCancelTarget(appointment)}
+                      >
+                        <span className="step-action-icon" aria-hidden="true">
+                          <MinusCircle size={10} weight="bold" />
+                        </span>
                         Cancel
                       </button>
                     </div>
@@ -320,6 +356,13 @@ export default function MyAppointments({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {viewingProfileDoctorId !== null && (
+        <DoctorProfileModal
+          doctorId={viewingProfileDoctorId}
+          onClose={() => setViewingProfileDoctorId(null)}
+        />
+      )}
     </div>
   )
 }

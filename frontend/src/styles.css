@@ -1005,39 +1005,91 @@ a.link.danger {
   min-width: 0;
 }
 
+.appointment-card-toprow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+/* The doctor identity is also the "open profile" trigger (per
+   DoctorProfileModal.tsx, already used the same way from the
+   scheduling flow's doctor cards) -- a plain button reset so it reads
+   as part of the card, not as a form control, with the chevron as the
+   only visual affordance that it's tappable. */
+.appointment-card-doctor {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  margin-top: var(--space-1);
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+
+.appointment-card-doctor-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.appointment-card-doctor-arrow {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+
 .appointment-actions {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
   flex-shrink: 0;
+  margin-top: var(--space-3);
 }
 
-.appointment-actions button {
-  padding: 7px 12px;
+.appointment-action-btn {
+  justify-content: center;
+  padding: 7px 14px;
   font-size: 0.85rem;
-  font-weight: 500;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
   background: var(--color-surface);
   color: var(--color-primary-hover);
-  white-space: nowrap;
+  border: 1px solid var(--color-border-strong);
 }
 
-.appointment-actions button:hover {
+.appointment-action-btn:hover {
   background: var(--color-primary-soft);
   border-color: var(--color-primary);
 }
 
-.appointment-actions button.danger {
+.appointment-action-btn .step-action-icon {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.appointment-action-btn.danger {
   color: var(--color-danger);
 }
 
-.appointment-actions button.danger:hover {
+.appointment-action-btn.danger:hover {
   background: var(--color-danger-soft);
   border-color: var(--color-danger);
 }
 
-@media (max-width: 420px) {
+.appointment-action-btn.danger .step-action-icon {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+/* 480px, not 420px: My Appointments is realistically viewed at typical
+   phone widths (390-428px covers essentially every modern iPhone), so
+   a 420px cutoff left most real phones just above it, in the cramped
+   stacked-beside-the-card layout instead of this one -- especially
+   now that cards are taller with the specialization line. */
+@media (max-width: 480px) {
   .appointment-card {
     flex-direction: column;
     align-items: flex-start;
@@ -1046,10 +1098,12 @@ a.link.danger {
     flex-direction: row;
     width: 100%;
   }
-  .appointment-actions button {
+  .appointment-action-btn {
     flex: 1;
   }
+}
 
+@media (max-width: 420px) {
   /* At very narrow widths the clock may not fit next to the greeting
      on one line -- .topbar already wraps (see above), this just
      tightens the row gap when it does. */
