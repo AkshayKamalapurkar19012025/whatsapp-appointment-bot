@@ -696,10 +696,10 @@ a.link.danger {
 .step-action-btn {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-3);
-  flex: 1 1 200px;
+  gap: 6px;
+  flex: 1 1 100px;
   width: auto;
-  padding: var(--space-3) var(--space-5);
+  padding: var(--space-2) var(--space-3);
   border-radius: 999px;
   font-weight: 600;
   text-align: left;
@@ -736,8 +736,8 @@ a.link.danger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -759,12 +759,12 @@ a.link.danger {
 }
 
 .step-action-label {
-  font-size: 0.95rem;
+  font-size: 0.72rem;
   line-height: 1.25;
 }
 
 .step-action-sub {
-  font-size: 0.78rem;
+  font-size: 0.6rem;
   font-weight: 400;
   opacity: 0.75;
 }
