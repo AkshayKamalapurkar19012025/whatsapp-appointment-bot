@@ -194,15 +194,15 @@ def get_appointments_calendar(
     staff: dict = Depends(get_current_staff),
 ):
     """
-    A staff-only month-availability view for the admin booking/reschedule
+    A staff-only month-availability view for the admin scheduling/reschedule
     UI's date picker, so it can show which days actually have open slots
     before staff pick one (colour-coded in the frontend) rather than
     picking blind. Deliberately NOT the same endpoint as GET /web/calendar
     (app/api/patient_booking.py): that one both rejects a request outside
-    the patient-facing 3-month booking window entirely (409) and marks
+    the patient-facing 3-month scheduling window entirely (409) and marks
     every day beyond it unavailable -- exactly the restriction staff/
-    admin bookings are already exempt from everywhere else in this router
-    (see create_appointment's own enforce_booking_window=False). Reuses
+    admin schedulings are already exempt from everywhere else in this router
+    (see create_appointment's own enforce_scheduling_window=False). Reuses
     list_available_dates_in_range directly, the same underlying function
     the patient endpoint calls, so "is this day open" is computed
     identically either way -- only the window restriction differs.
@@ -247,11 +247,11 @@ def create_appointment(
                     patient_id=appointment.patient_id,
                     appointment_type_id=appointment.appointment_type_id,
                     start_at=appointment.start_at,
-                    # enforce_booking_window intentionally left at its
+                    # enforce_scheduling_window intentionally left at its
                     # default (False) -- staff/admin creating an
                     # appointment on a patient's behalf is not subject
-                    # to the patient-facing current+3-month booking
-                    # window (e.g. recording a past visit, or booking
+                    # to the patient-facing current+3-month scheduling
+                    # window (e.g. recording a past visit, or scheduling
                     # further out than a self-service patient could).
                 )
             except svc_exc.DoctorNotFound:
@@ -279,10 +279,10 @@ def create_appointment(
                     status_code=409,
                     detail="Appointment overlaps with doctor block",
                 )
-            except svc_exc.OutsideBookingWindow:
+            except svc_exc.OutsideSchedulingWindow:
                 raise HTTPException(
                     status_code=409,
-                    detail="Requested date is outside the allowed booking window",
+                    detail="Requested date is outside the allowed scheduling window",
                 )
             except svc_exc.SlotOverlap:
                 raise HTTPException(
@@ -333,7 +333,7 @@ def reschedule_appointment(
     inherently know the way an authenticated patient session does, so
     it's looked up here first from the appointment being rescheduled.
     Not a new implementation of reschedule rules -- same shared service
-    app/api/patient_booking.py's web endpoint and app/api/booking.py's
+    app/api/patient_booking.py's web endpoint and app/api/scheduling.py's
     WhatsApp flow both call.
     """
     with get_connection() as conn:
@@ -353,7 +353,7 @@ def reschedule_appointment(
                     appointment_id,
                     patient_id=patient_id,
                     new_start_at=body.new_start_at,
-                    # enforce_booking_window intentionally left at its
+                    # enforce_scheduling_window intentionally left at its
                     # default (False) -- same reasoning as create above.
                 )
             except svc_exc.AppointmentNotFound:
@@ -378,15 +378,15 @@ def reschedule_appointment(
                     status_code=409,
                     detail="That slot is no longer available because the doctor is unavailable",
                 )
-            except svc_exc.OutsideBookingWindow:
+            except svc_exc.OutsideSchedulingWindow:
                 raise HTTPException(
                     status_code=409,
-                    detail="Requested date is outside the allowed booking window",
+                    detail="Requested date is outside the allowed scheduling window",
                 )
             except svc_exc.SlotOverlap:
                 raise HTTPException(
                     status_code=409,
-                    detail="That slot was just booked by someone else",
+                    detail="That slot was just scheduled by someone else",
                 )
 
     return result
@@ -395,7 +395,7 @@ def reschedule_appointment(
 # ---------------------------------------------------------------------
 # Lifecycle transitions (migrations/0011_appointment_lifecycle_
 # statuses.sql): every appointment starts PENDING (WhatsApp, patient web
-# booking, and the admin create above all go through the same
+# scheduling, and the admin create above all go through the same
 # create_appointment_service). Staff move it forward from here -- same
 # RBAC as the rest of this router (any authenticated STAFF or ADMIN,
 # matching cancel/reschedule above, not require_role("ADMIN")).

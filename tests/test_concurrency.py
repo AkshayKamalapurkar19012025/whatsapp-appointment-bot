@@ -1,33 +1,33 @@
 """
-Concurrent double-booking protection tests.
+Concurrent double-scheduling protection tests.
 
 Three "Test A/B/C" scenarios plus the exclusion-constraint backstop
 (Test D lives in tests/test_exclusion_constraint.py, since it works at
 the raw-SQL level rather than through the app):
 
 - test_simultaneous_whatsapp_bookings_same_slot (Test A): two patients
-  race, via the WhatsApp flow, to book the identical slot.
+  race, via the WhatsApp flow, to schedule the identical slot.
 - test_simultaneous_rest_bookings_same_slot (Test B): two direct
   POST /api/appointments race for the identical slot.
-- test_cross_path_concurrent_booking (Test C): a WhatsApp booking
+- test_cross_path_concurrent_booking (Test C): a WhatsApp scheduling
   confirmation races a direct POST /api/appointments for the identical
   doctor/slot.
 
 HISTORY -- Test C used to be marked xfail(strict=True). It found a real,
-reproducible gap: app/api/booking.py's pg_advisory_xact_lock and (the
+reproducible gap: app/api/scheduling.py's pg_advisory_xact_lock and (the
 then-current) app/api/appointments.py's SELECT...FOR UPDATE on doctors
 are different Postgres locking primitives that don't block each other,
 so both paths could pass their overlap check and both INSERT. A live
-run (20 isolated attempts) produced a genuine double booking in 19 of
+run (20 isolated attempts) produced a genuine double scheduling in 19 of
 20. See docs/DATABASE_P1_NOTES.md item 4 for the full writeup.
 
 FIX APPLIED: app/api/appointments.py now takes the same
-pg_advisory_xact_lock(doctor_id) app/api/booking.py already used, at
+pg_advisory_xact_lock(doctor_id) app/api/scheduling.py already used, at
 the same relative position (after the doctor-block check, before the
 final overlap re-check, held through the INSERT). Both paths also sit
 behind the database-level EXCLUDE constraint from
 migrations/0003_prevent_overlapping_bookings.sql as a second line of
-defense. All three tests below now assert the double-booking-free
+defense. All three tests below now assert the double-scheduling-free
 outcome directly (no xfail) -- see test_exclusion_constraint.py for the
 test that deliberately bypasses the application lock to prove the
 constraint backstop independently still works.
@@ -41,7 +41,7 @@ from tests.helpers import create_admin_and_get_headers, seed_basic_doctor, regis
 
 def send_booking(client, whatsapp_number, message):
     return client.post(
-        "/api/booking", json={"whatsapp_number": whatsapp_number, "message": message}
+        "/api/scheduling", json={"whatsapp_number": whatsapp_number, "message": message}
     ).json()
 
 
@@ -62,7 +62,7 @@ def _truncate_all(db_connection):
 
 
 def test_simultaneous_whatsapp_bookings_same_slot(client, db_connection):
-    """Two different patients race, via the WhatsApp flow, to book the
+    """Two different patients race, via the WhatsApp flow, to schedule the
     exact same doctor/slot. Exactly one must succeed."""
     seed_basic_doctor(client, db_connection)
 
@@ -72,14 +72,14 @@ def test_simultaneous_whatsapp_bookings_same_slot(client, db_connection):
     register_patient(client, number_b, "Racer B")
 
     for number in (number_a, number_b):
-        send_booking(client, number, "1")  # book -> SELECT_BOOKING_MODE
+        send_booking(client, number, "1")  # book -> SELECT_SCHEDULING_MODE
         send_booking(client, number, "1")  # Choose a Doctor
         send_booking(client, number, "1")  # department
         send_booking(client, number, "1")  # doctor
         send_booking(client, number, "1")  # appointment type
         send_booking(client, number, "4")  # date option 4
         send_booking(client, number, "1")  # slot 1
-        # both now sitting at CONFIRM_BOOKING for the identical slot
+        # both now sitting at CONFIRM_SCHEDULING for the identical slot
 
     results = {}
     barrier = threading.Barrier(2)
@@ -95,10 +95,10 @@ def test_simultaneous_whatsapp_bookings_same_slot(client, db_connection):
     t1.join()
     t2.join()
 
-    booked = [k for k, v in results.items() if v["next_step"] == "BOOKED"]
-    rejected = [k for k, v in results.items() if v["next_step"] != "BOOKED"]
+    scheduled = [k for k, v in results.items() if v["next_step"] == "SCHEDULED"]
+    rejected = [k for k, v in results.items() if v["next_step"] != "SCHEDULED"]
 
-    assert len(booked) == 1, f"expected exactly one booking to succeed, got {results}"
+    assert len(scheduled) == 1, f"expected exactly one scheduling to succeed, got {results}"
     assert len(rejected) == 1
     rejected_response = results[rejected[0]]
     assert (
@@ -110,8 +110,8 @@ def test_simultaneous_whatsapp_bookings_same_slot(client, db_connection):
         cur.execute(
             "SELECT count(*) FROM appointments WHERE status = 'PENDING'"
         )
-        booked_count = cur.fetchone()[0]
-    assert booked_count == 1, f"expected exactly one Pending appointment, found {booked_count}"
+        scheduled_count = cur.fetchone()[0]
+    assert scheduled_count == 1, f"expected exactly one Pending appointment, found {scheduled_count}"
 
 
 def test_simultaneous_rest_bookings_same_slot(client, db_connection):
@@ -183,15 +183,15 @@ def test_simultaneous_rest_bookings_same_slot(client, db_connection):
             "SELECT count(*) FROM appointments WHERE doctor_id = %s AND status = 'PENDING'",
             (seeded["doctor_id"],),
         )
-        booked_count = cur.fetchone()[0]
-    assert booked_count == 1, f"expected exactly one Pending appointment, found {booked_count}"
+        scheduled_count = cur.fetchone()[0]
+    assert scheduled_count == 1, f"expected exactly one Pending appointment, found {scheduled_count}"
 
 
 def test_cross_path_concurrent_booking(client, db_connection):
     """
-    WhatsApp booking confirmation vs. direct POST /api/appointments,
+    WhatsApp scheduling confirmation vs. direct POST /api/appointments,
     racing for the identical doctor/slot. See module docstring -- this
-    is checking whether double-booking protection holds when the two
+    is checking whether double-scheduling protection holds when the two
     different locking strategies race each other, not assuming it does.
 
     Runs the race multiple times (fresh, fully truncated state each
@@ -219,17 +219,17 @@ def test_cross_path_concurrent_booking(client, db_connection):
             headers=staff_headers,
         ).json()
 
-        # Drive the WhatsApp path to CONFIRM_BOOKING, and read back the
-        # exact slot it will book, so the REST call can target the
+        # Drive the WhatsApp path to CONFIRM_SCHEDULING, and read back the
+        # exact slot it will schedule, so the REST call can target the
         # identical doctor_id/start_at.
-        send_booking(client, whatsapp_number, "1")  # book -> SELECT_BOOKING_MODE
+        send_booking(client, whatsapp_number, "1")  # book -> SELECT_SCHEDULING_MODE
         send_booking(client, whatsapp_number, "1")  # Choose a Doctor
         send_booking(client, whatsapp_number, "1")  # department
         send_booking(client, whatsapp_number, "1")  # doctor
         send_booking(client, whatsapp_number, "1")  # appointment type
         send_booking(client, whatsapp_number, "1")  # date option 1
         confirm_step = send_booking(client, whatsapp_number, "1")  # slot 1
-        assert confirm_step["next_step"] == "CONFIRM_BOOKING"
+        assert confirm_step["next_step"] == "CONFIRM_SCHEDULING"
         target_start_at = confirm_step["start_at"]
 
         results = {}
@@ -238,7 +238,7 @@ def test_cross_path_concurrent_booking(client, db_connection):
         def do_whatsapp_confirm():
             barrier.wait()
             results["whatsapp"] = client.post(
-                "/api/booking",
+                "/api/scheduling",
                 json={"whatsapp_number": whatsapp_number, "message": "1"},
             ).json()
 
@@ -266,9 +266,9 @@ def test_cross_path_concurrent_booking(client, db_connection):
         t1.join()
         t2.join()
 
-        whatsapp_booked = results["whatsapp"]["next_step"] == "BOOKED"
-        rest_booked = results["rest"]["status_code"] == 200
-        succeeded_count = sum([whatsapp_booked, rest_booked])
+        whatsapp_scheduled = results["whatsapp"]["next_step"] == "SCHEDULED"
+        rest_scheduled = results["rest"]["status_code"] == 200
+        succeeded_count = sum([whatsapp_scheduled, rest_scheduled])
 
         with db_connection.cursor() as cur:
             cur.execute(
@@ -278,26 +278,26 @@ def test_cross_path_concurrent_booking(client, db_connection):
                 """,
                 (seeded["doctor_id"],),
             )
-            booked_count = cur.fetchone()[0]
+            scheduled_count = cur.fetchone()[0]
 
         outcome = {
             "attempt": attempt,
-            "whatsapp_booked": whatsapp_booked,
+            "whatsapp_scheduled": whatsapp_scheduled,
             "rest_status": results["rest"]["status_code"],
-            "booked_rows_for_doctor": booked_count,
+            "scheduled_rows_for_doctor": scheduled_count,
         }
         outcomes.append(outcome)
 
-        if booked_count > 1:
+        if scheduled_count > 1:
             any_double_booked = True
 
         assert succeeded_count == 1, (
             f"attempt {attempt}: expected exactly one path to succeed, "
             f"got {outcome}"
         )
-        assert booked_count == 1, (
+        assert scheduled_count == 1, (
             f"attempt {attempt}: expected exactly one Pending appointment "
-            f"for this doctor, found {booked_count}"
+            f"for this doctor, found {scheduled_count}"
         )
 
     print("\nCross-path concurrency results (all passed):")
@@ -305,7 +305,7 @@ def test_cross_path_concurrent_booking(client, db_connection):
         print(f"  {outcome}")
 
     assert not any_double_booked, (
-        "Cross-path double booking IS possible: a WhatsApp booking "
+        "Cross-path double scheduling IS possible: a WhatsApp scheduling "
         "confirmation and a direct POST /api/appointments for the same "
         "doctor/slot both succeeded in at least one attempt. Details:\n"
         + "\n".join(str(o) for o in outcomes)
@@ -315,16 +315,16 @@ def test_cross_path_concurrent_booking(client, db_connection):
 def test_concurrent_reschedule_vs_fresh_booking_same_target_slot(client, db_connection):
     """
     Patient A reschedules an existing appointment INTO slot Y at the
-    same instant Patient B tries to freshly book slot Y directly via
+    same instant Patient B tries to freshly schedule slot Y directly via
     the REST path. Exactly one must win. If A's reschedule loses, A's
     ORIGINAL appointment must remain Pending and untouched -- a failed
-    reschedule must never lose the original booking (see
-    app/api/booking.py's RESCHEDULE_FINAL_CONFIRM comment on why the
+    reschedule must never lose the original scheduling (see
+    app/api/scheduling.py's RESCHEDULE_FINAL_CONFIRM comment on why the
     cancel-old + insert-new both happen in one transaction).
     """
     seeded = seed_basic_doctor(client, db_connection)
 
-    # Patient A: book date option 4, slot 1 (the "original" appointment).
+    # Patient A: schedule date option 4, slot 1 (the "original" appointment).
     # Deliberately NOT date option 1 ("today") -- get_upcoming_booked_
     # appointments() filters on start_at > NOW(), and a "today" slot can
     # already be in the past by the time this test reaches the reschedule
@@ -334,7 +334,7 @@ def test_concurrent_reschedule_vs_fresh_booking_same_target_slot(client, db_conn
     # which use date_option="5" for the same reason).
     number_a = "+919660000001"
     register_patient(client, number_a, "Reschedule Racer A")
-    send_booking(client, number_a, "1")  # book -> SELECT_BOOKING_MODE
+    send_booking(client, number_a, "1")  # book -> SELECT_SCHEDULING_MODE
     send_booking(client, number_a, "1")  # Choose a Doctor
     send_booking(client, number_a, "1")  # department
     send_booking(client, number_a, "1")  # doctor
@@ -342,7 +342,7 @@ def test_concurrent_reschedule_vs_fresh_booking_same_target_slot(client, db_conn
     send_booking(client, number_a, "4")  # date option 4
     send_booking(client, number_a, "1")  # slot 1
     original = send_booking(client, number_a, "1")  # confirm
-    assert original["next_step"] == "BOOKED"
+    assert original["next_step"] == "SCHEDULED"
     original_id = original["appointment"]["id"]
 
     # Drive A into RESCHEDULE_FINAL_CONFIRM targeting date option 2, slot 1
@@ -358,11 +358,11 @@ def test_concurrent_reschedule_vs_fresh_booking_same_target_slot(client, db_conn
     assert target_step["next_step"] == "RESCHEDULE_FINAL_CONFIRM"
     target_start_at = target_step["start_at"]
 
-    # Patient B: a fresh REST booking for the exact same doctor/slot Y.
+    # Patient B: a fresh REST scheduling for the exact same doctor/slot Y.
     staff_headers = create_admin_and_get_headers(db_connection)
     patient_b = client.post(
         "/api/patients",
-        json={"name": "Fresh Booking Racer B", "whatsapp_number": "+919660000002"},
+        json={"name": "Fresh Scheduling Racer B", "whatsapp_number": "+919660000002"},
         headers=staff_headers,
     ).json()
 
@@ -372,7 +372,7 @@ def test_concurrent_reschedule_vs_fresh_booking_same_target_slot(client, db_conn
     def do_reschedule():
         barrier.wait()
         results["reschedule"] = client.post(
-            "/api/booking", json={"whatsapp_number": number_a, "message": "1"}
+            "/api/scheduling", json={"whatsapp_number": number_a, "message": "1"}
         ).json()
 
     def do_fresh_booking():
@@ -422,14 +422,14 @@ def test_concurrent_reschedule_vs_fresh_booking_same_target_slot(client, db_conn
         assert original_row[1] == "CANCELLED"
         assert total_booked == 1  # only the new (rescheduled) appointment
     else:
-        # Reschedule lost: the original booking must remain intact, not lost.
+        # Reschedule lost: the original scheduling must remain intact, not lost.
         assert original_row[1] == "PENDING", (
             "reschedule lost the race but the ORIGINAL appointment was not "
             "preserved -- this is the exact failure mode the spec forbids"
         )
         # Two distinct, non-overlapping appointments now exist for this
         # doctor: A's untouched original (date option 1) and B's fresh
-        # booking (date option 2, slot Y) -- not a double booking, since
+        # scheduling (date option 2, slot Y) -- not a double scheduling, since
         # they're on different dates.
         assert total_booked == 2
 

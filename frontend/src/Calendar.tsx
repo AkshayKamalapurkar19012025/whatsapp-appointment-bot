@@ -28,9 +28,9 @@ export default function Calendar({
   // -- omit when there's no department in scope (e.g. rescheduling).
   departmentId?: number
   onSelectDate: (isoDate: string) => void
-  // Doctor-first booking only (BookingFlow.tsx) -- the doctor's display
+  // Doctor-first scheduling only (SchedulingFlow.tsx) -- the doctor's display
   // name for the "you already have an appointment with X" copy below,
-  // and the patient's own upcoming appointments already booked with
+  // and the patient's own upcoming appointments already scheduled with
   // this doctor, pre-filtered by the caller. Both omitted (defaulting
   // existingAppointments to []) wherever this component is reused
   // without that context (e.g. MyAppointments' reschedule calendar),
@@ -90,7 +90,7 @@ export default function Calendar({
   const isCurrentMonth = year === today.getFullYear() && month === today.getMonth() + 1
   const nextMonthDate = new Date(year, month, 1) // month is 1-based, so this rolls forward one
   const nextMonthKey = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth() + 1).padStart(2, '0')}`
-  const windowEndKey = data ? data.booking_window_end.slice(0, 7) : null
+  const windowEndKey = data ? data.scheduling_window_end.slice(0, 7) : null
   const nextDisabled = windowEndKey !== null && nextMonthKey > windowEndKey
 
   function goPrev() {
@@ -106,7 +106,7 @@ export default function Calendar({
     setMonth(nextMonthDate.getMonth() + 1)
   }
 
-  // Doesn't block booking (a second, legitimate appointment with the
+  // Doesn't block scheduling (a second, legitimate appointment with the
   // same doctor is a real use case -- follow-up, different concern) --
   // just nudges with a confirm step before forwarding to the real
   // onSelectDate for a date that already has one.
@@ -184,9 +184,9 @@ export default function Calendar({
 
                   return pendingDateAppointments.length === 1
                     ? `You already have an appointment with ${doctorName ?? 'this doctor'} on ${formatDate(pendingDate)}, ` +
-                        `${timesList}. Continue booking anyway?`
+                        `${timesList}. Continue scheduling anyway?`
                     : `You have ${pendingDateAppointments.length} appointments with ${doctorName ?? 'this doctor'} on ` +
-                        `${formatDate(pendingDate)}, at ${timesList}. Continue booking anyway?`
+                        `${formatDate(pendingDate)}, at ${timesList}. Continue scheduling anyway?`
                 })()}
             </AlertDialogDescription>
           </AlertDialogHeader>

@@ -1,7 +1,7 @@
 """
 WhatsApp/mobile number normalization for the web-facing entry points.
 
-Not applied to the WhatsApp inbound path (app/api/booking.py) -- every
+Not applied to the WhatsApp inbound path (app/api/scheduling.py) -- every
 number arriving there already comes from the messaging provider in
 canonical E.164 form, and it's the pre-existing source of truth every
 patient row is keyed against. This exists for the two places a human

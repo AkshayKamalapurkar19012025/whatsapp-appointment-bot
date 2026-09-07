@@ -9,10 +9,10 @@ Covers three touch points that all needed to learn about date ranges
 consistently, not just the CRUD router itself:
   1. app/api/doctor_schedule.py -- create/update/overlap-rejection.
   2. app/services/availability_engine.py -- slot generation (what's
-     shown as bookable).
+     shown as schedulable).
   3. app/services/appointment_services.py's create_appointment_service
-     -- the actual booking-creation schedule check (what's allowed to
-     be booked), so a booking can't succeed for a date the calendar
+     -- the actual scheduling-creation schedule check (what's allowed to
+     be scheduled), so a scheduling can't succeed for a date the calendar
      wouldn't have offered as available.
 """
 

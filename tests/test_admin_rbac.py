@@ -266,7 +266,7 @@ def test_patients_endpoints_accept_either_staff_role(client, db_connection):
 # -- Regression guard: the three GETs the patient web frontend calls ---
 # unauthenticated must stay exactly that way. This is the crux of this
 # phase's scoping decision -- gating these would break the already-
-# shipped, merged WEB P3 booking flow.
+# shipped, merged WEB P3 scheduling flow.
 
 def test_patient_facing_reference_data_reads_remain_public(client, db_connection):
     seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Public Reads")

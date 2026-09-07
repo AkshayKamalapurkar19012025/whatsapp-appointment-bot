@@ -60,7 +60,7 @@ export default function MyAppointments({
     getMyAppointments()
       .then(setData)
       .catch((err) => {
-        // Same lesson as BookingFlow.confirmBooking (WEB P3 second-pass
+        // Same lesson as SchedulingFlow.confirmScheduling (WEB P3 second-pass
         // fix): an expired/invalid session here must return to login,
         // not leave the patient stuck on a page that can never load.
         if (err instanceof ApiError && err.status === 401) {

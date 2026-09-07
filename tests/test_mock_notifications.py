@@ -1,9 +1,9 @@
 """
 Tests for WEB P8 -- generalizing mock_sms_outbox (previously OTP-only)
 into a shared mock-notification outbox, and wiring web-originated
-booking/cancel/reschedule to it via app/services/notifications.py.
+scheduling/cancel/reschedule to it via app/services/notifications.py.
 
-Deliberately does NOT touch WhatsApp: booking.py's flow already
+Deliberately does NOT touch WhatsApp: scheduling.py's flow already
 confirms actions live in the same chat and is not wired to this
 module -- see app/services/notifications.py's module docstring for why.
 """
@@ -22,30 +22,30 @@ def _next_weekday(from_date: date | None = None) -> date:
 
 
 def test_booking_confirmation_notification_is_sent(client, db_connection):
-    seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Notify Booking")
+    seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Notify Scheduling")
     number = "+919500000001"
     token = register_and_login_web_patient(client, number, "Notify Patient")
 
-    booking_date = _next_weekday(date.today() + timedelta(days=10))
+    scheduling_date = _next_weekday(date.today() + timedelta(days=10))
     response = client.post(
         "/api/web/appointments",
         headers={"Authorization": f"Bearer {token}"},
         json={
             "doctor_id": seeded["doctor_id"],
             "appointment_type_id": seeded["appointment_type_id"],
-            "start_at": f"{booking_date.isoformat()}T10:00:00+05:30",
+            "start_at": f"{scheduling_date.isoformat()}T10:00:00+05:30",
         },
     )
     assert response.status_code == 200
 
     notification = client.get(
         "/api/web/notifications/_dev_lookup",
-        params={"whatsapp_number": number, "kind": "BOOKING_CONFIRMATION"},
+        params={"whatsapp_number": number, "kind": "SCHEDULING_CONFIRMATION"},
     )
     assert notification.status_code == 200
     body = notification.json()
-    assert body["kind"] == "BOOKING_CONFIRMATION"
-    assert "Dr. Notify Booking" in body["message"]
+    assert body["kind"] == "SCHEDULING_CONFIRMATION"
+    assert "Dr. Notify Scheduling" in body["message"]
     assert "awaiting confirmation" in body["message"]
     assert "10:00 AM" in body["message"]
 
@@ -55,7 +55,7 @@ def test_cancellation_notification_shows_doctor_local_time(client, db_connection
     # hit twice before (a value read back from Postgres is UTC-
     # normalized unless explicitly converted). If this notification
     # used the raw DB value without converting, it would show a time
-    # several hours off from what was actually booked.
+    # several hours off from what was actually scheduled.
     seeded = seed_basic_doctor(
         client,
         db_connection,
@@ -68,13 +68,13 @@ def test_cancellation_notification_shows_doctor_local_time(client, db_connection
     token = register_and_login_web_patient(client, number, "Notify Cancel Patient")
     headers = {"Authorization": f"Bearer {token}"}
 
-    booking_date = _next_weekday(date.today() + timedelta(days=10))
+    scheduling_date = _next_weekday(date.today() + timedelta(days=10))
     # Compute America/New_York's actual UTC offset for this date rather
     # than assuming EDT (-04:00) -- the same DST-correctness fix this
     # project's own test suite already applies elsewhere (see
     # tests/test_booking_flow.py) after being bitten by hardcoding it.
     ny_start = datetime(
-        booking_date.year, booking_date.month, booking_date.day, 9, 0,
+        scheduling_date.year, scheduling_date.month, scheduling_date.day, 9, 0,
         tzinfo=ZoneInfo("America/New_York"),
     )
     created = client.post(
@@ -136,28 +136,28 @@ def test_reschedule_notification_shows_new_time(client, db_connection):
 def test_otp_dev_lookup_is_unaffected_by_a_later_booking_notification(client, db_connection):
     # The regression this phase had to guard against: before filtering
     # by kind, the OTP dev-lookup endpoint would silently start
-    # returning a booking-confirmation row instead of the OTP once one
+    # returning a scheduling-confirmation row instead of the OTP once one
     # existed for the same number (both live in mock_sms_outbox, sorted
     # by recency).
     seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Notify Kind Guard")
     number = "+919500000004"
     token = register_and_login_web_patient(client, number, "Notify Kind Guard Patient")
 
-    booking_date = _next_weekday(date.today() + timedelta(days=10))
+    scheduling_date = _next_weekday(date.today() + timedelta(days=10))
     client.post(
         "/api/web/appointments",
         headers={"Authorization": f"Bearer {token}"},
         json={
             "doctor_id": seeded["doctor_id"],
             "appointment_type_id": seeded["appointment_type_id"],
-            "start_at": f"{booking_date.isoformat()}T10:00:00+05:30",
+            "start_at": f"{scheduling_date.isoformat()}T10:00:00+05:30",
         },
     )
 
-    # A booking confirmation now exists as the most recent
+    # A scheduling confirmation now exists as the most recent
     # mock_sms_outbox row for this number -- request a fresh OTP and
     # confirm the OTP-specific dev-lookup still returns it, not the
-    # booking confirmation.
+    # scheduling confirmation.
     client.post("/api/auth/patient/otp/request", json={"whatsapp_number": number})
     otp_lookup = client.get(
         "/api/auth/patient/otp/_dev_lookup", params={"whatsapp_number": number}
@@ -189,14 +189,14 @@ def test_notifications_dev_lookup_without_kind_returns_most_recent(client, db_co
     token = register_and_login_web_patient(client, number, "Notify Any Kind Patient")
     headers = {"Authorization": f"Bearer {token}"}
 
-    booking_date = _next_weekday(date.today() + timedelta(days=10))
+    scheduling_date = _next_weekday(date.today() + timedelta(days=10))
     created = client.post(
         "/api/web/appointments",
         headers=headers,
         json={
             "doctor_id": seeded["doctor_id"],
             "appointment_type_id": seeded["appointment_type_id"],
-            "start_at": f"{booking_date.isoformat()}T10:00:00+05:30",
+            "start_at": f"{scheduling_date.isoformat()}T10:00:00+05:30",
         },
     ).json()
     client.delete(f"/api/web/appointments/{created['id']}", headers=headers)

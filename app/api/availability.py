@@ -20,7 +20,7 @@ class AvailabilityRequest(BaseModel):
     # department this slot lookup is for (the patient web/WhatsApp
     # flows both select department before doctor), passing it narrows
     # results to that department's schedule rows plus any department-
-    # agnostic ones. Omitted entirely by admin booking/reschedule and
+    # agnostic ones. Omitted entirely by admin scheduling/reschedule and
     # the patient reschedule flow, which have no department in scope
     # and so see every active row regardless of department -- see
     # get_available_slots's docstring for the exact semantics.
@@ -31,7 +31,7 @@ class AvailabilityRequest(BaseModel):
 def get_available_slots(request: AvailabilityRequest):
     """
     REST wrapper around app.services.availability_engine.get_available_slots
-    (moved there, along with booking.py's identical logic, in the WEB P1
+    (moved there, along with scheduling.py's identical logic, in the WEB P1
     phase). This endpoint keeps its own doctor/appointment-type 404 checks
     and response shape; slot computation itself is delegated so this stays
     the exact same engine WhatsApp uses.

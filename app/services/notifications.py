@@ -10,13 +10,13 @@ send_mock_notification() too, not just this phase's new callers, so
 there is exactly one place that writes to mock_sms_outbox.
 
 Scope: WEB (patient) actions, plus one staff-initiated exception.
-app/api/booking.py's WhatsApp flow already gives real-time confirmation
+app/api/scheduling.py's WhatsApp flow already gives real-time confirmation
 via its own conversational reply in the same chat -- it is deliberately
 NOT wired to this module, since sending an *additional* "confirmation"
 for an action the patient just watched happen live would be a pointless
-duplicate, not a fix for anything. A web-originated booking/cancel/
+duplicate, not a fix for anything. A web-originated scheduling/cancel/
 reschedule has no such live channel to confirm in, which is exactly the
-gap this phase closes (see frontend/src/BookingFlow.tsx's WEB P3-era
+gap this phase closes (see frontend/src/SchedulingFlow.tsx's WEB P3-era
 placeholder text about a confirmation SMS "implemented in a later
 phase", updated this phase to match).
 
@@ -35,7 +35,7 @@ Security/PHI notes (same posture as OTP's own mock delivery):
 """
 
 KIND_OTP = "OTP"
-KIND_BOOKING_CONFIRMATION = "BOOKING_CONFIRMATION"
+KIND_SCHEDULING_CONFIRMATION = "SCHEDULING_CONFIRMATION"
 KIND_CANCELLATION = "CANCELLATION"
 KIND_RESCHEDULE = "RESCHEDULE"
 KIND_CHECK_IN = "CHECK_IN"

@@ -27,7 +27,7 @@ function loadTimezone(): Promise<string> {
 // The clinic's own configured timezone (app.config.DEFAULT_TIMEZONE), not
 // the viewer's device timezone -- deliberately not derived from the
 // browser's Intl.DateTimeFormat().resolvedOptions().timeZone, since a
-// patient booking from a different timezone should still see the
+// patient scheduling from a different timezone should still see the
 // clinic's own current date/time, matching what every doctor-facing time
 // elsewhere in the app already means (see app/utils/timezone.py's
 // get_doctor_timezone). Still never an API call for the ticking clock

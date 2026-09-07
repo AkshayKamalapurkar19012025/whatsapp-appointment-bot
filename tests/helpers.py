@@ -72,7 +72,7 @@ def seed_basic_doctor(
 ) -> dict:
     """
     Create a department, doctor, appointment type, assignment, and
-    weekly schedule -- the minimum reference data any booking flow test
+    weekly schedule -- the minimum reference data any scheduling flow test
     needs. Returns the ids involved.
 
     department_name/appointment_type_name are parameterized (not just
@@ -204,9 +204,9 @@ def add_doctor_to_department(
 def register_patient(client: TestClient, whatsapp_number: str, name: str) -> dict:
     """Drive the WhatsApp registration flow (Hi -> name) and return the
     resulting patient dict."""
-    client.post("/api/booking", json={"whatsapp_number": whatsapp_number, "message": "Hi"})
+    client.post("/api/scheduling", json={"whatsapp_number": whatsapp_number, "message": "Hi"})
     response = client.post(
-        "/api/booking", json={"whatsapp_number": whatsapp_number, "message": name}
+        "/api/scheduling", json={"whatsapp_number": whatsapp_number, "message": name}
     )
     return response.json()["patient"]
 
@@ -229,22 +229,22 @@ def register_and_login_web_patient(client: TestClient, whatsapp_number: str, nam
     return verified.json()["session_token"]
 
 
-def book_first_available_slot(
+def schedule_first_available_slot(
     client: TestClient,
     whatsapp_number: str,
     *,
     date_option: str = "1",
     slot_option: str = "1",
 ) -> dict:
-    """Drive the WhatsApp flow from MAIN_MENU through a completed booking
+    """Drive the WhatsApp flow from MAIN_MENU through a completed scheduling
     for department 1 / doctor 1 / appointment type 1, picking the given
-    date and slot option numbers. Returns the final BOOKED response
+    date and slot option numbers. Returns the final SCHEDULED response
     body."""
     msg = lambda m: client.post(
-        "/api/booking", json={"whatsapp_number": whatsapp_number, "message": m}
+        "/api/scheduling", json={"whatsapp_number": whatsapp_number, "message": m}
     ).json()
 
-    msg("1")  # Book Appointment -> SELECT_BOOKING_MODE
+    msg("1")  # Book Appointment -> SELECT_SCHEDULING_MODE
     msg("1")  # Choose a Doctor (Doctor-First)
     msg("1")  # department 1
     msg("1")  # doctor 1

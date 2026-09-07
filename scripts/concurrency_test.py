@@ -1,9 +1,9 @@
 """
-Manual verification script for double-booking protection.
+Manual verification script for double-scheduling protection.
 
-Walks two different patients up to CONFIRM_BOOKING for the exact same
+Walks two different patients up to CONFIRM_SCHEDULING for the exact same
 doctor/date/slot, then fires both final "1" (confirm) messages at the
-same instant from two threads. Asserts exactly one booking succeeds.
+same instant from two threads. Asserts exactly one scheduling succeeds.
 
 Not part of the permanent test suite (it drives a running server over
 HTTP and needs seeded reference data) -- kept as a standalone repro
@@ -18,7 +18,7 @@ import threading
 
 import httpx
 
-BASE = "http://127.0.0.1:8000/api/booking"
+BASE = "http://127.0.0.1:8000/api/scheduling"
 
 
 def post(whatsapp_number: str, message: str) -> dict:
@@ -31,25 +31,25 @@ def post(whatsapp_number: str, message: str) -> dict:
     return response.json()
 
 
-def walk_to_confirm_booking(whatsapp_number: str, name: str) -> None:
+def walk_to_confirm_scheduling(whatsapp_number: str, name: str) -> None:
     post(whatsapp_number, "Hi")
     post(whatsapp_number, name)
     post(whatsapp_number, "main menu")
-    post(whatsapp_number, "1")  # book
+    post(whatsapp_number, "1")  # schedule
     post(whatsapp_number, "1")  # department
     post(whatsapp_number, "1")  # doctor
     post(whatsapp_number, "1")  # appointment type
     post(whatsapp_number, "4")  # date option 4
     post(whatsapp_number, "1")  # slot 1
-    # now at CONFIRM_BOOKING
+    # now at CONFIRM_SCHEDULING
 
 
 def main() -> int:
     number_a = "+919000000001"
     number_b = "+919000000002"
 
-    walk_to_confirm_booking(number_a, "Racer A")
-    walk_to_confirm_booking(number_b, "Racer B")
+    walk_to_confirm_scheduling(number_a, "Racer A")
+    walk_to_confirm_scheduling(number_b, "Racer B")
 
     results = {}
     barrier = threading.Barrier(2)
@@ -69,14 +69,14 @@ def main() -> int:
     print("Racer A result:", results["a"]["next_step"], "-", results["a"].get("error") or results["a"].get("message", "")[:60])
     print("Racer B result:", results["b"]["next_step"], "-", results["b"].get("error") or results["b"].get("message", "")[:60])
 
-    booked = [k for k, v in results.items() if v["next_step"] == "BOOKED"]
-    rejected = [k for k, v in results.items() if v["next_step"] != "BOOKED"]
+    scheduled = [k for k, v in results.items() if v["next_step"] == "SCHEDULED"]
+    rejected = [k for k, v in results.items() if v["next_step"] != "SCHEDULED"]
 
-    if len(booked) == 1 and len(rejected) == 1:
-        print("PASS: exactly one booking succeeded, one was correctly rejected.")
+    if len(scheduled) == 1 and len(rejected) == 1:
+        print("PASS: exactly one scheduling succeeded, one was correctly rejected.")
         return 0
     else:
-        print(f"FAIL: booked={booked} rejected={rejected} (expected exactly one of each)")
+        print(f"FAIL: scheduled={scheduled} rejected={rejected} (expected exactly one of each)")
         return 1
 
 

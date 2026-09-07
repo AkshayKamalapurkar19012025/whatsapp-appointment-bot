@@ -4,12 +4,12 @@ Typed exceptions raised by app/services/*.
 These are transport-agnostic on purpose: the service functions in
 app/services/appointment_services.py don't know whether they're being
 called from a FastAPI REST endpoint (app/api/appointments.py), the
-WhatsApp conversational flow (app/api/booking.py), or a future web
+WhatsApp conversational flow (app/api/scheduling.py), or a future web
 endpoint -- each caller catches the specific exceptions it cares about
 and translates them into whatever response shape it needs (an
 HTTPException with a status code for REST, a conversational message for
 WhatsApp, etc). This is what lets Web and WhatsApp share one
-implementation of the booking rules without duplicating them.
+implementation of the scheduling rules without duplicating them.
 """
 
 
@@ -41,7 +41,7 @@ class SlotOverlap(ServiceError):
     pass
 
 
-class OutsideBookingWindow(ServiceError):
+class OutsideSchedulingWindow(ServiceError):
     pass
 
 

@@ -12,9 +12,9 @@ own note on why NO_SHOW isn't broken out as a stat yet) plus today's/
 upcoming (PENDING or CONFIRMED only).
 
 Appointments are inserted directly via SQL (not through
-create_appointment_service/the booking API) so each row's start_at and
+create_appointment_service/the scheduling API) so each row's start_at and
 status can be controlled precisely without running into the service
-layer's own schedule/booking-window/overlap validation, which isn't
+layer's own schedule/scheduling-window/overlap validation, which isn't
 what's under test here.
 """
 

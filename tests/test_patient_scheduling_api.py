@@ -5,13 +5,13 @@ GET /api/web/calendar and POST /api/web/appointments.
 Both are thin wrappers around already-tested WEB P1/P2 pieces
 (availability_engine, create_appointment_service, get_current_patient) --
 these tests are about the wiring (auth required, patient_id always from
-the session, booking-window enforcement actually reachable now), not
-about re-proving booking rules P1's own suite already covers.
+the session, scheduling-window enforcement actually reachable now), not
+about re-proving scheduling rules P1's own suite already covers.
 """
 
 from datetime import date, timedelta
 
-from app.services.availability_engine import booking_window
+from app.services.availability_engine import scheduling_window
 
 from tests.helpers import (
     create_admin_and_get_headers,
@@ -65,7 +65,7 @@ def test_calendar_returns_per_day_availability_matching_schedule(client, db_conn
 def test_calendar_rejects_month_entirely_outside_booking_window(client, db_connection):
     seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Far Future")
 
-    _, window_end = booking_window()
+    _, window_end = scheduling_window()
     far_month = window_end + timedelta(days=32)  # safely into the month after the window
 
     response = client.get(
@@ -100,15 +100,15 @@ def test_booking_creates_appointment_for_authenticated_patient(client, db_connec
     seeded = seed_basic_doctor(
         client,
         db_connection,
-        doctor_name="Dr. Web Booking",
-        appointment_type_name="Web Booking Consultation",
+        doctor_name="Dr. Web Scheduling",
+        appointment_type_name="Web Scheduling Consultation",
         schedule_days=(1, 2, 3, 4, 5),
     )
-    token = _register_and_login(client, "+919830000001", "Web Booking Patient")
+    token = _register_and_login(client, "+919830000001", "Web Scheduling Patient")
 
-    booking_date = date.today() + timedelta(days=1)
-    while (booking_date.weekday() + 1) not in (1, 2, 3, 4, 5):
-        booking_date += timedelta(days=1)
+    scheduling_date = date.today() + timedelta(days=1)
+    while (scheduling_date.weekday() + 1) not in (1, 2, 3, 4, 5):
+        scheduling_date += timedelta(days=1)
 
     response = client.post(
         "/api/web/appointments",
@@ -116,7 +116,7 @@ def test_booking_creates_appointment_for_authenticated_patient(client, db_connec
         json={
             "doctor_id": seeded["doctor_id"],
             "appointment_type_id": seeded["appointment_type_id"],
-            "start_at": f"{booking_date.isoformat()}T09:00:00+05:30",
+            "start_at": f"{scheduling_date.isoformat()}T09:00:00+05:30",
         },
     )
 
@@ -153,9 +153,9 @@ def test_booking_ignores_client_supplied_patient_id(client, db_connection):
     )
     other_patient_id = other.json()["id"]
 
-    booking_date = date.today() + timedelta(days=1)
-    while (booking_date.weekday() + 1) not in (1, 2, 3, 4, 5):
-        booking_date += timedelta(days=1)
+    scheduling_date = date.today() + timedelta(days=1)
+    while (scheduling_date.weekday() + 1) not in (1, 2, 3, 4, 5):
+        scheduling_date += timedelta(days=1)
 
     response = client.post(
         "/api/web/appointments",
@@ -163,7 +163,7 @@ def test_booking_ignores_client_supplied_patient_id(client, db_connection):
         json={
             "doctor_id": seeded["doctor_id"],
             "appointment_type_id": seeded["appointment_type_id"],
-            "start_at": f"{booking_date.isoformat()}T10:00:00+05:30",
+            "start_at": f"{scheduling_date.isoformat()}T10:00:00+05:30",
             "patient_id": other_patient_id,  # not a real field -- must be ignored
         },
     )
@@ -171,9 +171,9 @@ def test_booking_ignores_client_supplied_patient_id(client, db_connection):
     assert response.status_code == 200
     with db_connection.cursor() as cur:
         cur.execute("SELECT patient_id FROM appointments WHERE id = %s", (response.json()["id"],))
-        booked_patient_id = cur.fetchone()[0]
+        scheduled_patient_id = cur.fetchone()[0]
 
-    assert booked_patient_id != other_patient_id
+    assert scheduled_patient_id != other_patient_id
 
 
 def test_booking_enforces_calendar_window(client, db_connection):
@@ -186,7 +186,7 @@ def test_booking_enforces_calendar_window(client, db_connection):
     )
     token = _register_and_login(client, "+919830000003", "Window Test Patient")
 
-    _, window_end = booking_window()
+    _, window_end = scheduling_window()
     outside_date = window_end + timedelta(days=1)
     while (outside_date.weekday() + 1) not in (1, 2, 3, 4, 5):
         outside_date += timedelta(days=1)
@@ -202,4 +202,4 @@ def test_booking_enforces_calendar_window(client, db_connection):
     )
 
     assert response.status_code == 409
-    assert "booking window" in response.json()["detail"]
+    assert "scheduling window" in response.json()["detail"]

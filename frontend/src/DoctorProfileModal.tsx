@@ -4,9 +4,9 @@ import { ApiError, getDoctorProfile } from './api'
 import type { DoctorProfile } from './types'
 import DoctorAvatar from './DoctorAvatar'
 
-// "View Profile" from either compact booking card (DoctorCard.tsx) --
+// "View Profile" from either compact scheduling card (DoctorCard.tsx) --
 // the complete doctor profile and full education history, shown as an
-// overlay on top of the current booking step rather than a route change,
+// overlay on top of the current scheduling step rather than a route change,
 // so closing it returns the patient to exactly where they were.
 export default function DoctorProfileModal({
   doctorId,

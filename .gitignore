@@ -32,6 +32,7 @@ htmlcov/
 
 # Uploaded media (doctor profile photos, see app/config.py's MEDIA_ROOT)
 /media/
+/doctors/
 
 # Editor / backup files
 *.save

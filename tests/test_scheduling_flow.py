@@ -1,20 +1,20 @@
 """
-Integration tests for the WhatsApp conversation flow in app/api/booking.py,
-driven exactly the way the real endpoint is: POST /api/booking with a
+Integration tests for the WhatsApp conversation flow in app/api/scheduling.py,
+driven exactly the way the real endpoint is: POST /api/scheduling with a
 whatsapp_number and a message, state persisted server-side.
 
 Reschedule/cancel tests use date_option="5" (the furthest offered date)
-rather than "1" (today), so the booked appointment is unambiguously in
+rather than "1" (today), so the scheduled appointment is unambiguously in
 the future regardless of what time of day the suite happens to run --
-get_upcoming_booked_appointments() filters on start_at > NOW().
+get_upcoming_scheduled_appointments() filters on start_at > NOW().
 """
 
-from tests.helpers import seed_basic_doctor, register_patient, book_first_available_slot
+from tests.helpers import seed_basic_doctor, register_patient, schedule_first_available_slot
 
 
 def send(client, whatsapp_number, message):
     return client.post(
-        "/api/booking", json={"whatsapp_number": whatsapp_number, "message": message}
+        "/api/scheduling", json={"whatsapp_number": whatsapp_number, "message": message}
     ).json()
 
 
@@ -41,11 +41,11 @@ def test_unregistered_number_cannot_reschedule_or_cancel(client):
 def test_full_booking_flow_creates_booked_appointment(client, db_connection):
     seed_basic_doctor(client, db_connection)
     number = "+919000000103"
-    register_patient(client, number, "Booking Flow Patient")
+    register_patient(client, number, "Scheduling Flow Patient")
 
-    result = book_first_available_slot(client, number)
+    result = schedule_first_available_slot(client, number)
 
-    assert result["next_step"] == "BOOKED"
+    assert result["next_step"] == "SCHEDULED"
     assert result["appointment"]["status"] == "PENDING"
 
     with db_connection.cursor() as cur:
@@ -60,9 +60,9 @@ def test_booking_uses_doctor_specific_timezone(client, db_connection):
     number = "+919000000104"
     register_patient(client, number, "Timezone Patient")
 
-    result = book_first_available_slot(client, number)
+    result = schedule_first_available_slot(client, number)
 
-    assert result["next_step"] == "BOOKED"
+    assert result["next_step"] == "SCHEDULED"
 
     # America/New_York in September is EDT (UTC-4). Convert the returned
     # instant to New York local time and confirm it's the doctor's 9am
@@ -81,10 +81,10 @@ def test_cancel_and_reschedule_selection_show_doctor_local_time(client, db_conne
     appointment's start_at, read back from the database (as opposed to
     freshly computed during slot selection), used to come back
     UTC-normalized regardless of the doctor's actual timezone --
-    get_upcoming_booked_appointments() returned it as-is, and
+    get_upcoming_scheduled_appointments() returned it as-is, and
     cancellation_details_message()/reschedule_selection_message() then
     displayed that wrong time verbatim. Confirmed live before the fix: a
-    2:00 PM Asia/Kolkata (+05:30) booking displayed as "8:30 AM" in both
+    2:00 PM Asia/Kolkata (+05:30) scheduling displayed as "8:30 AM" in both
     messages. Uses America/New_York (a large, unambiguous offset from
     UTC, same choice as test_booking_uses_doctor_specific_timezone above)
     so a regression can't hide behind IST's own 5:30 offset coincidence.
@@ -93,14 +93,14 @@ def test_cancel_and_reschedule_selection_show_doctor_local_time(client, db_conne
     number = "+919000000199"
     register_patient(client, number, "TZ Display Patient")
 
-    booked = book_first_available_slot(client, number, date_option="5")
-    assert booked["next_step"] == "BOOKED"
+    scheduled = schedule_first_available_slot(client, number, date_option="5")
+    assert scheduled["next_step"] == "SCHEDULED"
 
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
-    booked_dt = datetime.fromisoformat(booked["appointment"]["start_at"])
-    ny_time = booked_dt.astimezone(ZoneInfo("America/New_York"))
+    scheduled_dt = datetime.fromisoformat(scheduled["appointment"]["start_at"])
+    ny_time = scheduled_dt.astimezone(ZoneInfo("America/New_York"))
     expected_label = ny_time.strftime("%I:%M %p").lstrip("0")
 
     send(client, number, "main menu")
@@ -127,11 +127,11 @@ def test_cancel_flow_marks_appointment_cancelled(client, db_connection):
     number = "+919000000105"
     register_patient(client, number, "Cancel Flow Patient")
 
-    booked = book_first_available_slot(client, number, date_option="5")
-    appointment_id = booked["appointment"]["id"]
+    scheduled = schedule_first_available_slot(client, number, date_option="5")
+    appointment_id = scheduled["appointment"]["id"]
 
     send(client, number, "main menu")
-    # With exactly one upcoming appointment, booking.py's cancel handler
+    # With exactly one upcoming appointment, scheduling.py's cancel handler
     # skips the numbered CANCEL_SELECT list and goes straight to
     # CANCEL_CONFIRM (see the `if len(appointments) == 1:` shortcut) --
     # verified against the running app, not assumed.
@@ -152,8 +152,8 @@ def test_reschedule_flow_cancels_old_and_books_new(client, db_connection):
     number = "+919000000106"
     register_patient(client, number, "Reschedule Flow Patient")
 
-    booked = book_first_available_slot(client, number, date_option="5")
-    original_id = booked["appointment"]["id"]
+    scheduled = schedule_first_available_slot(client, number, date_option="5")
+    original_id = scheduled["appointment"]["id"]
 
     send(client, number, "main menu")
     # Unlike cancel, reschedule has no single-appointment shortcut -- it
@@ -193,7 +193,7 @@ def test_back_navigation_returns_to_previous_step(client, db_connection):
     number = "+919000000107"
     register_patient(client, number, "Back Nav Patient")
 
-    send(client, number, "1")  # book -> SELECT_BOOKING_MODE
+    send(client, number, "1")  # book -> SELECT_SCHEDULING_MODE
     send(client, number, "1")  # Choose a Doctor
     send(client, number, "1")  # department
     at_doctor_type = send(client, number, "1")  # doctor -> SELECT_APPOINTMENT_TYPE
@@ -206,7 +206,7 @@ def test_back_navigation_returns_to_previous_step(client, db_connection):
     assert back_twice["next_step"] == "SELECT_DEPARTMENT"
 
     back_thrice = send(client, number, "back")
-    assert back_thrice["next_step"] == "SELECT_BOOKING_MODE"
+    assert back_thrice["next_step"] == "SELECT_SCHEDULING_MODE"
 
 
 def test_restart_returns_to_main_menu(client, db_connection):
@@ -236,7 +236,7 @@ def test_invalid_department_selection_reprompts(client, db_connection):
     number = "+919000000110"
     register_patient(client, number, "Invalid Dept Patient")
 
-    send(client, number, "1")  # book -> SELECT_BOOKING_MODE
+    send(client, number, "1")  # book -> SELECT_SCHEDULING_MODE
     send(client, number, "1")  # Choose a Doctor -> SELECT_DEPARTMENT
     response = send(client, number, "not-a-number")
     assert response["next_step"] == "SELECT_DEPARTMENT"

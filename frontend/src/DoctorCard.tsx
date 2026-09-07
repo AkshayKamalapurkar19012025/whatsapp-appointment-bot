@@ -4,7 +4,7 @@ import { doctorSummaryLine } from './format'
 import type { DoctorProfileSummary } from './types'
 
 // The compact doctor-selection card shown during both Doctor-First and
-// Date-First booking (BookingFlow.tsx): name, specialization, years of
+// Date-First scheduling (SchedulingFlow.tsx): name, specialization, years of
 // experience, key qualification, education/training location, and a
 // "View Profile" escape hatch to the full profile -- deliberately never
 // more than this, per the product decision not to overcrowd selection

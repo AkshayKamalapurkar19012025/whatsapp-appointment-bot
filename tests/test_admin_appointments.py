@@ -4,7 +4,7 @@ WEB P6) and extending it into the staff/admin appointment surface:
 list/filter, create, cancel, and a new reschedule endpoint, all on
 behalf of a patient.
 
-Deliberately does NOT re-test the underlying booking/cancel/reschedule
+Deliberately does NOT re-test the underlying scheduling/cancel/reschedule
 rules themselves (schedule/block/overlap/concurrency) -- those are
 already covered by the existing suite via app/services/appointment_
 services.py, which this router is a thin, now-authenticated wrapper
@@ -38,14 +38,14 @@ def _seed_and_book(client, db_connection, doctor_name):
         json={"name": f"{doctor_name} Patient", "whatsapp_number": f"+9198{abs(hash(doctor_name)) % 10**8:08d}"},
         headers=admin_headers,
     ).json()
-    booking_date = _next_weekday(date.today() + timedelta(days=10))
+    scheduling_date = _next_weekday(date.today() + timedelta(days=10))
     created = client.post(
         "/api/appointments",
         json={
             "doctor_id": seeded["doctor_id"],
             "patient_id": patient["id"],
             "appointment_type_id": seeded["appointment_type_id"],
-            "start_at": f"{booking_date.isoformat()}T10:00:00+05:30",
+            "start_at": f"{scheduling_date.isoformat()}T10:00:00+05:30",
         },
         headers=admin_headers,
     ).json()
@@ -173,9 +173,9 @@ def test_list_shows_doctor_local_time_not_utc(client, db_connection):
         headers=admin_headers,
     ).json()
 
-    booking_date = _next_weekday(date.today() + timedelta(days=10))
+    scheduling_date = _next_weekday(date.today() + timedelta(days=10))
     ny_start = datetime(
-        booking_date.year, booking_date.month, booking_date.day, 9, 0,
+        scheduling_date.year, scheduling_date.month, scheduling_date.day, 9, 0,
         tzinfo=ZoneInfo("America/New_York"),
     )
     created = client.post(
@@ -193,7 +193,7 @@ def test_list_shows_doctor_local_time_not_utc(client, db_connection):
         "/api/appointments", params={"patient_id": patient["id"]}, headers=admin_headers
     ).json()
     row = next(a for a in listed if a["id"] == created["id"])
-    assert row["start_at"].startswith(f"{booking_date.isoformat()}T09:00:00")
+    assert row["start_at"].startswith(f"{scheduling_date.isoformat()}T09:00:00")
 
 
 def test_reschedule_rejects_time_outside_doctor_schedule(client, db_connection):
@@ -220,7 +220,7 @@ def test_reschedule_rejects_time_outside_doctor_schedule(client, db_connection):
 
 def test_list_filters_by_appointment_type(client, db_connection):
     # This router's own filter wiring for appointment_type_id -- not a
-    # re-test of booking rules themselves.
+    # re-test of scheduling rules themselves.
     admin_headers, seeded_a, patient_a, created_a = _seed_and_book(
         client, db_connection, "Dr. P9 Filter Type A"
     )
@@ -265,16 +265,16 @@ def test_list_filters_by_date_range_using_doctor_local_date_not_utc(client, db_c
         headers=admin_headers,
     ).json()
 
-    booking_date = _next_weekday(date.today() + timedelta(days=10))
+    scheduling_date = _next_weekday(date.today() + timedelta(days=10))
     ny_start = datetime(
-        booking_date.year, booking_date.month, booking_date.day, 22, 0,
+        scheduling_date.year, scheduling_date.month, scheduling_date.day, 22, 0,
         tzinfo=ZoneInfo("America/New_York"),
     )
     # Confirm this test actually exercises the UTC/local day split it
     # claims to -- otherwise it would pass even with the old, wrong
     # (UTC-day) filtering logic, silently proving nothing.
     utc_date = ny_start.astimezone(ZoneInfo("UTC")).date()
-    assert utc_date != booking_date, "test setup must cross a UTC calendar day boundary"
+    assert utc_date != scheduling_date, "test setup must cross a UTC calendar day boundary"
 
     created = client.post(
         "/api/appointments",
@@ -289,7 +289,7 @@ def test_list_filters_by_date_range_using_doctor_local_date_not_utc(client, db_c
 
     by_local_date = client.get(
         "/api/appointments",
-        params={"date_from": booking_date.isoformat(), "date_to": booking_date.isoformat()},
+        params={"date_from": scheduling_date.isoformat(), "date_to": scheduling_date.isoformat()},
         headers=admin_headers,
     ).json()
     assert created["id"] in {a["id"] for a in by_local_date}
@@ -319,10 +319,10 @@ def test_calendar_requires_authentication(client, db_connection):
 def test_calendar_shows_open_days_beyond_the_patient_booking_window(client, db_connection):
     # The entire reason this is a separate endpoint from GET /web/calendar:
     # that one 409s outright for a month outside the patient-facing
-    # 3-month window. Staff/admin bookings are exempt from that window
+    # 3-month window. Staff/admin schedulings are exempt from that window
     # everywhere else in this router (create_appointment's own
-    # enforce_booking_window=False) -- this endpoint must be too, or its
-    # date picker would be unusable for exactly the far-out bookings staff
+    # enforce_scheduling_window=False) -- this endpoint must be too, or its
+    # date picker would be unusable for exactly the far-out schedulings staff
     # can otherwise make.
     admin_headers, seeded, patient, created = _seed_and_book(
         client, db_connection, "Dr. P9 Calendar Window"

@@ -27,7 +27,7 @@ class DoctorCreate(BaseModel):
     specialization: str = Field(min_length=1, max_length=150)
     sub_specialization: str | None = Field(default=None, max_length=150)
     # Headline summary (e.g. "MBBS, MD (Cardiology)") -- the compact
-    # booking card's "key qualification" line. Distinct from the
+    # scheduling card's "key qualification" line. Distinct from the
     # per-entry `qualification` recorded on each doctor_education row.
     qualifications: str | None = Field(default=None, max_length=255)
     years_of_experience: int | None = Field(default=None, ge=0, le=80)
@@ -259,7 +259,7 @@ def get_doctor_profile_and_education(cur, doctor_id: int) -> dict | None:
     doctor-listing query elsewhere in this module (which only ever
     computes the compact summary fields via build_doctor_summary()),
     this is what "View Profile" fetches on demand, on both channels:
-    GET /{doctor_id} below (web) and app/api/booking.py's WhatsApp
+    GET /{doctor_id} below (web) and app/api/scheduling.py's WhatsApp
     "PROFILE <number>" side-channel reply both call this same function,
     so the two channels can never drift onto different profile data.
 
@@ -311,7 +311,7 @@ def get_doctor_profile_and_education(cur, doctor_id: int) -> dict | None:
 def get_doctor_profile(doctor_id: int):
     """
     Deliberately unauthenticated, matching GET /{doctor_id}/departments
-    below: patients viewing a doctor's profile mid-booking are not staff.
+    below: patients viewing a doctor's profile mid-scheduling are not staff.
     """
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -392,7 +392,7 @@ def feature_doctor_education(
     admin: dict = Depends(require_role("ADMIN")),
 ):
     """
-    Marks this entry as the one shown on the compact booking card's
+    Marks this entry as the one shown on the compact scheduling card's
     education/training line, first clearing whatever entry (if any) was
     previously featured for this doctor. The partial unique index
     (migrations/0014_doctor_profile.sql) guarantees at most one survives

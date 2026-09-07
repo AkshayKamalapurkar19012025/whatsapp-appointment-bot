@@ -3,7 +3,7 @@ import type {
   AdminAppointmentActionResult,
   AppointmentType,
   AppointmentTypeSummary,
-  BookedAppointment,
+  ScheduledAppointment,
   CalendarMonth,
   DashboardStats,
   DashboardTrends,
@@ -175,7 +175,7 @@ export function listAppointmentTypesForDepartment(
   return request(`/departments/${departmentId}/appointment-types`)
 }
 
-// -- Availability / booking -----------------------------------------------
+// -- Availability / scheduling -----------------------------------------------
 
 export function getCalendarMonth(
   doctorId: number,
@@ -254,7 +254,7 @@ export function createWebAppointment(
   doctorId: number,
   appointmentTypeId: number,
   startAt: string,
-): Promise<BookedAppointment> {
+): Promise<ScheduledAppointment> {
   return request('/web/appointments', {
     method: 'POST',
     auth: true,
@@ -284,7 +284,7 @@ export function cancelWebAppointment(
 export function rescheduleWebAppointment(
   appointmentId: number,
   newStartAt: string,
-): Promise<BookedAppointment> {
+): Promise<ScheduledAppointment> {
   return request(`/web/appointments/${appointmentId}/reschedule`, {
     method: 'POST',
     auth: true,
@@ -354,7 +354,7 @@ export function setStaffAccountActive(
 // -- WEB P11: departments/doctors/appointment-types admin writes -----------
 // (the GETs -- listDepartments, listDoctorsInDepartment,
 // listAppointmentTypesForDoctor -- are already above, shared with the
-// patient booking flow, and stay public/unauthenticated per WEB P6.)
+// patient scheduling flow, and stay public/unauthenticated per WEB P6.)
 
 export function createDepartment(name: string): Promise<Department> {
   return request('/departments', { method: 'POST', auth: 'staff', body: { name } })
@@ -398,7 +398,7 @@ export function updateDoctor(doctorId: number, payload: DoctorProfileInput): Pro
 }
 
 // Unauthenticated -- also used by the patient-facing "View Profile"
-// experience mid-booking (BookingFlow.tsx), not just the admin panel.
+// experience mid-scheduling (SchedulingFlow.tsx), not just the admin panel.
 export function getDoctorProfile(doctorId: number): Promise<DoctorProfile> {
   return request(`/doctors/${doctorId}`)
 }
@@ -438,7 +438,7 @@ export function removeDoctorEducation(
   })
 }
 
-// Marks this entry as the one compact booking cards show as
+// Marks this entry as the one compact scheduling cards show as
 // "education_location" -- unmarking whatever entry (if any) was
 // previously featured, per "only one education entry per doctor can be
 // featured" (see migrations/0014_doctor_profile.sql's partial unique
@@ -753,9 +753,9 @@ export function noShowAdminAppointment(
 }
 
 // Staff-only month availability for the admin date picker -- unlike
-// getCalendarMonth (patient-facing, booking-window-limited), this never
+// getCalendarMonth (patient-facing, scheduling-window-limited), this never
 // rejects or blanks out a far-future month, matching how staff/admin
-// bookings are exempt from the patient booking window everywhere else.
+// schedulings are exempt from the patient scheduling window everywhere else.
 export function getAdminCalendarMonth(
   doctorId: number,
   appointmentTypeId: number,

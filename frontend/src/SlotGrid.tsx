@@ -4,7 +4,7 @@ import { formatTime } from './format'
 import { useStaggerReveal } from './useStaggerReveal'
 
 // The one clickable slot-time control every flow in the app uses --
-// patient booking, patient reschedule, and (as of this change) admin
+// patient scheduling, patient reschedule, and (as of this change) admin
 // create/reschedule too. Deliberately dumb/presentational: it only
 // renders whatever slot list it's given: doctor-schedule-derived, with a
 // clear Start -> End relationship per chip and grouped by time of day so
