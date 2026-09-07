@@ -152,7 +152,7 @@ export default function Calendar({
             <AlertDialogTitle>You already have an appointment this day</AlertDialogTitle>
             <AlertDialogDescription>
               {pendingDate &&
-                `You already have an appointment with ${doctorName ?? 'this doctor'} on ${formatDate(pendingDate)}. Continue booking anyway?`}
+                `You already have an appointment with ${doctorName ?? 'this doctor'} on ${formatDate(pendingDate)}. Continue scheduling anyway?`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
