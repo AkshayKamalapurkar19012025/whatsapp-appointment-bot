@@ -277,6 +277,9 @@ export default function MyAppointments({
                   </span>
                   <div className="appointment-card-body">
                     <strong>{appointment.doctor_name}</strong>
+                    {appointment.doctor_specialization && (
+                      <span className="option-subtitle">{appointment.doctor_specialization}</span>
+                    )}
                     <div className="muted">{appointment.appointment_type_name}</div>
                     <div>
                       {formatDate(appointment.start_at)} · {formatTime(appointment.start_at)} –{' '}

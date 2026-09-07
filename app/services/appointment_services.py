@@ -761,6 +761,7 @@ def list_patient_appointments_service(cur, patient_id: int):
             a.doctor_id,
             d.name,
             d.timezone,
+            d.specialization,
             a.appointment_type_id,
             at.name,
             a.start_at,
@@ -792,20 +793,21 @@ def list_patient_appointments_service(cur, patient_id: int):
             "id": row[0],
             "doctor_id": row[1],
             "doctor_name": row[2],
-            "appointment_type_id": row[4],
-            "appointment_type_name": row[5],
-            "start_at": convert_to_timezone(row[6], doctor_tz).isoformat(),
-            "end_at": convert_to_timezone(row[7], doctor_tz).isoformat(),
-            "status": row[8],
-            "token_number": row[9],
+            "doctor_specialization": row[4],
+            "appointment_type_id": row[5],
+            "appointment_type_name": row[6],
+            "start_at": convert_to_timezone(row[7], doctor_tz).isoformat(),
+            "end_at": convert_to_timezone(row[8], doctor_tz).isoformat(),
+            "status": row[9],
+            "token_number": row[10],
         }
 
-        if row[8] in RELEASED_STATUSES:
-            cancelled.append((row[6], entry))
-        elif row[8] in ACTIONABLE_STATUSES and row[6] > now:
-            upcoming.append((row[6], entry))
+        if row[9] in RELEASED_STATUSES:
+            cancelled.append((row[7], entry))
+        elif row[9] in ACTIONABLE_STATUSES and row[7] > now:
+            upcoming.append((row[7], entry))
         else:
-            history.append((row[6], entry))
+            history.append((row[7], entry))
 
     upcoming.sort(key=lambda pair: pair[0])
     history.sort(key=lambda pair: pair[0], reverse=True)
