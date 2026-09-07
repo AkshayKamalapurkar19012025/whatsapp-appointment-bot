@@ -681,9 +681,9 @@ a.link.danger {
 /* Groups a step's "Back" action with a "Main Menu" escape hatch (jumps
    straight to the mode-choice screen via startOver(), instead of
    clicking Back repeatedly through every prior step) -- see
-   StepActions.tsx. Back stays flush left, Main Menu flush right, each
-   taking equal width when they wrap onto their own line on narrow
-   screens rather than shrinking to fit their content. */
+   StepActions.tsx. Back stays flush left, Main Menu flush right; each
+   button sizes to its own content (.step-action-btn's flex: 0 0 auto)
+   rather than stretching to fill the row. */
 .step-actions {
   display: flex;
   align-items: stretch;
