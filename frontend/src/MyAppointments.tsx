@@ -192,16 +192,26 @@ export default function MyAppointments({
             <>
               <h3>Choose a new time</h3>
               <SlotGrid slots={rescheduleSlots} onSelect={chooseRescheduleSlot} />
-              <button type="button" className="link" onClick={() => setRescheduleStep('date')}>
-                Back
-              </button>
+              <StepActions onBack={() => setRescheduleStep('date')} onMainMenu={onScheduleNew} />
             </>
           )}
 
           {rescheduleStep === 'review' && selectedSlot && (
             <>
               <h3>Confirm new time</h3>
+              {/* Same summary shape as SchedulingFlow.tsx's review step,
+                  minus Department: an appointment is only ever tied to a
+                  doctor_id + appointment_type_id (see
+                  list_patient_appointments_service), never a
+                  department_id, and reschedule doesn't re-pick one --
+                  there's nothing there to show, not a gap. */}
               <dl className="summary">
+                <dt>Patient</dt>
+                <dd>{patientName}</dd>
+                <dt>Doctor</dt>
+                <dd>{rescheduling.doctor_name}</dd>
+                <dt>Appointment type</dt>
+                <dd>{rescheduling.appointment_type_name}</dd>
                 <dt>New date</dt>
                 <dd>{formatDate(selectedSlot.start_at)}</dd>
                 <dt>New time</dt>
@@ -212,9 +222,7 @@ export default function MyAppointments({
               <button type="button" onClick={confirmReschedule} disabled={busy}>
                 {busy ? 'Rescheduling…' : 'Confirm reschedule'}
               </button>
-              <button type="button" className="link" onClick={() => setRescheduleStep('slot')}>
-                Back
-              </button>
+              <StepActions onBack={() => setRescheduleStep('slot')} onMainMenu={onScheduleNew} />
             </>
           )}
 
