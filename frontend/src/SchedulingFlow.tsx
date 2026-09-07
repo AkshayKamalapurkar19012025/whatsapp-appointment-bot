@@ -22,6 +22,7 @@ import {
 } from './api'
 import type { ScheduledAppointment, Department, Doctor, DoctorWithSlots, MyAppointment, Slot } from './types'
 import { appointmentTypeIcon } from './appointmentTypeIcon'
+import AvailabilityBadge from './AvailabilityBadge'
 import Calendar from './Calendar'
 import { accentClassFor } from './cardAccent'
 import { departmentIcon } from './departmentIcon'
@@ -30,7 +31,7 @@ import DoctorProfileModal from './DoctorProfileModal'
 import PatientTopBar from './PatientTopBar'
 import SlotGrid from './SlotGrid'
 import StepActions from './StepActions'
-import { formatDate, formatTime } from './format'
+import { formatAvailability, formatDate, formatTime } from './format'
 
 type SchedulingMode = 'doctor-first' | 'date-first'
 
@@ -99,6 +100,11 @@ export default function SchedulingFlow({
   const [appointmentTypes, setAppointmentTypes] = useState<SelectableAppointmentType[]>([])
   const [availableDoctors, setAvailableDoctors] = useState<DoctorWithSlots[]>([])
   const [slots, setSlots] = useState<Slot[]>([])
+  // Doctor-First only -- Date-First already has each doctor's own
+  // total_slots on DoctorWithSlots. That day's fixed capacity for the
+  // Slot step's availability banner (formatAvailability's ratio), set
+  // alongside slots in chooseDate/chooseAvailableDoctor.
+  const [totalSlots, setTotalSlots] = useState(0)
   // Doctor-first only: the patient's own upcoming appointments already
   // scheduled with the currently selected doctor, fetched alongside
   // appointment types in chooseDoctor -- feeds Calendar's same-doctor
@@ -192,6 +198,7 @@ export default function SchedulingFlow({
     getSlotsForDate(doctor.id, appointmentType.id, isoDate, department?.id)
       .then((result) => {
         setSlots(result.slots)
+        setTotalSlots(result.total_slots)
         setStep('slot')
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load time slots'))
@@ -212,6 +219,7 @@ export default function SchedulingFlow({
   function chooseAvailableDoctor(d: DoctorWithSlots) {
     setDoctor({ id: d.id, name: d.name })
     setSlots(d.slots)
+    setTotalSlots(d.total_slots)
     setError(null)
     setStep('slot')
   }
@@ -460,7 +468,8 @@ export default function SchedulingFlow({
 
       {step === 'availableDoctors' && selectedDate && (
         <>
-          <h2>Doctors available on {formatDate(selectedDate)}</h2>
+          <h2>Available doctors</h2>
+          <p className="muted">{formatDate(selectedDate)}</p>
           {availableDoctors.length === 0 ? (
             <p className="calendar-empty-state">
               No doctors have availability on this date. Please choose another date.
@@ -471,13 +480,10 @@ export default function SchedulingFlow({
                 <DoctorCard
                   key={doc.id}
                   doctor={doc}
-                  extra={
-                    <span className="muted doctor-option-meta">
-                      {doc.slots.length} {doc.slots.length === 1 ? 'slot' : 'slots'} available
-                    </span>
-                  }
+                  extra={<AvailabilityBadge availability={formatAvailability(doc.slots.length, doc.total_slots)} />}
                   onSelect={() => chooseAvailableDoctor(doc)}
                   onViewProfile={() => setViewingProfileDoctorId(doc.id)}
+                  disabled={doc.slots.length === 0}
                 />
               ))}
             </ul>
@@ -489,6 +495,7 @@ export default function SchedulingFlow({
       {step === 'slot' && selectedDate && (
         <>
           <h2>Choose a time on {formatDate(selectedDate)}</h2>
+          <AvailabilityBadge availability={formatAvailability(slots.length, totalSlots)} />
           <SlotGrid slots={slots} onSelect={chooseSlot} />
           <StepActions onBack={backFromSlot} onMainMenu={startOver} />
         </>

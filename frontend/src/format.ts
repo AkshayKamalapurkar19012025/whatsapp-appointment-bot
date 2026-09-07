@@ -124,3 +124,47 @@ export function maskPhone(fullNumber: string): string {
   const digits = match[1]
   return `+91 ${'*'.repeat(6)}${digits.slice(6)}`
 }
+
+export type AvailabilityLevel = 'red' | 'orange' | 'green' | 'none'
+
+export interface Availability {
+  level: AvailabilityLevel
+  label: string
+  sub?: string
+}
+
+// Shared by both scheduling flows (Doctor-First's Slot-step banner and
+// Date-First's "Available Doctors" cards) -- one rule, not two: a count
+// on its own says nothing about how booked-up a doctor's day is (3 of
+// 4 total slots is nearly full; 3 of 40 is wide open), so the color is
+// remaining/total, not the raw count. count is clamped at 0 first --
+// the underlying slot list can never actually be negative (see
+// get_available_slots's count_total docstring), but this is the single
+// place that guards against ever rendering a misleading negative
+// number if that ever changes.
+export function formatAvailability(count: number, total: number): Availability {
+  const remaining = Math.max(0, count)
+
+  if (remaining === 0) {
+    return {
+      level: 'none',
+      label: 'No slots available today',
+      sub: 'Try another doctor or choose a different date',
+    }
+  }
+
+  // A floor, not just a ratio: "1 left" reads as urgent regardless of
+  // how large the doctor's total day is (1 of 40 and 1 of 2 both mean
+  // the same thing to a patient deciding right now), so this is red
+  // before the ratio thresholds below ever get a say.
+  if (remaining === 1) {
+    return { level: 'red', label: '1 slot remaining' }
+  }
+
+  const label = `${remaining} slots available`
+  const ratio = total > 0 ? remaining / total : 1
+
+  if (ratio <= 0.25) return { level: 'red', label }
+  if (ratio <= 0.6) return { level: 'orange', label }
+  return { level: 'green', label }
+}

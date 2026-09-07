@@ -1198,6 +1198,21 @@ a.link.danger {
   background: none;
 }
 
+/* Date-First's zero-slot doctors -- shown, not hidden, so the patient
+   sees who's unavailable today rather than a shorter list they can't
+   account for, but visually and functionally blocked from proceeding
+   (DoctorCard's disabled prop). "View Profile" stays enabled below,
+   deliberately outside this dimming -- it isn't date-scoped. */
+.option-list .doctor-option-select:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.option-list .doctor-option-select:disabled:hover {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+}
+
 /* A two-line option (a title plus an explanatory line, e.g. the
    Doctor-First/Date-First mode choice) -- distinct from the inline
    .muted spans used elsewhere in this same list (duration, slot count)
@@ -2760,6 +2775,77 @@ a.link.danger {
   margin-left: var(--space-2);
   background: var(--color-primary-soft);
   color: var(--color-primary-hover);
+}
+
+/* ===========================================================
+   Availability indicator (AvailabilityBadge.tsx) -- shared by
+   Date-First's doctor cards and Doctor-First's Slot-step banner
+   (format.ts's formatAvailability). A colored dot plus the full text
+   label, never the dot alone -- color communicates at a glance, but
+   the label is what actually says "3 slots available" vs "1 slot
+   remaining" vs "No slots available today", per the product
+   requirement not to rely on color alone.
+   =========================================================== */
+
+.availability-block {
+  display: block;
+  margin-top: var(--space-1);
+}
+
+.availability-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.availability-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.availability-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.78rem;
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.availability-red .availability-main {
+  color: var(--color-danger);
+}
+
+.availability-red .availability-dot {
+  background: var(--color-danger);
+}
+
+.availability-orange .availability-main {
+  color: var(--color-warning);
+}
+
+.availability-orange .availability-dot {
+  background: var(--color-warning);
+}
+
+.availability-green .availability-main {
+  color: var(--color-success);
+}
+
+.availability-green .availability-dot {
+  background: var(--color-success);
+}
+
+.availability-none .availability-main {
+  color: var(--color-text-muted);
+}
+
+.availability-none .availability-dot {
+  background: var(--color-text-muted);
+  opacity: 0.5;
 }
 
 /* ===========================================================

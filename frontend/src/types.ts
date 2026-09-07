@@ -77,11 +77,16 @@ export interface Slot {
 // Date-First flow only: one entry of GET /web/availability/by-date's
 // "doctors" list -- a doctor in the department offering the chosen
 // appointment type, with their own real slots for the chosen date
-// already attached (never present with an empty slots array).
+// already attached. Unlike the WhatsApp equivalent, this can be
+// present with an empty slots array (a zero-slot doctor shown as a
+// disabled "Unavailable" card rather than omitted) -- total_slots is
+// that day's fixed capacity, for the availability-color fullness
+// ratio (see format.ts's formatAvailability).
 export interface DoctorWithSlots extends DoctorProfileSummary {
   id: number
   name: string
   slots: Slot[]
+  total_slots: number
 }
 
 export interface CalendarMonth {
