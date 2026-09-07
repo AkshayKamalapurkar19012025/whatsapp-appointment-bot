@@ -697,7 +697,7 @@ a.link.danger {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  flex: 1 1 80px;
+  flex: 0 0 auto;
   width: auto;
   padding: 5px 8px;
   border-radius: 999px;
