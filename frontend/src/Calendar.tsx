@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ApiError, getCalendarMonth } from './api'
 import type { CalendarMonth, MyAppointment } from './types'
 import MonthGrid from './MonthGrid'
-import { formatDate } from './format'
+import { formatDate, formatTime } from './format'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -123,6 +123,16 @@ export default function Calendar({
     setPendingDate(null)
   }
 
+  // The existing appointments on the pending date, earliest first --
+  // used by the confirm dialog below to name a time, not just a date
+  // (without it, "you already have an appointment on 9 Sep" gives no
+  // way to tell whether that's the exact same slot, an overlapping
+  // one, or just a different time earlier/later that day, which is
+  // the one thing this dialog exists to help the patient decide).
+  const pendingDateAppointments = pendingDate
+    ? [...(markedDates[pendingDate] ?? [])].sort((a, b) => a.start_at.localeCompare(b.start_at))
+    : []
+
   return (
     <>
       {doctorName && monthCount > 0 && (
@@ -149,10 +159,35 @@ export default function Calendar({
       <AlertDialog open={pendingDate !== null} onOpenChange={(open) => !open && setPendingDate(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>You already have an appointment this day</AlertDialogTitle>
+            <AlertDialogTitle>
+              {pendingDateAppointments.length > 1
+                ? 'You already have appointments this day'
+                : 'You already have an appointment this day'}
+            </AlertDialogTitle>
             <AlertDialogDescription>
               {pendingDate &&
-                `You already have an appointment with ${doctorName ?? 'this doctor'} on ${formatDate(pendingDate)}. Continue booking anyway?`}
+                pendingDateAppointments.length > 0 &&
+                (() => {
+                  const times = pendingDateAppointments.map(
+                    (a) => `${formatTime(a.start_at)}–${formatTime(a.end_at)}`,
+                  )
+                  // "A", "A and B", or "A, B, and C" -- every existing
+                  // slot named, not just the earliest, so the patient
+                  // can actually tell whether their new pick overlaps
+                  // ANY of them, not only the first.
+                  const timesList =
+                    times.length === 1
+                      ? times[0]
+                      : times.length === 2
+                        ? `${times[0]} and ${times[1]}`
+                        : `${times.slice(0, -1).join(', ')}, and ${times[times.length - 1]}`
+
+                  return pendingDateAppointments.length === 1
+                    ? `You already have an appointment with ${doctorName ?? 'this doctor'} on ${formatDate(pendingDate)}, ` +
+                        `${timesList}. Continue booking anyway?`
+                    : `You have ${pendingDateAppointments.length} appointments with ${doctorName ?? 'this doctor'} on ` +
+                        `${formatDate(pendingDate)}, at ${timesList}. Continue booking anyway?`
+                })()}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
