@@ -11,6 +11,7 @@ import type { MyAppointment, MyAppointmentsResponse, Slot } from './types'
 import Calendar from './Calendar'
 import PatientTopBar from './PatientTopBar'
 import SlotGrid from './SlotGrid'
+import StepActions from './StepActions'
 import { formatDate, formatTime } from './format'
 import { useStaggerReveal } from './useStaggerReveal'
 import {
@@ -38,9 +39,16 @@ const TAB_ICON = {
 export default function MyAppointments({
   patientName,
   onLoggedOut,
+  onScheduleNew,
 }: {
   patientName: string
   onLoggedOut: () => void
+  // "Main Menu" from the reschedule date-picker (StepActions) -- jumps
+  // straight to starting a brand new appointment, the same escape-hatch
+  // role "Main Menu" plays throughout SchedulingFlow.tsx. "Back" there
+  // already exits the reschedule sub-flow (cancelRescheduleFlow), so
+  // this is the one action that isn't otherwise reachable from here.
+  onScheduleNew: () => void
 }) {
   const [tab, setTab] = useState<Tab>('upcoming')
   const [data, setData] = useState<MyAppointmentsResponse | null>(null)
@@ -106,6 +114,16 @@ export default function MyAppointments({
     setSelectedSlot(null)
   }
 
+  // The patient's other upcoming appointments with this same doctor --
+  // feeds Calendar's same-doctor duplicate-appointment marker/nudge
+  // below, same as SchedulingFlow.tsx's Doctor-First date step. Excludes
+  // the appointment actually being rescheduled itself: it will always
+  // land on its own existing date/doctor, which isn't a real conflict,
+  // just the record about to move.
+  const otherAppointmentsWithRescheduleDoctor = rescheduling
+    ? (data?.upcoming ?? []).filter((a) => a.doctor_id === rescheduling.doctor_id && a.id !== rescheduling.id)
+    : []
+
   function chooseRescheduleDate(isoDate: string) {
     if (!rescheduling) return
     setError(null)
@@ -163,10 +181,10 @@ export default function MyAppointments({
                 doctorId={rescheduling.doctor_id}
                 appointmentTypeId={rescheduling.appointment_type_id}
                 onSelectDate={chooseRescheduleDate}
+                doctorName={rescheduling.doctor_name}
+                existingAppointments={otherAppointmentsWithRescheduleDoctor}
               />
-              <button type="button" className="link" onClick={cancelRescheduleFlow}>
-                Cancel
-              </button>
+              <StepActions onBack={cancelRescheduleFlow} onMainMenu={onScheduleNew} />
             </>
           )}
 
@@ -174,16 +192,26 @@ export default function MyAppointments({
             <>
               <h3>Choose a new time</h3>
               <SlotGrid slots={rescheduleSlots} onSelect={chooseRescheduleSlot} />
-              <button type="button" className="link" onClick={() => setRescheduleStep('date')}>
-                Back
-              </button>
+              <StepActions onBack={() => setRescheduleStep('date')} onMainMenu={onScheduleNew} />
             </>
           )}
 
           {rescheduleStep === 'review' && selectedSlot && (
             <>
               <h3>Confirm new time</h3>
+              {/* Same summary shape as SchedulingFlow.tsx's review step,
+                  minus Department: an appointment is only ever tied to a
+                  doctor_id + appointment_type_id (see
+                  list_patient_appointments_service), never a
+                  department_id, and reschedule doesn't re-pick one --
+                  there's nothing there to show, not a gap. */}
               <dl className="summary">
+                <dt>Patient</dt>
+                <dd>{patientName}</dd>
+                <dt>Doctor</dt>
+                <dd>{rescheduling.doctor_name}</dd>
+                <dt>Appointment type</dt>
+                <dd>{rescheduling.appointment_type_name}</dd>
                 <dt>New date</dt>
                 <dd>{formatDate(selectedSlot.start_at)}</dd>
                 <dt>New time</dt>
@@ -194,9 +222,7 @@ export default function MyAppointments({
               <button type="button" onClick={confirmReschedule} disabled={busy}>
                 {busy ? 'Rescheduling…' : 'Confirm reschedule'}
               </button>
-              <button type="button" className="link" onClick={() => setRescheduleStep('slot')}>
-                Back
-              </button>
+              <StepActions onBack={() => setRescheduleStep('slot')} onMainMenu={onScheduleNew} />
             </>
           )}
 
