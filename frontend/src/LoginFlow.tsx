@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { CalendarCheck, ChatCircleDots, Check, UserCircle } from '@phosphor-icons/react'
 import { ApiError, requestOtp, setToken, verifyOtp } from './api'
+import { maskPhone } from './format'
 import OtpInput from './OtpInput'
 import PhoneInput from './PhoneInput'
 
@@ -170,7 +171,7 @@ export default function LoginFlow({ onLoggedIn }: { onLoggedIn: () => void }) {
               submitOtp()
             }}
           >
-            <p>Enter the code sent to {whatsappNumber}</p>
+            <p>Enter the code sent to {maskPhone(whatsappNumber)}</p>
             <span id="otp-label" className="field-label">
               Verification code
             </span>
@@ -198,22 +199,27 @@ export default function LoginFlow({ onLoggedIn }: { onLoggedIn: () => void }) {
                 // Without this, clicking through mid-request resets to
                 // the number stage while that request is still pending
                 // -- if it later resolves, its result (a login under the
-                // abandoned number, or a stale error) lands on whatever
-                // screen the user has since moved to.
+                // still-showing number, or a stale error) lands on
+                // whatever screen the user has since moved to.
                 disabled={busy}
                 onClick={() => {
                   setStage('number')
-                  setWhatsappNumber('')
+                  // Deliberately NOT cleared, unlike a "start over" reset
+                  // -- this is "edit in place" (fix a typo in the same
+                  // number), so PhoneInput should come back prefilled
+                  // with it rather than empty. A patient who actually
+                  // wants a different number can still clear the field
+                  // themselves on the number screen.
                   setOtp('')
                   setError(null)
-                  // Otherwise a stale "A new code was sent." from a
-                  // resend on the abandoned number would still show
-                  // once the next number's OTP screen renders, before
-                  // any resend has actually happened for it.
+                  // Otherwise a stale "A new code was sent." would still
+                  // show once the OTP screen renders again, before any
+                  // resend has actually happened for whatever number the
+                  // patient submits next.
                   setResendMessage(null)
                 }}
               >
-                Use a different number
+                Edit number
               </button>
               <p className="muted otp-fallback-hint">
                 Still didn't get it? Contact the front desk — staff can schedule your appointment
