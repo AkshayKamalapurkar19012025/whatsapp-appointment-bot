@@ -39,6 +39,7 @@ from app.services.appointment_services import (
     reject_appointment_service,
     mark_visited_service,
     mark_completed_service,
+    mark_no_show_service,
 )
 from app.services.availability_engine import list_available_dates_in_range
 from app.services.notifications import KIND_CHECK_IN, send_mock_notification
@@ -455,7 +456,7 @@ def visit_appointment(
             except svc_exc.InvalidStatusTransition:
                 raise HTTPException(
                     status_code=409,
-                    detail="Only a Confirmed appointment can be marked Visited",
+                    detail="Only a Confirmed appointment can be marked Checked In",
                 )
             except svc_exc.AppointmentNotStarted:
                 raise HTTPException(
@@ -511,7 +512,34 @@ def complete_appointment(
             except svc_exc.InvalidStatusTransition:
                 raise HTTPException(
                     status_code=409,
-                    detail="Only a Visited appointment can be marked Completed",
+                    detail="Only a Checked-In appointment can be marked Completed",
+                )
+
+    return result
+
+
+@router.post("/{appointment_id}/no-show")
+def no_show_appointment(
+    appointment_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    """Front-desk marks a Confirmed appointment as a no-show -- manual
+    only, no automatic/cron trigger (see mark_no_show_service)."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = mark_no_show_service(cur, appointment_id)
+            except svc_exc.AppointmentNotFound:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            except svc_exc.InvalidStatusTransition:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Only a Confirmed appointment can be marked No-Show",
+                )
+            except svc_exc.AppointmentNotStarted:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This appointment has not started yet",
                 )
 
     return result

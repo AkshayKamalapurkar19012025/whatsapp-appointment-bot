@@ -91,8 +91,9 @@ def get_patients(staff: dict = Depends(get_current_staff)):
     # "Recurring" here means the patient has more than one appointment
     # on record that was never cancelled or rejected (2+ real requests
     # that were, or still could be, actual visits); 0 or 1 reads as
-    # "first-time" -- every other status (PENDING/CONFIRMED/VISITED/
-    # COMPLETED, see migrations/0011_appointment_lifecycle_statuses.sql)
+    # "first-time" -- every other status (PENDING/CONFIRMED/CHECKED_IN/
+    # COMPLETED/NO_SHOW, see migrations/0011_appointment_lifecycle_
+    # statuses.sql and migrations/0015)
     # counts, including one already in the past.
     return [
         {

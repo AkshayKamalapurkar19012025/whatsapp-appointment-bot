@@ -255,10 +255,10 @@ function UpcomingAppointmentsSection({ doctor }: { doctor: Doctor }) {
 
 // -- Today's walk-in queue (ADMIN or STAFF) -----------------------------
 // migrations/0012_appointment_queue_tokens.sql: a token number is
-// assigned the moment a Confirmed appointment is checked in (marked
-// Visited, from the Appointments panel or this doctor's Upcoming tab
-// above -- there's no separate check-in button, "Mark visited" IS
-// check-in). This tab is purely a read+advance view of that queue: who
+// assigned the moment a Confirmed appointment is checked in (status ->
+// CHECKED_IN, migrations/0015, via the "Check In" button on the
+// Appointments panel or this doctor's Upcoming tab above). This tab is
+// purely a read+advance view of that queue: who
 // has a token today, who's currently being served (the lowest token
 // still waiting -- this app has no separate "in consultation" status),
 // and who's already been seen.

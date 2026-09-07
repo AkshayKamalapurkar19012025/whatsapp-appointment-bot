@@ -21,6 +21,7 @@ import {
   listAllDoctors,
   listAppointmentTypeCatalog,
   listPatients,
+  noShowAdminAppointment,
   rejectAdminAppointment,
   rescheduleAdminAppointment,
   visitAdminAppointment,
@@ -265,8 +266,9 @@ export default function AppointmentsPanel({
               <SelectItem value="CONFIRMED">Confirmed</SelectItem>
               <SelectItem value="REJECTED">Rejected</SelectItem>
               <SelectItem value="CANCELLED">Cancelled</SelectItem>
-              <SelectItem value="VISITED">Visited</SelectItem>
+              <SelectItem value="CHECKED_IN">Check In</SelectItem>
               <SelectItem value="COMPLETED">Completed</SelectItem>
+              <SelectItem value="NO_SHOW">No-Show</SelectItem>
             </SelectContent>
           </Select>
         </label>
@@ -370,7 +372,7 @@ export default function AppointmentsPanel({
                     {formatDate(a.start_at)} · {formatTime(a.start_at)} – {formatTime(a.end_at)}
                   </td>
                   <td>
-                    <span className={`pill status-${a.status.toLowerCase()}`}>{a.status}</span>
+                    <span className={`pill status-${a.status.toLowerCase()}`}>{a.status.replace(/_/g, ' ')}</span>
                     {a.token_number !== null && <span className="pill token-pill">Token #{a.token_number}</span>}
                   </td>
                   <td>
@@ -400,21 +402,37 @@ export default function AppointmentsPanel({
                         </>
                       )}
                       {a.status === 'CONFIRMED' && hasStarted(a.start_at) && (
-                        <button
-                          type="button"
-                          className="link"
-                          disabled={lifecycleBusyId === a.id}
-                          onClick={() =>
-                            runLifecycleAction(a.id, visitAdminAppointment, 'Could not mark the appointment visited')
-                          }
-                        >
-                          Mark visited
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            className="link"
+                            disabled={lifecycleBusyId === a.id}
+                            onClick={() =>
+                              runLifecycleAction(a.id, visitAdminAppointment, 'Could not check in the appointment')
+                            }
+                          >
+                            Check In
+                          </button>
+                          <button
+                            type="button"
+                            className="link danger"
+                            disabled={lifecycleBusyId === a.id}
+                            onClick={() =>
+                              runLifecycleAction(
+                                a.id,
+                                noShowAdminAppointment,
+                                'Could not mark the appointment as a no-show',
+                              )
+                            }
+                          >
+                            Mark No-Show
+                          </button>
+                        </>
                       )}
                       {a.status === 'CONFIRMED' && !hasStarted(a.start_at) && (
                         <span className="muted">Not started yet</span>
                       )}
-                      {a.status === 'VISITED' && (
+                      {a.status === 'CHECKED_IN' && (
                         <button
                           type="button"
                           className="link"

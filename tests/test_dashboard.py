@@ -3,10 +3,13 @@ Tests for GET /api/dashboard/stats and GET /api/dashboard/trends (the
 admin Dashboard landing page's summary counts and trend charts).
 
 Appointments move through a real lifecycle (migrations/0011_appointment_
-lifecycle_statuses.sql): PENDING -> CONFIRMED -> VISITED -> COMPLETED,
-with PENDING -> REJECTED or PENDING/CONFIRMED -> CANCELLED as the two
-"never happened" exits. /stats reports a count for each of those six
-statuses plus today's/upcoming (PENDING or CONFIRMED only).
+lifecycle_statuses.sql, extended by migrations/0015): PENDING ->
+CONFIRMED -> CHECKED_IN -> COMPLETED, with PENDING -> REJECTED,
+PENDING/CONFIRMED -> CANCELLED, or CONFIRMED -> NO_SHOW as exits.
+/stats reports a count for each of the original six statuses (the
+CHECKED_IN one still keyed visited_appointments -- see dashboard.py's
+own note on why NO_SHOW isn't broken out as a stat yet) plus today's/
+upcoming (PENDING or CONFIRMED only).
 
 Appointments are inserted directly via SQL (not through
 create_appointment_service/the booking API) so each row's start_at and
@@ -145,7 +148,7 @@ def test_dashboard_stats_counts_by_status_and_time(client, db_connection):
         patient_id=patient_id,
         appointment_type_id=appointment_type_id,
         start_at=now - timedelta(days=1),
-        status="VISITED",
+        status="CHECKED_IN",
     )
     _insert_appointment(
         db_connection,

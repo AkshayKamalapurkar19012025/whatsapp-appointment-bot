@@ -745,8 +745,8 @@ def list_patient_appointments_service(cur, patient_id: int):
     appointments both go to "cancelled" (a Rejected request never
     happened either, same as a Cancelled one, and the frontend has no
     separate bucket for it); a PENDING/CONFIRMED appointment whose time
-    has already passed without being resolved, or one marked VISITED/
-    COMPLETED, is "history".
+    has already passed without being resolved, or one marked CHECKED_IN/
+    COMPLETED/NO_SHOW, is "history".
 
     Same fix as get_upcoming_booked_appointments (see that function's
     docstring for the full story): start_at/end_at are converted to the
@@ -949,7 +949,7 @@ def mark_visited_service(cur, appointment_id: int):
     cur.execute(
         """
         UPDATE appointments
-        SET status = 'VISITED',
+        SET status = 'CHECKED_IN',
             visited_at = NOW(),
             token_number = %s,
             updated_at = NOW()
@@ -972,8 +972,65 @@ def mark_visited_service(cur, appointment_id: int):
 
 
 def mark_completed_service(cur, appointment_id: int):
-    """Staff closes out a Visited appointment once the consultation is
-    finished."""
+    """Staff closes out a Checked-In appointment once the consultation
+    is finished."""
     return _transition_appointment_status(
-        cur, appointment_id, from_statuses=("VISITED",), to_status="COMPLETED"
+        cur, appointment_id, from_statuses=("CHECKED_IN",), to_status="COMPLETED"
     )
+
+
+def mark_no_show_service(cur, appointment_id: int):
+    """Staff marks a Confirmed appointment as a no-show -- the patient
+    never arrived. Manual only (front-desk action), no automatic/cron
+    trigger.
+
+    Deliberately only reachable from CONFIRMED: not from CHECKED_IN (a
+    checked-in patient is physically present, so "no-show" is a
+    contradiction), and not from PENDING (an unapproved request that
+    was never confirmed is a different, out-of-scope problem -- it
+    just goes stale, it doesn't become a no-show).
+
+    Also requires the appointment to have already started -- same
+    AppointmentNotStarted guard mark_visited_service enforces for
+    check-in, for the same reason: you can't yet know a patient won't
+    show up for a slot that hasn't happened yet. Doesn't reuse
+    _transition_appointment_status above (unlike confirm/reject/
+    complete) because of this extra time check, the same reason
+    mark_visited_service doesn't either."""
+    cur.execute(
+        """
+        SELECT status, start_at
+        FROM appointments
+        WHERE id = %s
+        FOR UPDATE
+        """,
+        (appointment_id,),
+    )
+
+    row = cur.fetchone()
+
+    if row is None:
+        raise AppointmentNotFound()
+
+    status, start_at = row
+
+    if status != "CONFIRMED":
+        raise InvalidStatusTransition()
+
+    if start_at > datetime.now(timezone.utc):
+        raise AppointmentNotStarted()
+
+    cur.execute(
+        """
+        UPDATE appointments
+        SET status = 'NO_SHOW',
+            updated_at = NOW()
+        WHERE id = %s
+        RETURNING id, status
+        """,
+        (appointment_id,),
+    )
+
+    result_row = cur.fetchone()
+
+    return {"id": result_row[0], "status": result_row[1]}
