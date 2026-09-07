@@ -30,6 +30,7 @@ import DoctorCard from './DoctorCard'
 import DoctorProfileModal from './DoctorProfileModal'
 import PatientTopBar from './PatientTopBar'
 import SlotGrid from './SlotGrid'
+import StepActions from './StepActions'
 import { formatDate, formatTime } from './format'
 
 type SchedulingMode = 'doctor-first' | 'date-first'
@@ -356,14 +357,7 @@ export default function SchedulingFlow({
               )
             })}
           </div>
-          <div className="step-actions">
-            <button type="button" className="link" onClick={() => setStep('mode')}>
-              Back
-            </button>
-            <button type="button" className="link" onClick={startOver}>
-              Main Menu
-            </button>
-          </div>
+          <StepActions onBack={() => setStep('mode')} onMainMenu={startOver} />
         </>
       )}
 
@@ -399,14 +393,7 @@ export default function SchedulingFlow({
               ))}
             </ul>
           )}
-          <div className="step-actions">
-            <button type="button" className="link" onClick={() => setStep('department')}>
-              Back
-            </button>
-            <button type="button" className="link" onClick={startOver}>
-              Main Menu
-            </button>
-          </div>
+          <StepActions onBack={() => setStep('department')} onMainMenu={startOver} />
         </>
       )}
 
@@ -437,18 +424,10 @@ export default function SchedulingFlow({
               )
             })}
           </div>
-          <div className="step-actions">
-            <button
-              type="button"
-              className="link"
-              onClick={() => setStep(mode === 'date-first' ? 'department' : 'doctor')}
-            >
-              Back
-            </button>
-            <button type="button" className="link" onClick={startOver}>
-              Main Menu
-            </button>
-          </div>
+          <StepActions
+            onBack={() => setStep(mode === 'date-first' ? 'department' : 'doctor')}
+            onMainMenu={startOver}
+          />
         </>
       )}
 
@@ -461,14 +440,7 @@ export default function SchedulingFlow({
             appointmentTypeId={appointmentType.id}
             onSelectDate={chooseDateFirstDate}
           />
-          <div className="step-actions">
-            <button type="button" className="link" onClick={() => setStep('appointmentType')}>
-              Back
-            </button>
-            <button type="button" className="link" onClick={startOver}>
-              Main Menu
-            </button>
-          </div>
+          <StepActions onBack={() => setStep('appointmentType')} onMainMenu={startOver} />
         </>
       )}
 
@@ -483,14 +455,7 @@ export default function SchedulingFlow({
             doctorName={doctor.name}
             existingAppointments={existingAppointmentsWithDoctor}
           />
-          <div className="step-actions">
-            <button type="button" className="link" onClick={() => setStep('appointmentType')}>
-              Back
-            </button>
-            <button type="button" className="link" onClick={startOver}>
-              Main Menu
-            </button>
-          </div>
+          <StepActions onBack={() => setStep('appointmentType')} onMainMenu={startOver} />
         </>
       )}
 
@@ -518,14 +483,7 @@ export default function SchedulingFlow({
               ))}
             </ul>
           )}
-          <div className="step-actions">
-            <button type="button" className="link" onClick={() => setStep('date')}>
-              Back
-            </button>
-            <button type="button" className="link" onClick={startOver}>
-              Main Menu
-            </button>
-          </div>
+          <StepActions onBack={() => setStep('date')} onMainMenu={startOver} />
         </>
       )}
 
@@ -533,14 +491,7 @@ export default function SchedulingFlow({
         <>
           <h2>Choose a time on {formatDate(selectedDate)}</h2>
           <SlotGrid slots={slots} onSelect={chooseSlot} />
-          <div className="step-actions">
-            <button type="button" className="link" onClick={backFromSlot}>
-              Back
-            </button>
-            <button type="button" className="link" onClick={startOver}>
-              Main Menu
-            </button>
-          </div>
+          <StepActions onBack={backFromSlot} onMainMenu={startOver} />
         </>
       )}
 
@@ -566,14 +517,7 @@ export default function SchedulingFlow({
           <button type="button" onClick={confirmScheduling} disabled={busy}>
             {busy ? 'Scheduling…' : 'Confirm appointment'}
           </button>
-          <div className="step-actions">
-            <button type="button" className="link" onClick={() => setStep('slot')}>
-              Back
-            </button>
-            <button type="button" className="link" onClick={startOver}>
-              Main Menu
-            </button>
-          </div>
+          <StepActions onBack={() => setStep('slot')} onMainMenu={startOver} />
         </>
       )}
 

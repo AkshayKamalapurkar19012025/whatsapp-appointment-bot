@@ -678,16 +678,105 @@ a.link.danger {
   color: var(--color-danger);
 }
 
-/* Groups a step's "Back" link with a "Main Menu" escape hatch (jumps
+/* Groups a step's "Back" action with a "Main Menu" escape hatch (jumps
    straight to the mode-choice screen via startOver(), instead of
-   clicking Back repeatedly through every prior step). Both children are
-   already .link buttons with their own margin-top, so this only needs
-   to lay them out side by side with breathing room between them. */
+   clicking Back repeatedly through every prior step) -- see
+   StepActions.tsx. Back stays flush left, Main Menu flush right, each
+   taking equal width when they wrap onto their own line on narrow
+   screens rather than shrinking to fit their content. */
 .step-actions {
   display: flex;
-  align-items: center;
+  align-items: stretch;
+  justify-content: space-between;
   gap: var(--space-4);
   flex-wrap: wrap;
+  margin-top: var(--space-4);
+}
+
+.step-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1 1 200px;
+  width: auto;
+  padding: var(--space-3) var(--space-5);
+  border-radius: 999px;
+  font-weight: 600;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease, transform 0.08s ease;
+}
+
+.step-action-btn:active {
+  transform: scale(0.98);
+}
+
+.step-action-back {
+  background: var(--color-surface);
+  color: var(--color-primary);
+  border: 1px solid var(--color-border-strong);
+}
+
+.step-action-back:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.step-action-primary {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  border: 1px solid transparent;
+  box-shadow: var(--shadow-sm);
+}
+
+.step-action-primary:hover {
+  background: var(--color-primary-hover);
+}
+
+.step-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.step-action-back .step-action-icon {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.step-action-primary .step-action-icon {
+  background: rgba(255, 255, 255, 0.18);
+  color: var(--color-on-primary);
+}
+
+.step-action-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.step-action-label {
+  font-size: 0.95rem;
+  line-height: 1.25;
+}
+
+.step-action-sub {
+  font-size: 0.78rem;
+  font-weight: 400;
+  opacity: 0.75;
+}
+
+.step-action-back .step-action-sub {
+  color: var(--color-text-muted);
+  opacity: 1;
+}
+
+.step-action-arrow {
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .error {
