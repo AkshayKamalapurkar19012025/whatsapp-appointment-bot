@@ -681,9 +681,9 @@ a.link.danger {
 /* Groups a step's "Back" action with a "Main Menu" escape hatch (jumps
    straight to the mode-choice screen via startOver(), instead of
    clicking Back repeatedly through every prior step) -- see
-   StepActions.tsx. Back stays flush left, Main Menu flush right, each
-   taking equal width when they wrap onto their own line on narrow
-   screens rather than shrinking to fit their content. */
+   StepActions.tsx. Back stays flush left, Main Menu flush right; each
+   button sizes to its own content (.step-action-btn's flex: 0 0 auto)
+   rather than stretching to fill the row. */
 .step-actions {
   display: flex;
   align-items: stretch;
@@ -696,10 +696,10 @@ a.link.danger {
 .step-action-btn {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-3);
-  flex: 1 1 200px;
+  gap: 4px;
+  flex: 0 0 auto;
   width: auto;
-  padding: var(--space-3) var(--space-5);
+  padding: 5px 8px;
   border-radius: 999px;
   font-weight: 600;
   text-align: left;
@@ -736,8 +736,8 @@ a.link.danger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -759,12 +759,12 @@ a.link.danger {
 }
 
 .step-action-label {
-  font-size: 0.95rem;
-  line-height: 1.25;
+  font-size: 0.62rem;
+  line-height: 1.2;
 }
 
 .step-action-sub {
-  font-size: 0.78rem;
+  font-size: 0.52rem;
   font-weight: 400;
   opacity: 0.75;
 }

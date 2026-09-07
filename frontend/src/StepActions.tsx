@@ -11,7 +11,7 @@ export default function StepActions({ onBack, onMainMenu }: { onBack: () => void
     <div className="step-actions">
       <button type="button" className="step-action-btn step-action-back" onClick={onBack}>
         <span className="step-action-icon" aria-hidden="true">
-          <ArrowLeft size={18} weight="bold" />
+          <ArrowLeft size={8} weight="bold" />
         </span>
         <span className="step-action-text">
           <span className="step-action-label">Back</span>
@@ -20,13 +20,13 @@ export default function StepActions({ onBack, onMainMenu }: { onBack: () => void
       </button>
       <button type="button" className="step-action-btn step-action-primary" onClick={onMainMenu}>
         <span className="step-action-icon" aria-hidden="true">
-          <House size={18} weight="bold" />
+          <House size={8} weight="bold" />
         </span>
         <span className="step-action-text">
           <span className="step-action-label">Main Menu</span>
           <span className="step-action-sub">Return to Home</span>
         </span>
-        <CaretRight size={16} className="step-action-arrow" aria-hidden="true" />
+        <CaretRight size={8} className="step-action-arrow" aria-hidden="true" />
       </button>
     </div>
   )
