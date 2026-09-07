@@ -167,13 +167,27 @@ export default function Calendar({
             <AlertDialogDescription>
               {pendingDate &&
                 pendingDateAppointments.length > 0 &&
-                (pendingDateAppointments.length === 1
-                  ? `You already have an appointment with ${doctorName ?? 'this doctor'} on ${formatDate(pendingDate)}, ` +
-                    `${formatTime(pendingDateAppointments[0].start_at)}–${formatTime(pendingDateAppointments[0].end_at)}. ` +
-                    'Continue booking anyway?'
-                  : `You have ${pendingDateAppointments.length} appointments with ${doctorName ?? 'this doctor'} on ` +
-                    `${formatDate(pendingDate)}, including ${formatTime(pendingDateAppointments[0].start_at)}–` +
-                    `${formatTime(pendingDateAppointments[0].end_at)}. Continue booking anyway?`)}
+                (() => {
+                  const times = pendingDateAppointments.map(
+                    (a) => `${formatTime(a.start_at)}–${formatTime(a.end_at)}`,
+                  )
+                  // "A", "A and B", or "A, B, and C" -- every existing
+                  // slot named, not just the earliest, so the patient
+                  // can actually tell whether their new pick overlaps
+                  // ANY of them, not only the first.
+                  const timesList =
+                    times.length === 1
+                      ? times[0]
+                      : times.length === 2
+                        ? `${times[0]} and ${times[1]}`
+                        : `${times.slice(0, -1).join(', ')}, and ${times[times.length - 1]}`
+
+                  return pendingDateAppointments.length === 1
+                    ? `You already have an appointment with ${doctorName ?? 'this doctor'} on ${formatDate(pendingDate)}, ` +
+                        `${timesList}. Continue booking anyway?`
+                    : `You have ${pendingDateAppointments.length} appointments with ${doctorName ?? 'this doctor'} on ` +
+                        `${formatDate(pendingDate)}, at ${timesList}. Continue booking anyway?`
+                })()}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
