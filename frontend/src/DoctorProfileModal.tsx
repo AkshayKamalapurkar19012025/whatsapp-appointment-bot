@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { X } from '@phosphor-icons/react'
 import { ApiError, getDoctorProfile } from './api'
 import type { DoctorProfile } from './types'
@@ -34,7 +35,16 @@ export default function DoctorProfileModal({
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [onClose])
 
-  return (
+  // Ported to document.body (same fix AlertDialogPrimitive.Portal already
+  // gives the AlertDialog components for free): this modal is used from
+  // inside .card, which sets backdrop-filter for the frosted-glass look --
+  // and per spec, backdrop-filter/filter/transform on an ancestor becomes
+  // the containing block for any position:fixed descendant. Without the
+  // portal, this overlay's inset:0 resolves against .card's own (tall,
+  // scrollable) box instead of the viewport, so on a long list it renders
+  // wherever the page happens to be scrolled to instead of as a true
+  // full-screen overlay.
+  return createPortal(
     <div className="modal-overlay" onClick={onClose}>
       <div
         className="modal-panel"
@@ -105,9 +115,15 @@ export default function DoctorProfileModal({
                 {profile.education.map((entry) => (
                   <li key={entry.id} className={entry.is_primary ? 'education-entry featured' : 'education-entry'}>
                     <div>
+                      {/* The tinted background (.featured, from is_primary)
+                          is enough to set this entry apart -- "Featured"
+                          itself is the admin picker's own label for
+                          choosing among entries (DoctorProfileSection.tsx's
+                          "Feature on card" toggle) and is meaningless to a
+                          patient looking at a profile with no other
+                          entries competing for attention. */}
                       <strong>{entry.qualification}</strong> — {entry.institution}, {entry.city},{' '}
                       {entry.country} ({entry.completion_year})
-                      {entry.is_primary && <span className="pill role-admin">Featured</span>}
                     </div>
                   </li>
                 ))}
@@ -116,6 +132,7 @@ export default function DoctorProfileModal({
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
