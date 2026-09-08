@@ -26,9 +26,9 @@ from datetime import date, datetime
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
-from app.api.staff_auth import get_current_staff
+from app.api.staff_auth import get_current_staff, require_role
 from app.db.connection import get_connection
 from app.services import exceptions as svc_exc
 from app.services.appointment_services import (
@@ -40,6 +40,9 @@ from app.services.appointment_services import (
     mark_visited_service,
     mark_completed_service,
     mark_no_show_service,
+    get_consultation_charge_service,
+    record_payment_service,
+    waive_consultation_fee_service,
 )
 from app.services.availability_engine import list_available_dates_in_range
 from app.services.notifications import KIND_CHECK_IN, send_mock_notification
@@ -62,6 +65,37 @@ class AppointmentCreate(BaseModel):
 
 class AppointmentReschedule(BaseModel):
     new_start_at: datetime
+
+
+class PaymentRecord(BaseModel):
+    method: str
+    outcome: str
+
+    @field_validator("method")
+    @classmethod
+    def validate_method(cls, value: str) -> str:
+        if value not in ("CASH", "UPI", "CARD", "OTHER"):
+            raise ValueError("method must be one of CASH, UPI, CARD, OTHER")
+        return value
+
+    @field_validator("outcome")
+    @classmethod
+    def validate_outcome(cls, value: str) -> str:
+        if value not in ("PAID", "FAILED"):
+            raise ValueError("outcome must be one of PAID, FAILED")
+        return value
+
+
+class PaymentWaive(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("A reason is required to waive the consultation fee")
+        return value
 
 
 @router.get("")
@@ -137,7 +171,13 @@ def get_appointments(
                     a.end_at,
                     a.status,
                     a.token_number,
-                    a.created_at
+                    a.created_at,
+                    a.payment_status,
+                    dat.consultation_fee,
+                    a.payment_method,
+                    a.payment_amount,
+                    a.payment_recorded_at,
+                    a.waive_reason
                 FROM appointments a
                 JOIN doctors d
                     ON d.id = a.doctor_id
@@ -145,6 +185,9 @@ def get_appointments(
                     ON p.id = a.patient_id
                 JOIN appointment_types at
                     ON at.id = a.appointment_type_id
+                LEFT JOIN doctor_appointment_types dat
+                    ON dat.doctor_id = a.doctor_id
+                   AND dat.appointment_type_id = a.appointment_type_id
                 {where_sql}
                 ORDER BY a.start_at
                 """,
@@ -188,6 +231,12 @@ def get_appointments(
                 # renders in the *viewer's* own local time, not the
                 # doctor's.
                 "created_at": row[13].isoformat(),
+                "payment_status": row[14],
+                "consultation_fee": row[15],
+                "payment_method": row[16],
+                "payment_amount": row[17],
+                "paid_at": row[18].isoformat() if row[18] else None,
+                "waive_reason": row[19],
             }
         )
 
@@ -505,6 +554,99 @@ def visit_appointment(
         "token_number": result["token_number"],
         "visited_at": result["visited_at"],
     }
+
+
+@router.get("/{appointment_id}/charge")
+def get_appointment_charge(
+    appointment_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = get_consultation_charge_service(cur, appointment_id)
+            except svc_exc.AppointmentNotFound:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            except svc_exc.AppointmentTypeNotAssigned:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This doctor/appointment-type combination no longer has a configured fee",
+                )
+
+    return result
+
+
+@router.post("/{appointment_id}/payment")
+def record_appointment_payment(
+    appointment_id: int,
+    payment: PaymentRecord,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = record_payment_service(
+                    cur,
+                    appointment_id,
+                    method=payment.method,
+                    outcome=payment.outcome,
+                    staff_id=staff["id"],
+                )
+            except svc_exc.AppointmentNotFound:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            except svc_exc.InvalidStatusTransition:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Payment can only be recorded for a Checked-In appointment",
+                )
+            except svc_exc.PaymentStateConflict:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This appointment's consultation fee is already waived or refunded",
+                )
+            except svc_exc.AppointmentTypeNotAssigned:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This doctor/appointment-type combination no longer has a configured fee",
+                )
+
+    return result
+
+
+@router.post("/{appointment_id}/waive-payment")
+def waive_appointment_payment(
+    appointment_id: int,
+    waiver: PaymentWaive,
+    admin: dict = Depends(require_role("ADMIN")),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = waive_consultation_fee_service(
+                    cur,
+                    appointment_id,
+                    reason=waiver.reason,
+                    staff_id=admin["id"],
+                )
+            except svc_exc.AppointmentNotFound:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            except svc_exc.InvalidStatusTransition:
+                raise HTTPException(
+                    status_code=409,
+                    detail="The consultation fee can only be waived for a Checked-In appointment",
+                )
+            except svc_exc.PaymentStateConflict:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This appointment's consultation fee is already paid or refunded",
+                )
+            except svc_exc.WaiverNotEligible:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Waiver requires a completed visit with this doctor in the last 7 days",
+                )
+
+    return result
 
 
 @router.post("/{appointment_id}/complete")

@@ -64,6 +64,8 @@ from app.services.exceptions import (
     NotAppointmentOwner,
     InvalidStatusTransition,
     AppointmentNotStarted,
+    PaymentStateConflict,
+    WaiverNotEligible,
 )
 
 logger = logging.getLogger(__name__)
@@ -1096,3 +1098,205 @@ def mark_no_show_service(cur, appointment_id: int):
     result_row = cur.fetchone()
 
     return {"id": result_row[0], "status": result_row[1]}
+
+
+def get_consultation_charge_service(cur, appointment_id: int):
+    """
+    The fee to charge for this appointment -- always looked up
+    server-side from doctor_appointment_types.consultation_fee (never
+    trusts a client-supplied amount, since that's the one number in
+    this whole workflow that must not be spoofable). Callable any time
+    an appointment exists, independent of its current status, so
+    Phase 5's UI can show "Consultation Fee: X" before check-in too.
+    """
+    cur.execute(
+        """
+        SELECT dat.consultation_fee
+        FROM appointments a
+        JOIN doctor_appointment_types dat
+            ON dat.doctor_id = a.doctor_id
+           AND dat.appointment_type_id = a.appointment_type_id
+        WHERE a.id = %s
+        """,
+        (appointment_id,),
+    )
+
+    row = cur.fetchone()
+
+    if row is None:
+        # Either the appointment doesn't exist, or its doctor/type
+        # pairing was deactivated after the appointment was created
+        # (create_appointment_service required it to be active at
+        # creation time, but doesn't prevent later deactivation).
+        cur.execute("SELECT id FROM appointments WHERE id = %s", (appointment_id,))
+        if cur.fetchone() is None:
+            raise AppointmentNotFound()
+        raise AppointmentTypeNotAssigned()
+
+    return {"appointment_id": appointment_id, "consultation_fee": row[0]}
+
+
+def _lock_appointment_for_payment(cur, appointment_id: int):
+    """Shared row lookup/lock for record_payment_service and
+    waive_consultation_fee_service -- both gate on the same two things
+    (appointment exists and is CHECKED_IN) before doing anything
+    payment-specific."""
+    cur.execute(
+        """
+        SELECT status, payment_status, doctor_id, patient_id, visited_at
+        FROM appointments
+        WHERE id = %s
+        FOR UPDATE
+        """,
+        (appointment_id,),
+    )
+
+    row = cur.fetchone()
+
+    if row is None:
+        raise AppointmentNotFound()
+
+    status, payment_status, doctor_id, patient_id, visited_at = row
+
+    if status != "CHECKED_IN":
+        raise InvalidStatusTransition()
+
+    return payment_status, doctor_id, patient_id, visited_at
+
+
+def record_payment_service(cur, appointment_id: int, *, method: str, outcome: str, staff_id: int):
+    """
+    Staff records a consultation-payment attempt at the front desk --
+    method is CASH/UPI/CARD/OTHER, outcome is PAID or FAILED (a FAILED
+    attempt, e.g. a declined card, can be retried by calling this again
+    with a new outcome; nothing here talks to a real payment gateway,
+    per the workflow spec's explicit scope boundary).
+
+    Idempotent on an already-PAID appointment: returns the existing
+    record unchanged rather than charging a second time -- guards
+    against a double-click or a refresh-and-resubmit. Raises
+    PaymentStateConflict for WAIVED/REFUNDED, since neither of those
+    should ever be overwritten by a plain payment attempt.
+    """
+    payment_status, doctor_id, patient_id, visited_at = _lock_appointment_for_payment(cur, appointment_id)
+
+    if payment_status == "PAID":
+        return _current_payment_record(cur, appointment_id)
+
+    if payment_status in ("WAIVED", "REFUNDED"):
+        raise PaymentStateConflict()
+
+    # Recorded for both outcomes -- FAILED still records the amount
+    # that was *attempted* (e.g. "UPI declined for Rs. 500"), useful
+    # for the front desk to see what's outstanding on retry. It does
+    # not mean money changed hands; payment_status is what says that.
+    charge = get_consultation_charge_service(cur, appointment_id)
+    amount = charge["consultation_fee"]
+
+    cur.execute(
+        """
+        UPDATE appointments
+        SET payment_status = %s,
+            payment_method = %s,
+            payment_amount = %s,
+            payment_recorded_by = %s,
+            payment_recorded_at = NOW(),
+            updated_at = NOW()
+        WHERE id = %s
+        """,
+        (outcome, method, amount, staff_id, appointment_id),
+    )
+
+    return _current_payment_record(cur, appointment_id)
+
+
+def waive_consultation_fee_service(cur, appointment_id: int, *, reason: str, staff_id: int):
+    """
+    Staff (ADMIN only -- enforced at the API layer, app/api/
+    appointments.py) waives the consultation fee for this visit. Only
+    eligible when the same patient has a COMPLETED visit with this same
+    doctor within the 7 calendar days before this one's check-in --
+    the clinic's stated policy ("waiver applies only if the patient
+    revisits within 7 days"), not staff discretion. visited_at's
+    doctor-local calendar date is compared on both sides (same pattern
+    mark_visited_service/get_doctor_queue use for "which day is this"),
+    not a raw 168-hour timestamp difference.
+
+    Idempotent on an already-WAIVED appointment. Raises
+    PaymentStateConflict if already PAID (a completed payment isn't
+    something a waiver un-does -- that would be a refund, out of this
+    phase's scope).
+    """
+    payment_status, doctor_id, patient_id, visited_at = _lock_appointment_for_payment(cur, appointment_id)
+
+    if payment_status == "WAIVED":
+        return _current_payment_record(cur, appointment_id)
+
+    if payment_status in ("PAID", "REFUNDED"):
+        raise PaymentStateConflict()
+
+    cur.execute("SELECT timezone FROM doctors WHERE id = %s", (doctor_id,))
+    (doctor_tz,) = cur.fetchone()
+    if not validate_timezone(doctor_tz):
+        doctor_tz = "Asia/Kolkata"
+
+    this_visit_date = convert_to_timezone(visited_at, doctor_tz).date()
+
+    cur.execute(
+        """
+        SELECT 1
+        FROM appointments
+        WHERE patient_id = %s
+          AND doctor_id = %s
+          AND status = 'COMPLETED'
+          AND id <> %s
+          AND visited_at IS NOT NULL
+          AND (visited_at AT TIME ZONE %s)::date >= %s - INTERVAL '7 days'
+          AND (visited_at AT TIME ZONE %s)::date <= %s
+        LIMIT 1
+        """,
+        (patient_id, doctor_id, appointment_id, doctor_tz, this_visit_date, doctor_tz, this_visit_date),
+    )
+
+    if cur.fetchone() is None:
+        raise WaiverNotEligible()
+
+    cur.execute(
+        """
+        UPDATE appointments
+        SET payment_status = 'WAIVED',
+            payment_method = NULL,
+            payment_amount = 0,
+            waive_reason = %s,
+            payment_recorded_by = %s,
+            payment_recorded_at = NOW(),
+            updated_at = NOW()
+        WHERE id = %s
+        """,
+        (reason, staff_id, appointment_id),
+    )
+
+    return _current_payment_record(cur, appointment_id)
+
+
+def _current_payment_record(cur, appointment_id: int):
+    cur.execute(
+        """
+        SELECT id, payment_status, payment_method, payment_amount,
+               payment_recorded_at, waive_reason
+        FROM appointments
+        WHERE id = %s
+        """,
+        (appointment_id,),
+    )
+
+    row = cur.fetchone()
+
+    return {
+        "id": row[0],
+        "payment_status": row[1],
+        "payment_method": row[2],
+        "payment_amount": row[3],
+        "payment_recorded_at": row[4].isoformat() if row[4] else None,
+        "waive_reason": row[5],
+    }

@@ -12,6 +12,12 @@ router = APIRouter(
 
 class DoctorAppointmentTypeCreate(BaseModel):
     duration_minutes: int = Field(gt=0, le=480)
+    # Consultation fee for this doctor/appointment-type pairing (patient
+    # arrival workflow Phase 3 -- get_consultation_charge_service reads
+    # this at check-in/payment time). Defaults to 0 -- an admin who
+    # doesn't pass this explicitly gets "no price configured yet", not
+    # a fabricated fee.
+    consultation_fee: float = Field(default=0, ge=0)
 
 
 @router.get("/{doctor_id}/appointment-types")
@@ -24,7 +30,8 @@ def get_doctor_appointment_types(doctor_id: int):
                     at.id,
                     at.name,
                     dat.duration_minutes,
-                    dat.active
+                    dat.active,
+                    dat.consultation_fee
                 FROM doctor_appointment_types dat
                 JOIN appointment_types at
                     ON at.id = dat.appointment_type_id
@@ -44,6 +51,7 @@ def get_doctor_appointment_types(doctor_id: int):
             "name": row[1],
             "duration_minutes": row[2],
             "active": row[3],
+            "consultation_fee": row[4],
         }
         for row in rows
     ]
@@ -128,6 +136,7 @@ def assign_appointment_type_to_doctor(
                     """
                     UPDATE doctor_appointment_types
                     SET duration_minutes = %s,
+                        consultation_fee = %s,
                         active = TRUE,
                         updated_at = NOW()
                     WHERE doctor_id = %s
@@ -135,10 +144,12 @@ def assign_appointment_type_to_doctor(
                     RETURNING doctor_id,
                               appointment_type_id,
                               duration_minutes,
-                              active
+                              active,
+                              consultation_fee
                     """,
                     (
                         appointment_type.duration_minutes,
+                        appointment_type.consultation_fee,
                         doctor_id,
                         appointment_type_id,
                     ),
@@ -149,18 +160,21 @@ def assign_appointment_type_to_doctor(
                     INSERT INTO doctor_appointment_types (
                         doctor_id,
                         appointment_type_id,
-                        duration_minutes
+                        duration_minutes,
+                        consultation_fee
                     )
-                    VALUES (%s, %s, %s)
+                    VALUES (%s, %s, %s, %s)
                     RETURNING doctor_id,
                               appointment_type_id,
                               duration_minutes,
-                              active
+                              active,
+                              consultation_fee
                     """,
                     (
                         doctor_id,
                         appointment_type_id,
                         appointment_type.duration_minutes,
+                        appointment_type.consultation_fee,
                     ),
                 )
 
@@ -171,6 +185,7 @@ def assign_appointment_type_to_doctor(
         "appointment_type_id": row[1],
         "duration_minutes": row[2],
         "active": row[3],
+        "consultation_fee": row[4],
         "appointment_type_name": appointment_type_row[1],
     }
 
@@ -225,16 +240,19 @@ def update_appointment_type_duration(
                 """
                 UPDATE doctor_appointment_types
                 SET duration_minutes = %s,
+                    consultation_fee = %s,
                     active = TRUE
                 WHERE doctor_id = %s
                   AND appointment_type_id = %s
                 RETURNING doctor_id,
                           appointment_type_id,
                           duration_minutes,
-                          active
+                          active,
+                          consultation_fee
                 """,
                 (
                     appointment_type.duration_minutes,
+                    appointment_type.consultation_fee,
                     doctor_id,
                     appointment_type_id,
                 ),
@@ -253,6 +271,7 @@ def update_appointment_type_duration(
         "appointment_type_id": row[1],
         "duration_minutes": row[2],
         "active": row[3],
+        "consultation_fee": row[4],
         "appointment_type_name": appointment_type_row[1],
     }
 
