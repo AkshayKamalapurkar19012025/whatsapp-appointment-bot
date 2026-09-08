@@ -1,13 +1,16 @@
 """
 Tests for generate_queue_token_service (app/services/appointment_
 services.py), extracted out of mark_visited_service as Phase 1 of the
-patient arrival -> registration -> payment -> queue workflow. This
-phase keeps mark_visited_service calling it internally right after
-check-in (no behavior change -- see tests/test_queue_tokens.py, which
-covers that end-to-end behavior and is untouched by this phase), so
-these tests target the extracted function directly: that it's genuinely
-idempotent, and that it works independently of the check-in transition
-itself rather than being inlined logic with a new name.
+patient arrival -> registration -> payment -> queue workflow. Phase 1
+kept mark_visited_service calling it internally right after check-in
+as a transitional, no-behavior-change step; Phase 4 cut that wire for
+real (record_payment_service's PAID outcome and
+waive_consultation_fee_service are this function's only callers now --
+see tests/test_queue_tokens.py and tests/test_consultation_payments.py
+for that end-to-end behavior). These tests target the extracted
+function directly: that it's genuinely idempotent, and that it works
+independently of the check-in transition itself rather than being
+inlined logic with a new name.
 
 Also covers migrations/0018_appointment_payment_status.sql: the new
 column's default, its CHECK constraint, and the WAIVED backfill for
@@ -74,27 +77,42 @@ def test_generate_queue_token_service_is_idempotent(client, db_connection):
 
     a = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, "Idempotent Patient A", 20000001, hour=9)
 
-    # Check in via the real API/service path -- this already assigns a
-    # token (mark_visited_service still calls generate_queue_token_service
-    # internally in this phase).
+    # Check in via the real API/service path -- as of Phase 4 this no
+    # longer assigns a token itself (mark_visited_service no longer
+    # calls generate_queue_token_service -- see tests/test_queue_tokens.py
+    # for that behavior). Call the extracted function directly here.
     visit_response = client.post(f"/api/appointments/{a['appointment_id']}/visit", headers=admin_headers)
     assert visit_response.status_code == 200
-    assert visit_response.json()["token_number"] == 1
+    assert visit_response.json()["token_number"] is None
 
-    # Calling generate_queue_token_service again directly for the same
-    # appointment must return the same token, not assign a new one.
     with db_connection.cursor() as cur:
-        result = generate_queue_token_service(
+        first = generate_queue_token_service(
             cur, a["appointment_id"], doctor_id=seeded["doctor_id"], doctor_tz="Asia/Kolkata"
         )
     db_connection.commit()
-    assert result["token_number"] == 1
+    assert first["token_number"] == 1
+    assert first["newly_generated"] is True
 
-    # A second patient checked in afterward must still get token 2 -- the
-    # replay above must not have consumed a number.
+    # Calling it again for the same appointment must return the same
+    # token, not assign a new one.
+    with db_connection.cursor() as cur:
+        replay = generate_queue_token_service(
+            cur, a["appointment_id"], doctor_id=seeded["doctor_id"], doctor_tz="Asia/Kolkata"
+        )
+    db_connection.commit()
+    assert replay["token_number"] == 1
+    assert replay["newly_generated"] is False
+
+    # A second patient afterward must still get token 2 -- the replay
+    # above must not have consumed a number.
     b = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, "Idempotent Patient B", 20000002, hour=10)
-    visit_b = client.post(f"/api/appointments/{b['appointment_id']}/visit", headers=admin_headers)
-    assert visit_b.json()["token_number"] == 2
+    client.post(f"/api/appointments/{b['appointment_id']}/visit", headers=admin_headers)
+    with db_connection.cursor() as cur:
+        second_patient = generate_queue_token_service(
+            cur, b["appointment_id"], doctor_id=seeded["doctor_id"], doctor_tz="Asia/Kolkata"
+        )
+    db_connection.commit()
+    assert second_patient["token_number"] == 2
 
 
 def test_generate_queue_token_service_works_independently_of_check_in(client, db_connection):

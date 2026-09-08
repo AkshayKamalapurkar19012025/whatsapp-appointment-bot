@@ -610,9 +610,19 @@ def get_doctor_queue(
     """
     Today's walk-in queue for this doctor (migrations/0012_appointment_
     queue_tokens.sql): patients checked in today (status CHECKED_IN or
-    COMPLETED, token_number assigned at check-in -- see mark_visited_
-    service), split into "now serving" (the lowest still-waiting token
-    -- this app has no separate "in consultation" status, so the
+    COMPLETED) who have actually been issued a token -- as of the
+    patient arrival workflow's Phase 4, that's no longer everyone who's
+    CHECKED_IN (token_number is assigned by record_payment_service's
+    PAID outcome or waive_consultation_fee_service, not check-in
+    itself any more; see mark_visited_service's docstring). The
+    explicit token_number IS NOT NULL filter below is what keeps a
+    checked-in-but-unpaid patient off this list -- the core business
+    rule ("don't enter the queue before payment") enforced at the
+    query that actually surfaces the queue to a doctor, not just at
+    write time.
+
+    Split into "now serving" (the lowest still-waiting token -- this
+    app has no separate "in consultation" status, so the
     lowest-numbered CHECKED_IN row still waiting is the working
     definition of who's up), the rest of the CHECKED_IN rows waiting
     behind them, and today's already-Completed patients for reference.
@@ -645,6 +655,7 @@ def get_doctor_queue(
                 JOIN patients p ON p.id = a.patient_id
                 WHERE a.doctor_id = %s
                   AND a.status IN ('CHECKED_IN', 'COMPLETED')
+                  AND a.token_number IS NOT NULL
                   AND (a.visited_at AT TIME ZONE %s)::date = %s
                 ORDER BY a.token_number
                 """,

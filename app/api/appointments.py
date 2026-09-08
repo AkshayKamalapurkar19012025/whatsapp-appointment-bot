@@ -45,7 +45,7 @@ from app.services.appointment_services import (
     waive_consultation_fee_service,
 )
 from app.services.availability_engine import list_available_dates_in_range
-from app.services.notifications import KIND_CHECK_IN, send_mock_notification
+from app.services.notifications import KIND_CHECK_IN, KIND_QUEUE_TOKEN, send_mock_notification
 from app.utils.timezone import convert_to_timezone, validate_timezone
 
 logger = logging.getLogger(__name__)
@@ -522,13 +522,17 @@ def visit_appointment(
                     detail="This appointment has not started yet",
                 )
 
-            # Staff-initiated check-in notification (migrations/0012) --
-            # tells the patient their queue token number. Not a
-            # duplicate of anything: unlike a WhatsApp-driven action,
-            # the patient isn't mid-chat with the bot when staff check
-            # them in at the front desk, so there's no live confirmation
-            # this would repeat (see notifications.py's KIND_CHECK_IN
-            # note).
+            # Staff-initiated check-in notification (migrations/0012).
+            # No token number here any more (Phase 4 decoupled token
+            # issuance from check-in -- see mark_visited_service's
+            # docstring): this just confirms arrival. The token itself
+            # is announced separately, via KIND_QUEUE_TOKEN, once
+            # payment succeeds or is waived (record_appointment_payment/
+            # waive_appointment_payment below). Not a duplicate of
+            # anything: unlike a WhatsApp-driven action, the patient
+            # isn't mid-chat with the bot when staff check them in at
+            # the front desk, so there's no live confirmation this
+            # would repeat (see notifications.py's KIND_CHECK_IN note).
             cur.execute(
                 """
                 SELECT p.whatsapp_number, p.name, d.name
@@ -542,10 +546,8 @@ def visit_appointment(
                 cur,
                 patient_number,
                 KIND_CHECK_IN,
-                (
-                    f"Hi {patient_name}, you're checked in with {doctor_name}. "
-                    f"Your token number is {result['token_number']}."
-                ),
+                f"Hi {patient_name}, you're checked in with {doctor_name}. "
+                f"Please complete registration and payment at the front desk.",
             )
 
     return {
@@ -574,6 +576,32 @@ def get_appointment_charge(
                 )
 
     return result
+
+
+def _notify_queue_token(cur, appointment_id: int, token_number: int) -> None:
+    """Fires once, exactly when a token is newly issued (record_payment_
+    service/waive_consultation_fee_service's token_just_issued flag) --
+    the Phase 4 replacement for the old check-in-time token
+    announcement (see visit_appointment's own note above)."""
+    cur.execute(
+        """
+        SELECT p.whatsapp_number, p.name, d.name
+        FROM appointments a
+        JOIN patients p ON p.id = a.patient_id
+        JOIN doctors d ON d.id = a.doctor_id
+        WHERE a.id = %s
+        """,
+        (appointment_id,),
+    )
+    patient_number, patient_name, doctor_name = cur.fetchone()
+    send_mock_notification(
+        cur,
+        patient_number,
+        KIND_QUEUE_TOKEN,
+        f"Hi {patient_name}, you're checked in successfully. "
+        f"Queue Token: {token_number}. Status: Waiting for Doctor "
+        f"({doctor_name}).",
+    )
 
 
 @router.post("/{appointment_id}/payment")
@@ -610,6 +638,9 @@ def record_appointment_payment(
                     detail="This doctor/appointment-type combination no longer has a configured fee",
                 )
 
+            if result["token_just_issued"]:
+                _notify_queue_token(cur, appointment_id, result["token_number"])
+
     return result
 
 
@@ -645,6 +676,9 @@ def waive_appointment_payment(
                     status_code=409,
                     detail="Waiver requires a completed visit with this doctor in the last 3 days",
                 )
+
+            if result["token_just_issued"]:
+                _notify_queue_token(cur, appointment_id, result["token_number"])
 
     return result
 

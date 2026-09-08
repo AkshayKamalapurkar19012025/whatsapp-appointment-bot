@@ -141,6 +141,9 @@ def test_record_payment_success(client, db_connection):
     assert body["payment_status"] == "PAID"
     assert body["payment_method"] == "UPI"
     assert float(body["payment_amount"]) == 500.0
+    # Phase 4: successful payment is the queue-entry trigger.
+    assert body["token_number"] == 1
+    assert body["token_just_issued"] is True
     assert body["payment_recorded_at"] is not None
 
 
@@ -172,6 +175,12 @@ def test_record_payment_is_idempotent_on_double_click(client, db_connection):
     # exactly what was first recorded, no double charge.
     assert second.json()["payment_method"] == "CASH"
     assert first.json()["payment_recorded_at"] == second.json()["payment_recorded_at"]
+    # Only one token ever issued -- the replay must not renumber or
+    # re-notify.
+    assert first.json()["token_number"] == 1
+    assert second.json()["token_number"] == 1
+    assert first.json()["token_just_issued"] is True
+    assert second.json()["token_just_issued"] is False
 
 
 def test_record_payment_failed_then_retry_succeeds(client, db_connection):
@@ -192,6 +201,9 @@ def test_record_payment_failed_then_retry_succeeds(client, db_connection):
     )
     assert failed.status_code == 200
     assert failed.json()["payment_status"] == "FAILED"
+    # A failed attempt must never issue a token -- the patient stays
+    # outside the queue.
+    assert failed.json()["token_number"] is None
 
     retried = client.post(
         f"/api/appointments/{appointment_id}/payment",
@@ -200,6 +212,7 @@ def test_record_payment_failed_then_retry_succeeds(client, db_connection):
     )
     assert retried.status_code == 200
     assert retried.json()["payment_status"] == "PAID"
+    assert retried.json()["token_number"] == 1
     assert retried.json()["payment_method"] == "CASH"
 
 
@@ -340,6 +353,9 @@ def test_waive_accepted_at_exactly_three_days(client, db_connection):
     assert response.status_code == 200
     assert response.json()["payment_status"] == "WAIVED"
     assert float(response.json()["payment_amount"]) == 0.0
+    # Waiver is a queue-entry trigger too, same as a successful payment.
+    assert response.json()["token_number"] == 1
+    assert response.json()["token_just_issued"] is True
 
 
 def test_waive_rejected_at_four_days(client, db_connection):
@@ -453,3 +469,8 @@ def test_waive_is_idempotent(client, db_connection):
     assert second.status_code == 200
     # The replay must not overwrite the original reason.
     assert second.json()["waive_reason"] == "First reason"
+    # Nor renumber the token or re-notify.
+    assert first.json()["token_number"] == 1
+    assert second.json()["token_number"] == 1
+    assert first.json()["token_just_issued"] is True
+    assert second.json()["token_just_issued"] is False
