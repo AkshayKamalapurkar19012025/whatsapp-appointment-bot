@@ -6,6 +6,7 @@ import {
   ChartLineUp,
   Gauge,
   GearSix,
+  ListNumbers,
   ShieldCheck,
   Stethoscope,
   Tag,
@@ -22,6 +23,7 @@ import StaffAccountsPanel from './StaffAccountsPanel'
 import PatientsPanel from './PatientsPanel'
 import AppointmentsPanel from './AppointmentsPanel'
 import BookAppointmentPanel from './BookAppointmentPanel'
+import QueuePanel from './QueuePanel'
 import AdminSidebar, { type AdminSidebarItem } from './AdminSidebar'
 import AdminTopBar from './AdminTopBar'
 
@@ -29,6 +31,7 @@ type Section =
   | 'dashboard'
   | 'appointments'
   | 'book-appointment'
+  | 'queue'
   | 'doctors'
   | 'departments'
   | 'appointment-types'
@@ -136,6 +139,14 @@ export default function AdminApp() {
       group: 'Main',
     },
     {
+      key: 'queue',
+      label: 'Queue',
+      icon: <ListNumbers size={20} weight="regular" />,
+      active: section === 'queue',
+      onSelect: () => goTo('queue'),
+      group: 'Main',
+    },
+    {
       key: 'doctors',
       label: 'Doctors',
       icon: <Stethoscope size={20} weight="regular" />,
@@ -217,6 +228,7 @@ export default function AdminApp() {
           {section === 'book-appointment' && (
             <BookAppointmentPanel onViewAppointments={() => goTo('appointments')} />
           )}
+          {section === 'queue' && <QueuePanel />}
           {section === 'doctors' && <DoctorsPanel isAdmin={isAdmin} />}
           {section === 'departments' && <DepartmentsPanel isAdmin={isAdmin} />}
           {section === 'appointment-types' && <AppointmentTypesPanel isAdmin={isAdmin} />}
