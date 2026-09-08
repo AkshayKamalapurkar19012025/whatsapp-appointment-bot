@@ -1487,96 +1487,210 @@ a.link.danger {
 }
 
 /* ===========================================================
-   Doctor grid (DoctorsPanel.tsx) -- doctors grouped under their
-   department as a heading, cards laid out in a responsive grid rather
-   than one-per-row, so scanning a doctor list of any real size doesn't
-   mean scrolling through a tall single column.
+   Doctor directory (DoctorsPanel.tsx) -- each doctor appears exactly
+   once (no more grouping/repeating a doctor under every department it
+   belongs to). A real <table> on desktop wrapped in .data-table-wrap
+   (already handles overflow-x), converted to a stacked card list below
+   860px -- the same table/mobile-card split AppointmentsPanel.tsx's own
+   .appointment-mobile-list already establishes, not a new convention.
    =========================================================== */
 
-.doctor-group {
-  margin-bottom: var(--space-5);
+.doctor-directory-table-wrap .doctor-name-trigger {
+  position: relative;
+  display: inline-block;
 }
 
-.doctor-group-label {
-  margin: 0 0 var(--space-2);
-  font-size: 0.75rem;
+.doctor-name-button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 4px;
+  border: none;
+  background: none;
+  color: var(--color-text);
+  text-align: left;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.doctor-name-button:hover,
+.doctor-name-button:focus-visible {
+  background: var(--color-bg-subtle);
+}
+
+.doctor-name-block {
+  display: flex;
+  flex-direction: column;
+}
+
+.doctor-name-text {
+  font-weight: 600;
+}
+
+.doctor-name-specialization {
+  font-size: 0.82rem;
+}
+
+.doctor-department-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* Hover/focus preview popover -- absolutely positioned so it never
+   changes row height or reflows the table/list, with the same
+   viewport-edge shift/flip pattern as DepartmentsPanel.tsx's own
+   DepartmentCard popover (--popover-shift, .above). */
+.doctor-preview-popover {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  z-index: 30;
+  min-width: 240px;
+  max-width: 300px;
+  padding: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  transform: translateX(var(--popover-shift, 0px));
+  text-align: left;
+}
+
+.doctor-preview-popover.above {
+  top: auto;
+  bottom: calc(100% + var(--space-1));
+}
+
+.doctor-preview-name {
+  margin: 0 0 2px;
+  font-weight: 700;
+}
+
+.doctor-preview-line {
+  margin: 0 0 2px;
+  font-size: 0.85rem;
+}
+
+.doctor-preview-departments-label {
+  margin: var(--space-2) 0 4px;
+  font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.04em;
   color: var(--color-text-muted);
 }
 
-.doctor-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: var(--space-2);
-}
-
-.doctor-card {
-  text-align: left;
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-weight: 500;
+.doctor-preview-departments {
+  list-style: none;
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  font-size: 0.85rem;
   display: flex;
   flex-direction: column;
-  transition: border-color 0.12s ease, background 0.12s ease, transform 0.08s ease;
+  gap: 2px;
 }
 
-.doctor-card:active {
-  transform: scale(0.98);
+.doctor-preview-view {
+  width: 100%;
 }
 
-.doctor-card:hover {
-  border-color: var(--color-primary);
-  background: var(--color-primary-soft);
+.doctor-mobile-list {
+  display: none;
+  list-style: none;
+  margin: var(--space-3) 0;
+  padding: 0;
+  flex-direction: column;
+  gap: var(--space-3);
 }
 
-.doctor-card.selected {
-  border-color: var(--color-primary);
-  background: var(--color-primary-soft);
-  box-shadow: 0 0 0 1px var(--color-primary);
+.doctor-mobile-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
 }
 
-.doctor-card-header {
+.doctor-mobile-card:hover {
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.doctor-mobile-card-top {
   display: flex;
   align-items: center;
   gap: var(--space-3);
 }
 
-/* The rest of a doctor card's compact summary (below the avatar/name
-   header) -- years of experience + key qualification on one muted
-   line, featured education location on another. Deliberately just
-   these two lines: the full profile (complete education history, etc.)
-   lives one click away in DoctorProfileSection.tsx, not here. */
-.doctor-card-summary {
+.doctor-mobile-card-top > span:nth-child(2) {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  margin-top: var(--space-2);
 }
 
-.doctor-card-meta {
-  font-size: 0.82rem;
+@media (max-width: 860px) {
+  .doctor-directory-table-wrap {
+    display: none;
+  }
+  .doctor-mobile-list {
+    display: flex;
+  }
 }
 
-.doctor-card-footer {
+/* ===========================================================
+   Doctor workspace (DoctorWorkspace.tsx) -- one doctor's own
+   Overview/Appointments/Schedule/Time off/Departments/Appointment
+   Types/Profile, reached from the directory above.
+   =========================================================== */
+
+.doctor-workspace-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: var(--space-3);
+}
+
+.doctor-workspace-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--color-border);
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
 }
 
-.doctor-card-view-profile {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--color-primary);
+.doctor-workspace-header h2 {
+  margin: 0;
+}
+
+.doctor-workspace-header-body {
+  flex: 1;
+}
+
+.doctor-workspace-header-body p {
+  margin: 2px 0 0;
+}
+
+.doctor-workspace-tabs {
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  scrollbar-width: thin;
+}
+
+.doctor-workspace-tabs .tab {
   flex-shrink: 0;
+}
+
+.doctor-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.schedule-preview-toggle {
+  width: 100%;
 }
 
 /* Professional square/circular photo presentation, and the fallback
@@ -3232,6 +3346,20 @@ a.link.danger {
   justify-content: space-between;
   gap: var(--space-4);
   margin-bottom: var(--space-2);
+}
+
+/* A long description (e.g. Time off/Appointment Types tab subheadings)
+   otherwise forces its flex item to its unwrapped intrinsic width,
+   squeezing the button on the right into wrapping its own short label
+   -- min-width: 0 lets this child shrink and wrap its text instead. */
+.admin-content-header > div:first-child {
+  min-width: 0;
+}
+
+.admin-content-header > .btn,
+.admin-content-header > button.btn-sm {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .appointments-context-line {

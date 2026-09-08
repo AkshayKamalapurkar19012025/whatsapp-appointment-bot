@@ -229,7 +229,19 @@ export default function AdminApp() {
             <BookAppointmentPanel onViewAppointments={() => goTo('appointments')} />
           )}
           {section === 'queue' && <QueuePanel />}
-          {section === 'doctors' && <DoctorsPanel isAdmin={isAdmin} />}
+          {section === 'doctors' && (
+            <DoctorsPanel
+              isAdmin={isAdmin}
+              onGoToQueue={(doctorId) => {
+                try {
+                  localStorage.setItem('admin_queue_panel_last_doctor_id', String(doctorId))
+                } catch {
+                  // Best-effort only, same as QueuePanel's own write to this key.
+                }
+                goTo('queue')
+              }}
+            />
+          )}
           {section === 'departments' && <DepartmentsPanel isAdmin={isAdmin} />}
           {section === 'appointment-types' && <AppointmentTypesPanel isAdmin={isAdmin} />}
           {section === 'patients' && <PatientsPanel />}

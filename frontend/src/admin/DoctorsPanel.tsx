@@ -1,62 +1,193 @@
-import { useEffect, useId, useState } from 'react'
-import { Stethoscope } from '@phosphor-icons/react'
-import { ApiError, createDoctor, listAllDoctors, listDepartments, listDoctorsInDepartment } from '../api'
-import type { Department, Doctor } from '../types'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import { Buildings, CalendarCheck, MagnifyingGlass, Stethoscope, UsersThree } from '@phosphor-icons/react'
+import {
+  ApiError,
+  getDoctorBlocks,
+  getDoctorScheduleAdmin,
+  listAdminAppointments,
+  listAllDoctors,
+  listDepartments,
+  listDoctorsInDepartment,
+} from '../api'
+import type { AdminAppointment, Department, Doctor, DoctorBlockEntry, DoctorScheduleEntry } from '../types'
 import DoctorAvatar from '../DoctorAvatar'
-import { doctorSummaryLine, formatDateTime } from '../format'
+import { doctorSummaryLine } from '../format'
 import { useStaggerReveal } from '../useStaggerReveal'
-import DoctorDetail from './DoctorDetail'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
+import { currentDayOfWeek, formatWorkingHours, isAvailableNow, isoDateToday, todaysScheduleEntries } from './doctorSchedule'
+import AddDoctorModal from './AddDoctorModal'
+import DoctorWorkspace from './DoctorWorkspace'
 
-interface DoctorGroup {
-  key: string
-  label: string
-  doctors: Doctor[]
+const ALL_FILTER_VALUE = '__all__'
+
+interface DoctorRow {
+  doctor: Doctor
+  departments: Department[]
+  todaysHours: string[]
+  availableNow: boolean
+  todaysAppointmentCount: number
+  waitingCount: number
 }
 
-export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
+// Hover/focus preview popover, anchored to the doctor's name -- the name
+// itself is always plain visible text in the row (never hidden behind
+// this), so the popover is purely an enhancement for a faster look at
+// specialization/departments/experience without opening the full
+// workspace. Same pointerType-gated hover + focus + viewport-edge
+// collision-avoidance pattern as DepartmentsPanel.tsx's DepartmentCard
+// (proven there against the full 1440-360px breakpoint sweep), adapted
+// to a directory row instead of a card.
+function DoctorPreviewTrigger({ row, onView }: { row: DoctorRow; onView: () => void }) {
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef<HTMLSpanElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
+  const [shift, setShift] = useState(0)
+  const [renderAbove, setRenderAbove] = useState(false)
+
+  useLayoutEffect(() => {
+    if (!open) return
+    const el = popoverRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const margin = 8
+    let nextShift = 0
+    if (rect.left < margin) nextShift = margin - rect.left
+    else if (rect.right > window.innerWidth - margin) nextShift = window.innerWidth - margin - rect.right
+    setShift(nextShift)
+    setRenderAbove(rect.bottom > window.innerHeight - margin)
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    function handleOutside(event: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) setOpen(false)
+    }
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('click', handleOutside, true)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('click', handleOutside, true)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [open])
+
+  const summaryLine = doctorSummaryLine(row.doctor)
+
+  return (
+    <span
+      ref={wrapRef}
+      className="doctor-name-trigger"
+      onPointerEnter={(e) => {
+        if (e.pointerType === 'mouse') setOpen(true)
+      }}
+      onPointerLeave={(e) => {
+        if (e.pointerType === 'mouse') setOpen(false)
+      }}
+    >
+      <button
+        type="button"
+        className="doctor-name-button"
+        onClick={() => setOpen((prev) => !prev)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        aria-describedby={open ? `doctor-preview-${row.doctor.id}` : undefined}
+      >
+        <DoctorAvatar photoUrl={row.doctor.photo_url} name={row.doctor.name} size={40} />
+        <span className="doctor-name-block">
+          <span className="doctor-name-text">{row.doctor.name}</span>
+          {row.doctor.specialization && <span className="muted doctor-name-specialization">{row.doctor.specialization}</span>}
+        </span>
+      </button>
+
+      {open && (
+        <div
+          ref={popoverRef}
+          id={`doctor-preview-${row.doctor.id}`}
+          role="tooltip"
+          className={`doctor-preview-popover${renderAbove ? ' above' : ''}`}
+          style={{ '--popover-shift': `${shift}px` } as CSSProperties}
+        >
+          <p className="doctor-preview-name">{row.doctor.name}</p>
+          {row.doctor.specialization && <p className="muted doctor-preview-line">{row.doctor.specialization}</p>}
+          {summaryLine && <p className="muted doctor-preview-line">{summaryLine}</p>}
+          {row.doctor.education_location && <p className="muted doctor-preview-line">{row.doctor.education_location}</p>}
+          <p className="doctor-preview-departments-label">Departments</p>
+          {row.departments.length > 0 ? (
+            <ul className="doctor-preview-departments">
+              {row.departments.map((d) => (
+                <li key={d.id}>{d.name}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted doctor-preview-line">Not assigned to any department.</p>
+          )}
+          <button type="button" className="btn btn-sm doctor-preview-view" onClick={onView}>
+            View doctor →
+          </button>
+        </div>
+      )}
+    </span>
+  )
+}
+
+export default function DoctorsPanel({
+  isAdmin,
+  onGoToQueue,
+}: {
+  isAdmin: boolean
+  // Overview's "View queue" quick action, and the directory's own Queue
+  // shortcut, both hand off to the existing standalone Queue page
+  // (QueuePanel.tsx) rather than duplicating QueueSection a third time.
+  onGoToQueue?: (doctorId: number) => void
+}) {
   const [doctors, setDoctors] = useState<Doctor[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
-  const [groups, setGroups] = useState<DoctorGroup[]>([])
-  const [name, setName] = useState('')
-  const [specialization, setSpecialization] = useState('')
-  const [subSpecialization, setSubSpecialization] = useState('')
-  const [qualifications, setQualifications] = useState('')
-  const [yearsOfExperience, setYearsOfExperience] = useState('')
+  const [doctorDepartments, setDoctorDepartments] = useState<Map<number, Department[]>>(new Map())
+  const [schedules, setSchedules] = useState<Map<number, DoctorScheduleEntry[]>>(new Map())
+  const [blocksByDoctor, setBlocksByDoctor] = useState<Map<number, DoctorBlockEntry[]>>(new Map())
+  const [todaysAppointments, setTodaysAppointments] = useState<AdminAppointment[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState(false)
+  const [searchText, setSearchText] = useState('')
+  const [departmentFilter, setDepartmentFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
   const [selectedDoctor, setSelectedDoctor] = useState<Doctor | null>(null)
-  const listRef = useStaggerReveal<HTMLDivElement>([groups], '.doctor-card')
-  const specializationListId = useId()
+  const [addOpen, setAddOpen] = useState(false)
+  const listRef = useStaggerReveal<HTMLDivElement>([doctors], '.doctor-row, .doctor-mobile-card')
 
-  // Doctors have no department field of their own (see types.ts) -- the
-  // relationship is doctor<->department, many-to-many, so grouping for
-  // display means fetching each department's own doctor list and
-  // bucketing by that rather than reading a column off Doctor itself.
-  // Any doctor absent from every department's list falls into its own
-  // "Unassigned" bucket so it isn't silently dropped from the grid.
   function load() {
     setLoading(true)
     setError(null)
-    Promise.all([listAllDoctors(), listDepartments()])
-      .then(async ([allDoctors, departmentList]) => {
+    const today = isoDateToday()
+    Promise.all([listAllDoctors(), listDepartments(), listAdminAppointments({ date_from: today, date_to: today })])
+      .then(async ([allDoctors, departmentList, todaysAppts]) => {
         setDoctors(allDoctors)
         setDepartments(departmentList)
-        const perDepartment = await Promise.all(
-          departmentList.map((d) => listDoctorsInDepartment(d.id).catch(() => [] as Doctor[])),
-        )
-        const assignedIds = new Set<number>()
-        const builtGroups: DoctorGroup[] = departmentList
-          .map((d: Department, i: number) => {
-            for (const doc of perDepartment[i]) assignedIds.add(doc.id)
-            return { key: `dept-${d.id}`, label: d.name, doctors: perDepartment[i] }
-          })
-          .filter((g) => g.doctors.length > 0)
-        const unassigned = allDoctors.filter((d) => !assignedIds.has(d.id))
-        if (unassigned.length > 0) {
-          builtGroups.push({ key: 'unassigned', label: 'Unassigned', doctors: unassigned })
-        }
-        setGroups(builtGroups)
+        setTodaysAppointments(todaysAppts)
+
+        const [perDepartment, perDoctorSchedule, perDoctorBlocks] = await Promise.all([
+          Promise.all(departmentList.map((d) => listDoctorsInDepartment(d.id).catch(() => [] as Doctor[]))),
+          Promise.all(allDoctors.map((d) => getDoctorScheduleAdmin(d.id).catch(() => [] as DoctorScheduleEntry[]))),
+          Promise.all(allDoctors.map((d) => getDoctorBlocks(d.id).catch(() => [] as DoctorBlockEntry[]))),
+        ])
+
+        const deptMap = new Map<number, Department[]>()
+        departmentList.forEach((dept, i) => {
+          for (const doc of perDepartment[i]) {
+            deptMap.set(doc.id, [...(deptMap.get(doc.id) ?? []), dept])
+          }
+        })
+        setDoctorDepartments(deptMap)
+
+        const scheduleMap = new Map<number, DoctorScheduleEntry[]>()
+        allDoctors.forEach((d, i) => scheduleMap.set(d.id, perDoctorSchedule[i]))
+        setSchedules(scheduleMap)
+
+        const blocksMap = new Map<number, DoctorBlockEntry[]>()
+        allDoctors.forEach((d, i) => blocksMap.set(d.id, perDoctorBlocks[i]))
+        setBlocksByDoctor(blocksMap)
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load doctors'))
       .finally(() => setLoading(false))
@@ -64,102 +195,158 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
 
   useEffect(load, [])
 
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault()
-    setError(null)
-    setBusy(true)
-    try {
-      const created = await createDoctor({
-        name,
-        specialization,
-        sub_specialization: subSpecialization || undefined,
-        qualifications: qualifications || undefined,
-        years_of_experience: yearsOfExperience ? Number(yearsOfExperience) : undefined,
-      })
-      setName('')
-      setSpecialization('')
-      setSubSpecialization('')
-      setQualifications('')
-      setYearsOfExperience('')
-      load()
-      setSelectedDoctor(created)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not create doctor')
-    } finally {
-      setBusy(false)
-    }
+  function backToDirectory() {
+    setSelectedDoctor(null)
+    load()
   }
+
+  if (selectedDoctor) {
+    return (
+      <DoctorWorkspace
+        doctor={selectedDoctor}
+        isAdmin={isAdmin}
+        onBack={backToDirectory}
+        onGoToQueue={onGoToQueue}
+      />
+    )
+  }
+
+  const today = isoDateToday()
+  const dayOfWeek = currentDayOfWeek()
+
+  const rows: DoctorRow[] = doctors.map((doctor) => {
+    const schedule = schedules.get(doctor.id) ?? []
+    const blocks = blocksByDoctor.get(doctor.id) ?? []
+    const doctorAppointmentsToday = todaysAppointments.filter((a) => a.doctor_id === doctor.id)
+    const waiting = doctorAppointmentsToday.filter((a) => a.status === 'CHECKED_IN' && a.token_number !== null)
+    return {
+      doctor,
+      departments: doctorDepartments.get(doctor.id) ?? [],
+      todaysHours: formatWorkingHours(todaysScheduleEntries(schedule, today, dayOfWeek)),
+      availableNow: isAvailableNow(schedule, blocks),
+      todaysAppointmentCount: doctorAppointmentsToday.length,
+      waitingCount: waiting.length,
+    }
+  })
+
+  const availableNowCount = rows.filter((r) => r.availableNow).length
+
+  const searchNeedle = searchText.trim().toLowerCase()
+  const visibleRows = rows.filter((row) => {
+    if (departmentFilter && !row.departments.some((d) => String(d.id) === departmentFilter)) return false
+    if (statusFilter === 'available' && !row.availableNow) return false
+    if (statusFilter === 'unavailable' && row.availableNow) return false
+    if (!searchNeedle) return true
+    return (
+      row.doctor.name.toLowerCase().includes(searchNeedle) ||
+      (row.doctor.specialization ?? '').toLowerCase().includes(searchNeedle)
+    )
+  })
 
   return (
     <section>
-      <h2>Doctors</h2>
+      <div className="admin-content-header">
+        <div>
+          <h2>Doctors</h2>
+          <p className="muted">Manage doctors, their specializations, schedules, and appointment settings.</p>
+        </div>
+        {isAdmin && (
+          <button type="button" className="btn btn-sm" onClick={() => setAddOpen(true)}>
+            + Add Doctor
+          </button>
+        )}
+      </div>
       {error && <p className="error">{error}</p>}
 
-      {isAdmin && (
-        <form className="doctor-form-grid" onSubmit={handleCreate}>
-          <label className="inline-label doctor-form-full">
-            Name
-            <input
-              placeholder="Dr. Jane Doe"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-            />
-          </label>
-          <label className="inline-label">
-            Specialization
-            <input
-              placeholder="Cardiology"
-              list={specializationListId}
-              value={specialization}
-              onChange={(e) => setSpecialization(e.target.value)}
-              required
-            />
-            {/* Suggestions only, not a hard constraint -- specialization
-                is the doctor's own medical field, which doesn't always
-                equal one of the clinic's administrative departments, so
-                free text stays possible. See this form's own PR for the
-                reasoning. */}
-            <datalist id={specializationListId}>
-              {departments.map((d) => (
-                <option key={d.id} value={d.name} />
-              ))}
-            </datalist>
-          </label>
-          <label className="inline-label">
-            Sub-specialization <span className="muted">(optional)</span>
-            <input
-              placeholder="Interventional Cardiology"
-              value={subSpecialization}
-              onChange={(e) => setSubSpecialization(e.target.value)}
-            />
-          </label>
-          <label className="inline-label">
-            Qualifications <span className="muted">(optional)</span>
-            <input
-              placeholder="MBBS, MD (Cardiology)"
-              value={qualifications}
-              onChange={(e) => setQualifications(e.target.value)}
-            />
-          </label>
-          <label className="inline-label">
-            Years of experience <span className="muted">(optional)</span>
-            <input
-              type="number"
-              min={0}
-              max={80}
-              placeholder="10"
-              value={yearsOfExperience}
-              onChange={(e) => setYearsOfExperience(e.target.value)}
-            />
-          </label>
-          <div className="doctor-form-actions">
-            <button type="submit" className="btn-sm" disabled={busy}>
-              {busy ? 'Saving…' : 'Save'}
-            </button>
+      <div className="dashboard-grid" style={{ marginBottom: 'var(--space-4)' }}>
+        <div className="stat-card">
+          <span className="stat-icon" aria-hidden="true">
+            <Stethoscope size={22} weight="regular" />
+          </span>
+          <div className="stat-body">
+            <span className="stat-value">{doctors.length}</span>
+            <span className="stat-label">Doctors</span>
           </div>
-        </form>
-      )}
+        </div>
+        <div className="stat-card">
+          <span className="stat-icon" aria-hidden="true">
+            <Buildings size={22} weight="regular" />
+          </span>
+          <div className="stat-body">
+            <span className="stat-value">{departments.length}</span>
+            <span className="stat-label">Departments</span>
+          </div>
+        </div>
+        <div className="stat-card">
+          <span className="stat-icon" aria-hidden="true">
+            <CalendarCheck size={22} weight="regular" />
+          </span>
+          <div className="stat-body">
+            <span className="stat-value">{todaysAppointments.length}</span>
+            <span className="stat-label">Appointments (Today)</span>
+          </div>
+        </div>
+        <div className="stat-card">
+          <span className="stat-icon" aria-hidden="true">
+            <UsersThree size={22} weight="regular" />
+          </span>
+          <div className="stat-body">
+            <span className="stat-value">{availableNowCount}</span>
+            <span className="stat-label">Currently Available</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="filter-bar">
+        <div className="filter-bar-search-row">
+          <div className="department-admin-search filter-bar-search">
+            <MagnifyingGlass size={16} aria-hidden="true" />
+            <input
+              type="search"
+              placeholder="Search doctors by name, specialization…"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+            />
+          </div>
+          <div className="filter-bar-fields">
+            <label className="inline-label">
+              Department
+              <Select
+                value={departmentFilter || ALL_FILTER_VALUE}
+                onValueChange={(v) => setDepartmentFilter(v === ALL_FILTER_VALUE ? '' : v)}
+              >
+                <SelectTrigger className="filter-select-trigger">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_FILTER_VALUE}>All departments</SelectItem>
+                  {departments.map((d) => (
+                    <SelectItem key={d.id} value={String(d.id)}>
+                      {d.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+            <label className="inline-label">
+              Status
+              <Select
+                value={statusFilter || ALL_FILTER_VALUE}
+                onValueChange={(v) => setStatusFilter(v === ALL_FILTER_VALUE ? '' : v)}
+              >
+                <SelectTrigger className="filter-select-trigger">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_FILTER_VALUE}>All status</SelectItem>
+                  <SelectItem value="available">Available now</SelectItem>
+                  <SelectItem value="unavailable">Not available now</SelectItem>
+                </SelectContent>
+              </Select>
+            </label>
+          </div>
+        </div>
+      </div>
 
       {loading && (
         <div className="state-block">
@@ -175,59 +362,118 @@ export default function DoctorsPanel({ isAdmin }: { isAdmin: boolean }) {
           No doctors yet.
         </div>
       )}
+      {!loading && doctors.length > 0 && visibleRows.length === 0 && (
+        <p className="muted">No doctors match your search or filters.</p>
+      )}
 
-      {!loading && groups.length > 0 && (
+      {!loading && visibleRows.length > 0 && (
         <div ref={listRef}>
-          {groups.map((group) => (
-            <div key={group.key} className="doctor-group">
-              <h4 className="doctor-group-label">{group.label}</h4>
-              <div className="doctor-grid">
-                {group.doctors.map((d) => {
-                  const summaryLine = doctorSummaryLine(d)
-                  return (
-                    <button
-                      key={d.id}
-                      type="button"
-                      className={selectedDoctor?.id === d.id ? 'doctor-card selected' : 'doctor-card'}
-                      onClick={() => setSelectedDoctor(d)}
-                    >
-                      <span className="doctor-card-header">
-                        <DoctorAvatar photoUrl={d.photo_url} name={d.name} size={44} />
-                        <span>
-                          <span>{d.name}</span>
-                          {d.specialization && <span className="option-subtitle">{d.specialization}</span>}
+          <div className="data-table-wrap doctor-directory-table-wrap">
+            <table className="data-table doctor-directory-table">
+              <thead>
+                <tr>
+                  <th>Doctor</th>
+                  <th>Departments</th>
+                  <th>Today&apos;s schedule</th>
+                  <th>Today</th>
+                  <th>Status</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {visibleRows.map((row) => (
+                  <tr key={row.doctor.id} className="doctor-row">
+                    <td>
+                      <DoctorPreviewTrigger row={row} onView={() => setSelectedDoctor(row.doctor)} />
+                    </td>
+                    <td>
+                      {row.departments.length > 0 ? (
+                        <span className="doctor-department-chips">
+                          {row.departments.map((d) => (
+                            <span key={d.id} className="pill role-staff">
+                              {d.name}
+                            </span>
+                          ))}
                         </span>
-                      </span>
-                      {/* Deliberately just these two lines -- the complete
-                          education history and every other profile detail
-                          live one click away in the Profile tab, not here
-                          (see this card's own PR for why: an admin listing
-                          this dense already needs to stay scannable). */}
-                      {(summaryLine || d.education_location) && (
-                        <span className="doctor-card-summary">
-                          {summaryLine && <span className="muted doctor-card-meta">{summaryLine}</span>}
-                          {d.education_location && (
-                            <span className="muted doctor-card-meta">{d.education_location}</span>
-                          )}
-                        </span>
+                      ) : (
+                        <span className="muted">Unassigned</span>
                       )}
-                      <span className="doctor-card-footer">
-                        <span className="muted doctor-added-meta">
-                          Added {formatDateTime(d.created_at)}
-                          {d.created_by ? ` by ${d.created_by}` : ''}
-                        </span>
-                        <span className="doctor-card-view-profile">{isAdmin ? 'Edit' : 'View Profile'}</span>
+                    </td>
+                    <td>
+                      {row.todaysHours.length > 0 ? (
+                        row.todaysHours.map((h) => <div key={h}>{h}</div>)
+                      ) : (
+                        <span className="muted">Not working today</span>
+                      )}
+                    </td>
+                    <td>
+                      {row.todaysAppointmentCount} {row.todaysAppointmentCount === 1 ? 'appointment' : 'appointments'}
+                      {row.waitingCount > 0 && <div className="muted">{row.waitingCount} waiting</div>}
+                    </td>
+                    <td>
+                      <span className={row.availableNow ? 'pill status-confirmed' : 'pill status-pending'}>
+                        {row.availableNow ? 'Available' : 'Unavailable'}
                       </span>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          ))}
+                    </td>
+                    <td>
+                      <button type="button" className="btn-secondary btn btn-sm" onClick={() => setSelectedDoctor(row.doctor)}>
+                        View doctor →
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <ul className="doctor-mobile-list">
+            {visibleRows.map((row) => (
+              <li key={row.doctor.id} className="doctor-mobile-card" onClick={() => setSelectedDoctor(row.doctor)}>
+                <div className="doctor-mobile-card-top">
+                  <DoctorAvatar photoUrl={row.doctor.photo_url} name={row.doctor.name} size={40} />
+                  <span>
+                    <span className="doctor-name-text">{row.doctor.name}</span>
+                    {row.doctor.specialization && <span className="muted doctor-name-specialization">{row.doctor.specialization}</span>}
+                  </span>
+                  <span className={row.availableNow ? 'pill status-confirmed' : 'pill status-pending'}>
+                    {row.availableNow ? 'Available' : 'Unavailable'}
+                  </span>
+                </div>
+                {row.departments.length > 0 && (
+                  <span className="doctor-department-chips">
+                    {row.departments.map((d) => (
+                      <span key={d.id} className="pill role-staff">
+                        {d.name}
+                      </span>
+                    ))}
+                  </span>
+                )}
+                <div className="muted">
+                  {row.todaysHours.length > 0 ? row.todaysHours.join(', ') : 'Not working today'}
+                </div>
+                <div className="muted">
+                  {row.todaysAppointmentCount} {row.todaysAppointmentCount === 1 ? 'appointment' : 'appointments'} today
+                  {row.waitingCount > 0 ? ` · ${row.waitingCount} waiting` : ''}
+                </div>
+                <button type="button" className="btn-secondary btn btn-sm" onClick={() => setSelectedDoctor(row.doctor)}>
+                  View doctor →
+                </button>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
-      {selectedDoctor && <DoctorDetail doctor={selectedDoctor} isAdmin={isAdmin} />}
+      {addOpen && (
+        <AddDoctorModal
+          departments={departments}
+          onClose={() => setAddOpen(false)}
+          onCreated={(created) => {
+            load()
+            setSelectedDoctor(created)
+          }}
+        />
+      )}
     </section>
   )
 }
