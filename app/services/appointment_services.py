@@ -879,24 +879,100 @@ def reject_appointment_service(cur, appointment_id: int):
     )
 
 
-def mark_visited_service(cur, appointment_id: int):
+def generate_queue_token_service(cur, appointment_id: int, *, doctor_id: int, doctor_tz: str):
     """
-    Staff checks a Confirmed patient in on arrival -- this is also the
-    moment they're issued a queue token number (migrations/0012_
-    appointment_queue_tokens.sql), so this doesn't reuse
-    _transition_appointment_status above the way the other three
-    transitions do.
+    Assigns the next queue token for this doctor's local day, or returns
+    the appointment's existing token unchanged if one was already
+    assigned -- calling this twice for the same appointment must never
+    produce a second token or renumber anyone else (idempotency guard).
+
+    Extracted out of mark_visited_service (patient-arrival-workflow
+    Phase 1) so token issuance can eventually be triggered independently
+    of check-in, once payment gating exists (Phase 3/4: a token should
+    only be generated once the consultation charge is paid or waived).
+    For now, mark_visited_service is still this function's only caller,
+    called immediately after check-in -- so behavior is unchanged from
+    before this extraction; only the code structure changed.
 
     Tokens are scoped per doctor, per doctor-local calendar day (a
     walk-in queue is a per-doctor, per-day thing -- see the "Token
     scope" product decision this implements), and assigned in
     check-in order: the next integer after the highest token_number
-    already issued to this doctor today. Concurrent check-ins for the
+    already issued to this doctor today. Concurrent calls for the
     same doctor are serialized with pg_advisory_xact_lock, the same
     primitive create_appointment_service uses to serialize schedulings --
     a second lock key (the day's epoch-day number) scopes it to "this
     doctor, today" specifically, so it can't collide with that other
     lock's (doctor_id) key space or with a different day's queue.
+
+    Requires the caller to already hold (or not need) a lock on the
+    appointments row itself -- this function only locks what it needs
+    (the doctor/day advisory lock) plus a row-level FOR UPDATE on the
+    target appointment for its own existing-token check and UPDATE.
+    """
+    cur.execute(
+        "SELECT token_number, visited_at FROM appointments WHERE id = %s FOR UPDATE",
+        (appointment_id,),
+    )
+
+    existing_token, existing_visited_at = cur.fetchone()
+
+    if existing_token is not None:
+        return {
+            "id": appointment_id,
+            "token_number": existing_token,
+            "visited_at": existing_visited_at.isoformat(),
+        }
+
+    if not validate_timezone(doctor_tz):
+        doctor_tz = "Asia/Kolkata"
+
+    today = datetime.now(ZoneInfo(doctor_tz)).date()
+    day_epoch = (today - date(1970, 1, 1)).days
+
+    cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", (doctor_id, day_epoch))
+
+    cur.execute(
+        """
+        SELECT COALESCE(MAX(token_number), 0) + 1
+        FROM appointments
+        WHERE doctor_id = %s
+          AND visited_at IS NOT NULL
+          AND (visited_at AT TIME ZONE %s)::date = %s
+        """,
+        (doctor_id, doctor_tz, today),
+    )
+    (next_token,) = cur.fetchone()
+
+    cur.execute(
+        """
+        UPDATE appointments
+        SET token_number = %s,
+            updated_at = NOW()
+        WHERE id = %s
+        RETURNING token_number, visited_at
+        """,
+        (next_token, appointment_id),
+    )
+
+    token_number, visited_at = cur.fetchone()
+
+    return {
+        "id": appointment_id,
+        "token_number": token_number,
+        "visited_at": visited_at.isoformat(),
+    }
+
+
+def mark_visited_service(cur, appointment_id: int):
+    """
+    Staff checks a Confirmed patient in on arrival, then immediately
+    issues them a queue token via generate_queue_token_service (see that
+    function's own docstring for why token issuance lives there rather
+    than inline here, and why it's still called synchronously from
+    here for now). Doesn't reuse _transition_appointment_status above
+    the way the other three transitions do, since it also needs to
+    call that token-generation step.
     """
     cur.execute(
         """
@@ -924,52 +1000,36 @@ def mark_visited_service(cur, appointment_id: int):
     # timezone either side happens to be labeled in (no conversion to
     # the doctor's local wall-clock time needed, or safe, for this
     # check -- unlike the token-numbering "which doctor-local day is
-    # this" question below, which does need doctor_tz).
+    # this" question inside generate_queue_token_service, which does
+    # need doctor_tz).
     if start_at > datetime.now(timezone.utc):
         raise AppointmentNotStarted()
-
-    if not validate_timezone(doctor_tz):
-        doctor_tz = "Asia/Kolkata"
-
-    today = datetime.now(ZoneInfo(doctor_tz)).date()
-    day_epoch = (today - date(1970, 1, 1)).days
-
-    cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", (doctor_id, day_epoch))
-
-    cur.execute(
-        """
-        SELECT COALESCE(MAX(token_number), 0) + 1
-        FROM appointments
-        WHERE doctor_id = %s
-          AND visited_at IS NOT NULL
-          AND (visited_at AT TIME ZONE %s)::date = %s
-        """,
-        (doctor_id, doctor_tz, today),
-    )
-    (next_token,) = cur.fetchone()
 
     cur.execute(
         """
         UPDATE appointments
         SET status = 'CHECKED_IN',
             visited_at = NOW(),
-            token_number = %s,
             updated_at = NOW()
         WHERE id = %s
-        RETURNING id, status, token_number, visited_at, doctor_id, patient_id
+        RETURNING id, status, visited_at, doctor_id, patient_id
         """,
-        (next_token, appointment_id),
+        (appointment_id,),
     )
 
     result_row = cur.fetchone()
 
+    token_result = generate_queue_token_service(
+        cur, appointment_id, doctor_id=doctor_id, doctor_tz=doctor_tz
+    )
+
     return {
         "id": result_row[0],
         "status": result_row[1],
-        "token_number": result_row[2],
-        "visited_at": result_row[3].isoformat(),
-        "doctor_id": result_row[4],
-        "patient_id": result_row[5],
+        "token_number": token_result["token_number"],
+        "visited_at": result_row[2].isoformat(),
+        "doctor_id": result_row[3],
+        "patient_id": result_row[4],
     }
 
 
