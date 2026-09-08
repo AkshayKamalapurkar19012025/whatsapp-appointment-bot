@@ -75,6 +75,25 @@ class AppointmentNotStarted(ServiceError):
     pass
 
 
+class PaymentStateConflict(ServiceError):
+    """Raised by record_payment_service/waive_consultation_fee_service
+    when payment_status is already in a state that makes the requested
+    action nonsensical: paying a WAIVED/REFUNDED encounter, or waiving
+    one that's already PAID. Distinct from InvalidStatusTransition,
+    which gates on appointments.status (CHECKED_IN or not), not
+    payment_status."""
+    pass
+
+
+class WaiverNotEligible(ServiceError):
+    """Raised by waive_consultation_fee_service when the patient has no
+    COMPLETED visit with this same doctor in the 3 calendar days before
+    this check-in -- the clinic's waiver policy requires a genuine
+    recent revisit, not just staff discretion. Not overridable by role:
+    even an ADMIN cannot waive without a qualifying prior visit."""
+    pass
+
+
 # ---------------------------------------------------------------------
 # Patient authentication (WEB P2) -- see app/services/patient_auth.py.
 # ---------------------------------------------------------------------

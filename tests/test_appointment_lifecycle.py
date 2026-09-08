@@ -292,6 +292,23 @@ def test_visit_cancelled_appointment_is_409(client, db_connection):
     assert response.status_code == 409
 
 
+def test_visit_rejected_appointment_is_409(client, db_connection):
+    """Patient arrival workflow spec (Section 29, Scenario 12): a
+    Rejected request never happened, same as Cancelled -- staff must
+    not be able to check in against it."""
+    ctx = _seed_and_schedule(client, db_connection, "Dr. Visit Rejected")
+    client.post(f"/api/appointments/{ctx['appointment']['id']}/reject", headers=ctx["admin_headers"])
+
+    with db_connection.cursor() as cur:
+        cur.execute("SELECT status FROM appointments WHERE id = %s", (ctx["appointment"]["id"],))
+        assert cur.fetchone()[0] == "REJECTED"
+
+    response = client.post(
+        f"/api/appointments/{ctx['appointment']['id']}/visit", headers=ctx["admin_headers"]
+    )
+    assert response.status_code == 409
+
+
 def test_visit_already_visited_appointment_is_409(client, db_connection):
     ctx = _seed_and_schedule(client, db_connection, "Dr. Visit Twice")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])

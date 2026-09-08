@@ -806,6 +806,18 @@ a.link.danger {
   flex-shrink: 0;
 }
 
+/* Success banner (patient arrival workflow Phase 5) -- same shape as
+   .error above, just the success palette, for "Payment successful" /
+   "Queue Token: X" confirmations (spec Section 26). */
+.success {
+  color: var(--color-success);
+  background: var(--color-success-soft);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  font-size: 0.88rem;
+  margin: 0 0 var(--space-4);
+}
+
 /* ===========================================================
    Loading / empty / error state blocks
    =========================================================== */
@@ -2797,6 +2809,29 @@ a.link.danger {
   color: var(--color-primary-hover);
 }
 
+/* Payment status (patient arrival workflow Phases 3-5) -- only ever
+   shown once a patient has been checked in (see AppointmentsPanel.tsx's
+   paymentPill), so PENDING/CONFIRMED's implicit UNPAID never renders. */
+.pill.payment-unpaid {
+  margin-left: var(--space-2);
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.pill.payment-paid,
+.pill.payment-waived {
+  margin-left: var(--space-2);
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.pill.payment-failed,
+.pill.payment-refunded {
+  margin-left: var(--space-2);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
 /* ===========================================================
    Availability indicator (AvailabilityBadge.tsx) -- shared by
    Date-First's doctor cards and Doctor-First's Slot-step banner
@@ -3574,6 +3609,43 @@ a.link.danger {
   padding: var(--space-5);
   background: var(--color-bg-subtle);
   border-radius: var(--radius-md);
+}
+
+/* Payment section (AppointmentDetailsModal.tsx's PaymentSection --
+   patient arrival workflow Phase 5). Stacks cleanly at every width
+   this app supports (see spec's 360px-1440px responsive requirement):
+   the summary rows and form controls are already flex/block, no fixed
+   widths, so no separate mobile breakpoint is needed here. */
+.payment-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) 0;
+  font-size: 0.92rem;
+}
+
+.payment-waive-reason {
+  margin-top: var(--space-2);
+}
+
+.payment-form {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.payment-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.payment-form textarea {
+  width: 100%;
+  resize: vertical;
+  font-family: inherit;
 }
 
 /* ===========================================================

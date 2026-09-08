@@ -64,6 +64,8 @@ from app.services.exceptions import (
     NotAppointmentOwner,
     InvalidStatusTransition,
     AppointmentNotStarted,
+    PaymentStateConflict,
+    WaiverNotEligible,
 )
 
 logger = logging.getLogger(__name__)
@@ -879,54 +881,59 @@ def reject_appointment_service(cur, appointment_id: int):
     )
 
 
-def mark_visited_service(cur, appointment_id: int):
+def generate_queue_token_service(cur, appointment_id: int, *, doctor_id: int, doctor_tz: str):
     """
-    Staff checks a Confirmed patient in on arrival -- this is also the
-    moment they're issued a queue token number (migrations/0012_
-    appointment_queue_tokens.sql), so this doesn't reuse
-    _transition_appointment_status above the way the other three
-    transitions do.
+    Assigns the next queue token for this doctor's local day, or returns
+    the appointment's existing token unchanged if one was already
+    assigned -- calling this twice for the same appointment must never
+    produce a second token or renumber anyone else (idempotency guard).
+
+    Extracted out of mark_visited_service (patient-arrival-workflow
+    Phase 1) so token issuance could eventually be triggered
+    independently of check-in, once payment gating exists. As of
+    Phase 4, it now is: record_payment_service's PAID outcome and
+    waive_consultation_fee_service are this function's only callers --
+    a token is only generated once the consultation charge is paid or
+    waived, matching the core business rule (a patient shouldn't enter
+    the queue before then). mark_visited_service no longer calls this
+    at all.
+
+    The returned dict's "newly_generated" flag distinguishes a fresh
+    assignment from the idempotent-replay case (existing_token branch
+    below) -- callers (the two above) use it to decide whether to send
+    the one-time "you're in the queue, token X" notification, so a
+    double-click/refresh doesn't re-notify the patient.
 
     Tokens are scoped per doctor, per doctor-local calendar day (a
     walk-in queue is a per-doctor, per-day thing -- see the "Token
     scope" product decision this implements), and assigned in
     check-in order: the next integer after the highest token_number
-    already issued to this doctor today. Concurrent check-ins for the
+    already issued to this doctor today. Concurrent calls for the
     same doctor are serialized with pg_advisory_xact_lock, the same
     primitive create_appointment_service uses to serialize schedulings --
     a second lock key (the day's epoch-day number) scopes it to "this
     doctor, today" specifically, so it can't collide with that other
     lock's (doctor_id) key space or with a different day's queue.
+
+    Requires the caller to already hold (or not need) a lock on the
+    appointments row itself -- this function only locks what it needs
+    (the doctor/day advisory lock) plus a row-level FOR UPDATE on the
+    target appointment for its own existing-token check and UPDATE.
     """
     cur.execute(
-        """
-        SELECT a.status, a.doctor_id, d.timezone, a.start_at
-        FROM appointments a
-        JOIN doctors d ON d.id = a.doctor_id
-        WHERE a.id = %s
-        FOR UPDATE OF a
-        """,
+        "SELECT token_number, visited_at FROM appointments WHERE id = %s FOR UPDATE",
         (appointment_id,),
     )
 
-    row = cur.fetchone()
+    existing_token, existing_visited_at = cur.fetchone()
 
-    if row is None:
-        raise AppointmentNotFound()
-
-    status, doctor_id, doctor_tz, start_at = row
-
-    if status != "CONFIRMED":
-        raise InvalidStatusTransition()
-
-    # start_at is TIMESTAMPTZ -- an absolute instant, so comparing it
-    # directly against an aware "now" is correct regardless of which
-    # timezone either side happens to be labeled in (no conversion to
-    # the doctor's local wall-clock time needed, or safe, for this
-    # check -- unlike the token-numbering "which doctor-local day is
-    # this" question below, which does need doctor_tz).
-    if start_at > datetime.now(timezone.utc):
-        raise AppointmentNotStarted()
+    if existing_token is not None:
+        return {
+            "id": appointment_id,
+            "token_number": existing_token,
+            "visited_at": existing_visited_at.isoformat(),
+            "newly_generated": False,
+        }
 
     if not validate_timezone(doctor_tz):
         doctor_tz = "Asia/Kolkata"
@@ -951,14 +958,84 @@ def mark_visited_service(cur, appointment_id: int):
     cur.execute(
         """
         UPDATE appointments
-        SET status = 'CHECKED_IN',
-            visited_at = NOW(),
-            token_number = %s,
+        SET token_number = %s,
             updated_at = NOW()
         WHERE id = %s
-        RETURNING id, status, token_number, visited_at, doctor_id, patient_id
+        RETURNING token_number, visited_at
         """,
         (next_token, appointment_id),
+    )
+
+    token_number, visited_at = cur.fetchone()
+
+    return {
+        "id": appointment_id,
+        "token_number": token_number,
+        "visited_at": visited_at.isoformat(),
+        "newly_generated": True,
+    }
+
+
+def mark_visited_service(cur, appointment_id: int):
+    """
+    Staff checks a Confirmed patient in on arrival -- CHECKED_IN,
+    visited_at set. That's all this does now (Phase 4 of the patient
+    arrival workflow): it deliberately does NOT call
+    generate_queue_token_service any more. Phases 1-3 kept that call
+    wired here as a transitional no-behavior-change step while nothing
+    else could trigger it; now that payment/waiver exist
+    (record_payment_service, waive_consultation_fee_service), a token
+    is only issued once the consultation fee is paid or waived -- see
+    those two functions, the workflow's actual queue-entry trigger --
+    matching the core business rule (spec: "a patient should not enter
+    the consultation queue until the consultation charge has been
+    successfully paid, unless waived"). token_number stays NULL on
+    CHECKED_IN until then.
+
+    Doesn't reuse _transition_appointment_status above the way the
+    other three transitions do, since it also needs the AppointmentNotStarted
+    time check below.
+    """
+    cur.execute(
+        """
+        SELECT status, start_at
+        FROM appointments
+        WHERE id = %s
+        FOR UPDATE
+        """,
+        (appointment_id,),
+    )
+
+    row = cur.fetchone()
+
+    if row is None:
+        raise AppointmentNotFound()
+
+    status, start_at = row
+
+    if status != "CONFIRMED":
+        raise InvalidStatusTransition()
+
+    # start_at is TIMESTAMPTZ -- an absolute instant, so comparing it
+    # directly against an aware "now" is correct regardless of which
+    # timezone either side happens to be labeled in -- no conversion to
+    # the doctor's local wall-clock time needed here (unlike the
+    # token-numbering "which doctor-local day is this" question inside
+    # generate_queue_token_service, which does need it, but that no
+    # longer runs from this function -- see the docstring above).
+    if start_at > datetime.now(timezone.utc):
+        raise AppointmentNotStarted()
+
+    cur.execute(
+        """
+        UPDATE appointments
+        SET status = 'CHECKED_IN',
+            visited_at = NOW(),
+            updated_at = NOW()
+        WHERE id = %s
+        RETURNING id, status, visited_at, doctor_id, patient_id
+        """,
+        (appointment_id,),
     )
 
     result_row = cur.fetchone()
@@ -966,10 +1043,10 @@ def mark_visited_service(cur, appointment_id: int):
     return {
         "id": result_row[0],
         "status": result_row[1],
-        "token_number": result_row[2],
-        "visited_at": result_row[3].isoformat(),
-        "doctor_id": result_row[4],
-        "patient_id": result_row[5],
+        "token_number": None,
+        "visited_at": result_row[2].isoformat(),
+        "doctor_id": result_row[3],
+        "patient_id": result_row[4],
     }
 
 
@@ -1036,3 +1113,228 @@ def mark_no_show_service(cur, appointment_id: int):
     result_row = cur.fetchone()
 
     return {"id": result_row[0], "status": result_row[1]}
+
+
+def get_consultation_charge_service(cur, appointment_id: int):
+    """
+    The fee to charge for this appointment -- always looked up
+    server-side from doctor_appointment_types.consultation_fee (never
+    trusts a client-supplied amount, since that's the one number in
+    this whole workflow that must not be spoofable). Callable any time
+    an appointment exists, independent of its current status, so
+    Phase 5's UI can show "Consultation Fee: X" before check-in too.
+    """
+    cur.execute(
+        """
+        SELECT dat.consultation_fee
+        FROM appointments a
+        JOIN doctor_appointment_types dat
+            ON dat.doctor_id = a.doctor_id
+           AND dat.appointment_type_id = a.appointment_type_id
+        WHERE a.id = %s
+        """,
+        (appointment_id,),
+    )
+
+    row = cur.fetchone()
+
+    if row is None:
+        # Either the appointment doesn't exist, or its doctor/type
+        # pairing was deactivated after the appointment was created
+        # (create_appointment_service required it to be active at
+        # creation time, but doesn't prevent later deactivation).
+        cur.execute("SELECT id FROM appointments WHERE id = %s", (appointment_id,))
+        if cur.fetchone() is None:
+            raise AppointmentNotFound()
+        raise AppointmentTypeNotAssigned()
+
+    return {"appointment_id": appointment_id, "consultation_fee": row[0]}
+
+
+def _lock_appointment_for_payment(cur, appointment_id: int):
+    """Shared row lookup/lock for record_payment_service and
+    waive_consultation_fee_service -- both gate on the same two things
+    (appointment exists and is CHECKED_IN) before doing anything
+    payment-specific, and both need doctor_tz afterward: record_payment_
+    service and waive_consultation_fee_service each call
+    generate_queue_token_service on success, which needs it for its own
+    "which doctor-local day is this" token-numbering question."""
+    cur.execute(
+        """
+        SELECT a.status, a.payment_status, a.doctor_id, a.patient_id,
+               a.visited_at, d.timezone
+        FROM appointments a
+        JOIN doctors d ON d.id = a.doctor_id
+        WHERE a.id = %s
+        FOR UPDATE OF a
+        """,
+        (appointment_id,),
+    )
+
+    row = cur.fetchone()
+
+    if row is None:
+        raise AppointmentNotFound()
+
+    status, payment_status, doctor_id, patient_id, visited_at, doctor_tz = row
+
+    if status != "CHECKED_IN":
+        raise InvalidStatusTransition()
+
+    if not validate_timezone(doctor_tz):
+        doctor_tz = "Asia/Kolkata"
+
+    return payment_status, doctor_id, patient_id, visited_at, doctor_tz
+
+
+def record_payment_service(cur, appointment_id: int, *, method: str, outcome: str, staff_id: int):
+    """
+    Staff records a consultation-payment attempt at the front desk --
+    method is CASH/UPI/CARD/OTHER, outcome is PAID or FAILED (a FAILED
+    attempt, e.g. a declined card, can be retried by calling this again
+    with a new outcome; nothing here talks to a real payment gateway,
+    per the workflow spec's explicit scope boundary).
+
+    Idempotent on an already-PAID appointment: returns the existing
+    record unchanged rather than charging a second time -- guards
+    against a double-click or a refresh-and-resubmit. Raises
+    PaymentStateConflict for WAIVED/REFUNDED, since neither of those
+    should ever be overwritten by a plain payment attempt.
+
+    On a successful PAID outcome, also generates the queue token
+    (generate_queue_token_service) -- this is the workflow's actual
+    "patient enters the queue" trigger as of Phase 4, no longer
+    check-in itself. A FAILED outcome never does: the patient stays
+    outside the queue until payment succeeds or is waived, per the
+    core business rule.
+    """
+    payment_status, doctor_id, patient_id, visited_at, doctor_tz = _lock_appointment_for_payment(cur, appointment_id)
+
+    if payment_status == "PAID":
+        return {**_current_payment_record(cur, appointment_id), "token_just_issued": False}
+
+    if payment_status in ("WAIVED", "REFUNDED"):
+        raise PaymentStateConflict()
+
+    # Recorded for both outcomes -- FAILED still records the amount
+    # that was *attempted* (e.g. "UPI declined for Rs. 500"), useful
+    # for the front desk to see what's outstanding on retry. It does
+    # not mean money changed hands; payment_status is what says that.
+    charge = get_consultation_charge_service(cur, appointment_id)
+    amount = charge["consultation_fee"]
+
+    cur.execute(
+        """
+        UPDATE appointments
+        SET payment_status = %s,
+            payment_method = %s,
+            payment_amount = %s,
+            payment_recorded_by = %s,
+            payment_recorded_at = NOW(),
+            updated_at = NOW()
+        WHERE id = %s
+        """,
+        (outcome, method, amount, staff_id, appointment_id),
+    )
+
+    token_just_issued = False
+    if outcome == "PAID":
+        token_result = generate_queue_token_service(cur, appointment_id, doctor_id=doctor_id, doctor_tz=doctor_tz)
+        token_just_issued = token_result["newly_generated"]
+
+    return {**_current_payment_record(cur, appointment_id), "token_just_issued": token_just_issued}
+
+
+def waive_consultation_fee_service(cur, appointment_id: int, *, reason: str, staff_id: int):
+    """
+    Staff (ADMIN only -- enforced at the API layer, app/api/
+    appointments.py) waives the consultation fee for this visit. Only
+    eligible when the same patient has a COMPLETED visit with this same
+    doctor within the 3 calendar days before this one's check-in --
+    the clinic's stated policy ("waiver applies only if the patient
+    revisits within 3 days"), not staff discretion. visited_at's
+    doctor-local calendar date is compared on both sides (same pattern
+    mark_visited_service/get_doctor_queue use for "which day is this"),
+    not a raw 72-hour timestamp difference.
+
+    Idempotent on an already-WAIVED appointment. Raises
+    PaymentStateConflict if already PAID (a completed payment isn't
+    something a waiver un-does -- that would be a refund, out of this
+    phase's scope).
+
+    On success, also generates the queue token (generate_queue_token_
+    service) -- same Phase 4 trigger record_payment_service's PAID
+    outcome uses: "payment complete or waived" is what admits a patient
+    to the queue, not check-in itself.
+    """
+    payment_status, doctor_id, patient_id, visited_at, doctor_tz = _lock_appointment_for_payment(cur, appointment_id)
+
+    if payment_status == "WAIVED":
+        return {**_current_payment_record(cur, appointment_id), "token_just_issued": False}
+
+    if payment_status in ("PAID", "REFUNDED"):
+        raise PaymentStateConflict()
+
+    this_visit_date = convert_to_timezone(visited_at, doctor_tz).date()
+
+    cur.execute(
+        """
+        SELECT 1
+        FROM appointments
+        WHERE patient_id = %s
+          AND doctor_id = %s
+          AND status = 'COMPLETED'
+          AND id <> %s
+          AND visited_at IS NOT NULL
+          AND (visited_at AT TIME ZONE %s)::date >= %s - INTERVAL '3 days'
+          AND (visited_at AT TIME ZONE %s)::date <= %s
+        LIMIT 1
+        """,
+        (patient_id, doctor_id, appointment_id, doctor_tz, this_visit_date, doctor_tz, this_visit_date),
+    )
+
+    if cur.fetchone() is None:
+        raise WaiverNotEligible()
+
+    cur.execute(
+        """
+        UPDATE appointments
+        SET payment_status = 'WAIVED',
+            payment_method = NULL,
+            payment_amount = 0,
+            waive_reason = %s,
+            payment_recorded_by = %s,
+            payment_recorded_at = NOW(),
+            updated_at = NOW()
+        WHERE id = %s
+        """,
+        (reason, staff_id, appointment_id),
+    )
+
+    token_result = generate_queue_token_service(cur, appointment_id, doctor_id=doctor_id, doctor_tz=doctor_tz)
+
+    return {**_current_payment_record(cur, appointment_id), "token_just_issued": token_result["newly_generated"]}
+
+
+def _current_payment_record(cur, appointment_id: int):
+    cur.execute(
+        """
+        SELECT id, payment_status, payment_method, payment_amount,
+               payment_recorded_at, waive_reason, token_number
+        FROM appointments
+        WHERE id = %s
+        """,
+        (appointment_id,),
+    )
+
+    row = cur.fetchone()
+
+    return {
+        "id": row[0],
+        "payment_status": row[1],
+        "payment_method": row[2],
+        "payment_amount": row[3],
+        "payment_recorded_at": row[4].isoformat() if row[4] else None,
+        "waive_reason": row[5],
+        "token_number": row[6],
+    }

@@ -40,9 +40,14 @@ def insert_patient(cur, name: str, whatsapp_number: str):
     }
 
 
-class PatientCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=150)
-    whatsapp_number: str = Field(min_length=1, max_length=30)
+class _PatientFieldValidators:
+    """Shared name/whatsapp_number validation -- mixed into both
+    PatientCreate and PatientUpdate below (Phase 2 of the patient
+    arrival workflow adds the latter) so the two never drift out of
+    sync on what counts as a valid patient name or number. Plain
+    mixin, not a BaseModel subclass, matching pydantic's own documented
+    pattern for sharing field_validators across models: it must come
+    before BaseModel in each model's base list."""
 
     @field_validator("name")
     @classmethod
@@ -63,6 +68,25 @@ class PatientCreate(BaseModel):
             raise ValueError("WhatsApp number cannot be empty")
 
         return normalize_whatsapp_number(value)
+
+
+class PatientCreate(_PatientFieldValidators, BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    whatsapp_number: str = Field(min_length=1, max_length=30)
+
+
+class PatientUpdate(_PatientFieldValidators, BaseModel):
+    """For PATCH /patients/{id} -- staff correcting a patient's name or
+    WhatsApp number discovered wrong during front-desk verification.
+    Same two fields, same validation as PatientCreate; the two models
+    stay separate (rather than making PatientCreate's fields optional
+    and reusing it directly) since create and update have different
+    semantics (whatsapp_number collision means "already exists" on
+    create, "belongs to a different patient" on update -- see
+    update_patient below)."""
+
+    name: str = Field(min_length=1, max_length=150)
+    whatsapp_number: str = Field(min_length=1, max_length=30)
 
 
 @router.get("")
@@ -143,3 +167,57 @@ def create_patient(
                 )
 
     return created_patient
+
+
+@router.patch("/{patient_id}")
+def update_patient(
+    patient_id: int,
+    patient: PatientUpdate,
+    staff: dict = Depends(get_current_staff),
+):
+    """
+    Staff correcting a patient's name or WhatsApp number -- the
+    "Verify details / Update if required" step of front-desk check-in
+    (patient arrival workflow Phase 2). Reuses the same patient record
+    create_patient already established (no second patient table/
+    identity, no new dedup mechanism): this only ever UPDATEs an
+    existing row, never inserts one.
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM patients WHERE id = %s", (patient_id,))
+
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=404, detail="Patient not found")
+
+            # Unlike create_patient's check (any existing row with this
+            # number is a conflict), a patient keeping their own current
+            # number must not conflict with themselves -- only a
+            # *different* patient already owning this number is a real
+            # collision.
+            cur.execute(
+                "SELECT id FROM patients WHERE whatsapp_number = %s AND id <> %s",
+                (patient.whatsapp_number, patient_id),
+            )
+
+            if cur.fetchone() is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Another patient with this WhatsApp number already exists",
+                )
+
+            cur.execute(
+                """
+                UPDATE patients
+                SET name = %s,
+                    whatsapp_number = %s,
+                    updated_at = NOW()
+                WHERE id = %s
+                RETURNING id, name, whatsapp_number
+                """,
+                (patient.name, patient.whatsapp_number, patient_id),
+            )
+
+            row = cur.fetchone()
+
+    return {"id": row[0], "name": row[1], "whatsapp_number": row[2]}

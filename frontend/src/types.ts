@@ -67,6 +67,10 @@ export interface AppointmentType {
   name: string
   duration_minutes: number
   active: boolean
+  // Fee for this doctor/appointment-type pairing (patient arrival
+  // workflow Phase 3) -- 0 means "not configured yet", never a
+  // fabricated default.
+  consultation_fee: number
 }
 
 export interface Slot {
@@ -205,7 +209,8 @@ export interface AdminAppointment {
   start_at: string
   end_at: string
   status: string
-  // Assigned at check-in (status -> VISITED); null until then.
+  // Assigned once payment succeeds or is waived (patient arrival
+  // workflow Phase 4) -- NOT at check-in itself; null until then.
   token_number: number | null
   // Raw UTC instant (not converted to the doctor's timezone, unlike
   // start_at/end_at above) -- an audit-log-style "when was this
@@ -213,6 +218,17 @@ export interface AdminAppointment {
   // via format.ts's formatDateTime, the same convention as a doctor's
   // created_at elsewhere in this app.
   created_at: string
+  // Payment fields (patient arrival workflow Phase 3). consultation_fee
+  // is the *current* configured fee for this doctor/type (looked up
+  // live, not frozen) -- payment_amount is what was actually
+  // charged/waived at the time payment_status last changed, which can
+  // differ from consultation_fee if pricing changed since.
+  payment_status: 'UNPAID' | 'PAID' | 'FAILED' | 'WAIVED' | 'REFUNDED'
+  consultation_fee: number
+  payment_method: 'CASH' | 'UPI' | 'CARD' | 'OTHER' | null
+  payment_amount: number | null
+  paid_at: string | null
+  waive_reason: string | null
 }
 
 export interface AdminAppointmentActionResult {
@@ -225,6 +241,22 @@ export interface AdminAppointmentActionResult {
   status: string
   duration_minutes: number
   appointment_type_name: string
+}
+
+// POST /appointments/{id}/payment and /waive-payment (patient arrival
+// workflow Phases 3-4) share this response shape.
+export interface PaymentActionResult {
+  id: number
+  payment_status: 'UNPAID' | 'PAID' | 'FAILED' | 'WAIVED' | 'REFUNDED'
+  payment_method: 'CASH' | 'UPI' | 'CARD' | 'OTHER' | null
+  payment_amount: number | null
+  payment_recorded_at: string | null
+  waive_reason: string | null
+  token_number: number | null
+  // True only when this call is what just generated the token (not an
+  // idempotent replay) -- lets the UI show the "you're in the queue"
+  // confirmation exactly once.
+  token_just_issued: boolean
 }
 
 export interface DashboardStats {

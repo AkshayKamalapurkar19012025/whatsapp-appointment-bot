@@ -1,9 +1,14 @@
 """
 Tests for the patient queue token system (migrations/0012_appointment_
-queue_tokens.sql): a token_number is assigned to an appointment the
-moment it's checked in (marked Visited), scoped per doctor per doctor-
-local day, plus GET /api/doctors/{id}/queue (the "now serving" view)
-and the staff-triggered CHECK_IN mock notification.
+queue_tokens.sql). As of the patient arrival workflow's Phase 4, a
+token_number is assigned once the consultation fee is paid or waived
+(record_payment_service/waive_consultation_fee_service), NOT the
+moment a patient is checked in -- check-in alone leaves token_number
+NULL. Scoped per doctor per doctor-local day. Also covers
+GET /api/doctors/{id}/queue (the "now serving" view, which now filters
+on token_number IS NOT NULL -- a checked-in-but-unpaid patient must not
+appear there) and the staff-triggered CHECK_IN/QUEUE_TOKEN mock
+notifications.
 """
 
 from datetime import date, datetime, timedelta, timezone as dt_timezone
@@ -70,7 +75,15 @@ def _schedule_and_confirm(client, db_connection, admin_headers, seeded, patient_
     return {"patient": patient, "appointment_id": created["id"]}
 
 
-def test_visit_assigns_sequential_token_numbers_per_doctor(client, db_connection):
+def _pay(client, admin_headers, appointment_id, method="CASH"):
+    return client.post(
+        f"/api/appointments/{appointment_id}/payment",
+        json={"method": method, "outcome": "PAID"},
+        headers=admin_headers,
+    )
+
+
+def test_visit_leaves_token_number_null_until_paid(client, db_connection):
     admin_headers = create_admin_and_get_headers(db_connection)
     seeded = seed_basic_doctor(
         client, db_connection, doctor_name="Dr. Token A",
@@ -78,16 +91,37 @@ def test_visit_assigns_sequential_token_numbers_per_doctor(client, db_connection
     )
 
     a = _schedule_and_confirm(client, db_connection, admin_headers, seeded, "Token Patient 1", 30000001, hour=9)
-    b = _schedule_and_confirm(client, db_connection, admin_headers, seeded, "Token Patient 2", 30000002, hour=10)
 
     visit_a = client.post(f"/api/appointments/{a['appointment_id']}/visit", headers=admin_headers)
-    visit_b = client.post(f"/api/appointments/{b['appointment_id']}/visit", headers=admin_headers)
-
     assert visit_a.status_code == 200
-    assert visit_b.status_code == 200
-    assert visit_a.json()["token_number"] == 1
-    assert visit_b.json()["token_number"] == 2
+    assert visit_a.json()["token_number"] is None
     assert visit_a.json()["visited_at"] is not None
+
+
+def test_payment_assigns_sequential_token_numbers_per_doctor(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Token A2",
+        department_name="Token A2 Dept", appointment_type_name="Token A2 Type",
+    )
+
+    a = _schedule_and_confirm(client, db_connection, admin_headers, seeded, "Token Patient 1b", 30000012, hour=9)
+    b = _schedule_and_confirm(client, db_connection, admin_headers, seeded, "Token Patient 2b", 30000013, hour=10)
+
+    client.post(f"/api/appointments/{a['appointment_id']}/visit", headers=admin_headers)
+    client.post(f"/api/appointments/{b['appointment_id']}/visit", headers=admin_headers)
+
+    # Token order follows *payment* completion order, not check-in
+    # order -- generate_queue_token_service is only ever triggered by
+    # payment/waiver as of Phase 4, so a-pays-first gets token 1
+    # regardless of which patient checked in first.
+    pay_a = _pay(client, admin_headers, a["appointment_id"])
+    pay_b = _pay(client, admin_headers, b["appointment_id"])
+
+    assert pay_a.status_code == 200
+    assert pay_b.status_code == 200
+    assert pay_a.json()["token_number"] == 1
+    assert pay_b.json()["token_number"] == 2
 
 
 def test_token_numbers_are_independent_per_doctor(client, db_connection):
@@ -104,16 +138,19 @@ def test_token_numbers_are_independent_per_doctor(client, db_connection):
     first_for_a = _schedule_and_confirm(client, db_connection, admin_headers, seeded_a, "Token Patient 3", 30000003)
     first_for_b = _schedule_and_confirm(client, db_connection, admin_headers, seeded_b, "Token Patient 4", 30000004)
 
-    visit_a = client.post(f"/api/appointments/{first_for_a['appointment_id']}/visit", headers=admin_headers)
-    visit_b = client.post(f"/api/appointments/{first_for_b['appointment_id']}/visit", headers=admin_headers)
+    client.post(f"/api/appointments/{first_for_a['appointment_id']}/visit", headers=admin_headers)
+    client.post(f"/api/appointments/{first_for_b['appointment_id']}/visit", headers=admin_headers)
+
+    pay_a = _pay(client, admin_headers, first_for_a["appointment_id"])
+    pay_b = _pay(client, admin_headers, first_for_b["appointment_id"])
 
     # Each doctor's queue starts at 1 for the day, independent of the
-    # other doctor's own check-ins.
-    assert visit_a.json()["token_number"] == 1
-    assert visit_b.json()["token_number"] == 1
+    # other doctor's own payments.
+    assert pay_a.json()["token_number"] == 1
+    assert pay_b.json()["token_number"] == 1
 
 
-def test_visit_sends_check_in_notification_with_token_number(client, db_connection):
+def test_visit_sends_check_in_notification_without_token_number(client, db_connection):
     admin_headers = create_admin_and_get_headers(db_connection)
     seeded = seed_basic_doctor(
         client, db_connection, doctor_name="Dr. Token Notify",
@@ -135,8 +172,62 @@ def test_visit_sends_check_in_notification_with_token_number(client, db_connecti
     assert len(rows) == 1
     kind, message_body = rows[0]
     assert kind == "CHECK_IN"
-    assert "token number is 1" in message_body
+    # "Token" appears in this test's own patient/doctor names -- assert
+    # on the actual phrase that would announce a token number, not a
+    # bare substring match.
+    assert "token number" not in message_body.lower()
+    assert "queue token" not in message_body.lower()
     assert "Dr. Token Notify" in message_body
+
+
+def test_payment_sends_queue_token_notification(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Token Pay Notify",
+        department_name="Token Pay Notify Dept", appointment_type_name="Token Pay Notify Type",
+    )
+    scheduled = _schedule_and_confirm(client, db_connection, admin_headers, seeded, "Token Pay Notify Patient", 30000014)
+    number = "+919930000014"
+
+    client.post(f"/api/appointments/{scheduled['appointment_id']}/visit", headers=admin_headers)
+    response = _pay(client, admin_headers, scheduled["appointment_id"])
+    assert response.status_code == 200
+    assert response.json()["token_number"] == 1
+
+    with db_connection.cursor() as cur:
+        cur.execute(
+            "SELECT kind, message_body FROM mock_sms_outbox WHERE whatsapp_number = %s AND kind = 'QUEUE_TOKEN'",
+            (number,),
+        )
+        rows = cur.fetchall()
+
+    assert len(rows) == 1
+    kind, message_body = rows[0]
+    assert "Queue Token: 1" in message_body
+    assert "Dr. Token Pay Notify" in message_body
+
+
+def test_double_click_payment_does_not_duplicate_queue_token_notification(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Token Pay Notify Dup",
+        department_name="Token Pay Notify Dup Dept", appointment_type_name="Token Pay Notify Dup Type",
+    )
+    scheduled = _schedule_and_confirm(client, db_connection, admin_headers, seeded, "Token Pay Notify Dup Patient", 30000015)
+    number = "+919930000015"
+
+    client.post(f"/api/appointments/{scheduled['appointment_id']}/visit", headers=admin_headers)
+    _pay(client, admin_headers, scheduled["appointment_id"])
+    _pay(client, admin_headers, scheduled["appointment_id"])  # double-click replay
+
+    with db_connection.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM mock_sms_outbox WHERE whatsapp_number = %s AND kind = 'QUEUE_TOKEN'",
+            (number,),
+        )
+        (count,) = cur.fetchone()
+
+    assert count == 1
 
 
 def test_visit_requires_confirmed_status(client, db_connection):
@@ -209,10 +300,15 @@ def test_queue_splits_now_serving_waiting_and_completed(client, db_connection):
     p2 = _schedule_and_confirm(client, db_connection, admin_headers, seeded, "Queue Patient 2", 30000008, hour=10)
     p3 = _schedule_and_confirm(client, db_connection, admin_headers, seeded, "Queue Patient 3", 30000009, hour=11)
 
-    # Token order: p1 -> #1, p2 -> #2, p3 -> #3.
+    # Check in, then pay -- token order (p1 -> #1, p2 -> #2, p3 -> #3)
+    # follows payment order, which matches check-in order here since
+    # each pays immediately after checking in.
     client.post(f"/api/appointments/{p1['appointment_id']}/visit", headers=admin_headers)
+    _pay(client, admin_headers, p1["appointment_id"])
     client.post(f"/api/appointments/{p2['appointment_id']}/visit", headers=admin_headers)
+    _pay(client, admin_headers, p2["appointment_id"])
     client.post(f"/api/appointments/{p3['appointment_id']}/visit", headers=admin_headers)
+    _pay(client, admin_headers, p3["appointment_id"])
 
     # p1 gets seen and completed -- should move out of "waiting" entirely
     # (not just out of "now serving").
@@ -227,6 +323,37 @@ def test_queue_splits_now_serving_waiting_and_completed(client, db_connection):
     assert body["now_serving"]["patient_name"] == "Queue Patient 2"
     assert [w["token_number"] for w in body["waiting"]] == [3]
     assert [c["token_number"] for c in body["completed"]] == [1]
+
+
+def test_queue_excludes_checked_in_but_unpaid_patients(client, db_connection):
+    """The core business rule, enforced at the query that surfaces the
+    queue to a doctor: a patient who's checked in but hasn't paid (or
+    been waived) must not appear anywhere in this response, even though
+    their appointment is CHECKED_IN today."""
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Queue Unpaid",
+        department_name="Queue Unpaid Dept", appointment_type_name="Queue Unpaid Type",
+    )
+
+    paid_patient = _schedule_and_confirm(client, db_connection, admin_headers, seeded, "Queue Paid Patient", 30000016, hour=9)
+    unpaid_patient = _schedule_and_confirm(client, db_connection, admin_headers, seeded, "Queue Unpaid Patient", 30000017, hour=10)
+
+    client.post(f"/api/appointments/{paid_patient['appointment_id']}/visit", headers=admin_headers)
+    _pay(client, admin_headers, paid_patient["appointment_id"])
+
+    client.post(f"/api/appointments/{unpaid_patient['appointment_id']}/visit", headers=admin_headers)
+    # Deliberately never paid or waived.
+
+    body = client.get(f"/api/doctors/{seeded['doctor_id']}/queue", headers=admin_headers).json()
+
+    all_names = (
+        ([body["now_serving"]["patient_name"]] if body["now_serving"] else [])
+        + [w["patient_name"] for w in body["waiting"]]
+        + [c["patient_name"] for c in body["completed"]]
+    )
+    assert "Queue Paid Patient" in all_names
+    assert "Queue Unpaid Patient" not in all_names
 
 
 def test_queue_visited_at_is_doctor_local_time_not_utc(client, db_connection):
@@ -246,6 +373,7 @@ def test_queue_visited_at_is_doctor_local_time_not_utc(client, db_connection):
 
     before = dt.datetime.now(ZoneInfo("America/New_York"))
     client.post(f"/api/appointments/{scheduled['appointment_id']}/visit", headers=admin_headers)
+    _pay(client, admin_headers, scheduled["appointment_id"])
     after = dt.datetime.now(ZoneInfo("America/New_York"))
 
     body = client.get(f"/api/doctors/{seeded['doctor_id']}/queue", headers=admin_headers).json()
@@ -276,7 +404,7 @@ def test_queue_empty_when_nobody_checked_in_today(client, db_connection):
 # ---------------------------------------------------------------------
 
 
-def test_web_my_appointments_includes_token_number_once_checked_in(client, db_connection):
+def test_web_my_appointments_includes_token_number_once_paid(client, db_connection):
     from tests.helpers import register_and_login_web_patient
 
     admin_headers = create_admin_and_get_headers(db_connection)
@@ -315,8 +443,16 @@ def test_web_my_appointments_includes_token_number_once_checked_in(client, db_co
 
     client.post(f"/api/appointments/{created['id']}/visit", headers=admin_headers)
 
-    listing_after = client.get(
+    listing_after_checkin = client.get(
         "/api/web/appointments/me", headers={"Authorization": f"Bearer {token}"}
     ).json()
-    history_entry = next(a for a in listing_after["history"] if a["id"] == created["id"])
-    assert history_entry["token_number"] == 1
+    checked_in_entry = next(a for a in listing_after_checkin["history"] if a["id"] == created["id"])
+    assert checked_in_entry["token_number"] is None
+
+    _pay(client, admin_headers, created["id"])
+
+    listing_after_payment = client.get(
+        "/api/web/appointments/me", headers={"Authorization": f"Bearer {token}"}
+    ).json()
+    paid_entry = next(a for a in listing_after_payment["history"] if a["id"] == created["id"])
+    assert paid_entry["token_number"] == 1

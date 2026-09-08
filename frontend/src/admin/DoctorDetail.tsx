@@ -3,14 +3,12 @@ import {
   ApiError,
   assignAppointmentTypeToDoctor,
   assignDoctorToDepartment,
-  completeAdminAppointment,
   createDoctorBlock,
   createDoctorSchedule,
   deleteDoctorBlock,
   deleteDoctorSchedule,
   getDoctorBlocks,
   getDoctorDepartments,
-  getDoctorQueue,
   getDoctorScheduleAdmin,
   listAdminAppointments,
   listAppointmentTypeCatalog,
@@ -26,7 +24,6 @@ import type {
   Department,
   Doctor,
   DoctorBlockEntry,
-  DoctorQueue,
   DoctorScheduleEntry,
 } from '../types'
 import { formatDate, formatTime, formatTimeOfDay } from '../format'
@@ -42,6 +39,7 @@ import {
   AlertDialogTitle,
 } from '../components/ui/alert-dialog'
 import DoctorProfileSection from './DoctorProfileSection'
+import QueueSection from './QueueSection'
 
 const DAY_NAMES = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
@@ -144,7 +142,7 @@ export default function DoctorDetail({ doctor, isAdmin }: { doctor: Doctor; isAd
 
       {tab === 'profile' && <DoctorProfileSection doctor={doctor} isAdmin={isAdmin} />}
       {tab === 'upcoming' && <UpcomingAppointmentsSection doctor={doctor} />}
-      {tab === 'queue' && <QueueSection doctor={doctor} />}
+      {tab === 'queue' && <QueueSection doctorId={doctor.id} />}
       {tab === 'schedule' && <ScheduleSection doctor={doctor} isAdmin={isAdmin} />}
       {tab === 'blocks' && <BlocksSection doctor={doctor} />}
       {tab === 'departments' && <DepartmentAssignment doctor={doctor} isAdmin={isAdmin} />}
@@ -248,133 +246,6 @@ function UpcomingAppointmentsSection({ doctor }: { doctor: Doctor }) {
             ))}
           </tbody>
         </table>
-      )}
-    </div>
-  )
-}
-
-// -- Today's walk-in queue (ADMIN or STAFF) -----------------------------
-// migrations/0012_appointment_queue_tokens.sql: a token number is
-// assigned the moment a Confirmed appointment is checked in (status ->
-// CHECKED_IN, migrations/0015, via the "Check In" button on the
-// Appointments panel or this doctor's Upcoming tab above). This tab is
-// purely a read+advance view of that queue: who
-// has a token today, who's currently being served (the lowest token
-// still waiting -- this app has no separate "in consultation" status),
-// and who's already been seen.
-
-function QueueSection({ doctor }: { doctor: Doctor }) {
-  const [queue, setQueue] = useState<DoctorQueue | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [completingId, setCompletingId] = useState<number | null>(null)
-
-  function load() {
-    setLoading(true)
-    setError(null)
-    getDoctorQueue(doctor.id)
-      .then(setQueue)
-      .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load the queue'))
-      .finally(() => setLoading(false))
-  }
-
-  useEffect(load, [doctor.id])
-
-  async function handleComplete(appointmentId: number) {
-    setError(null)
-    setCompletingId(appointmentId)
-    try {
-      await completeAdminAppointment(appointmentId)
-      load()
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not mark the appointment completed')
-    } finally {
-      setCompletingId(null)
-    }
-  }
-
-  return (
-    <div className="detail-section">
-      <h4>Today&apos;s queue</h4>
-      {error && <p className="error">{error}</p>}
-
-      {loading && (
-        <div className="state-block">
-          <span className="spinner" aria-hidden="true" />
-          Loading…
-        </div>
-      )}
-
-      {!loading && queue && (
-        <>
-          <div className="queue-now-serving">
-            <span className="queue-now-serving-label">Now serving</span>
-            {queue.now_serving ? (
-              <>
-                <span className="queue-token-badge">#{queue.now_serving.token_number}</span>
-                <span>{queue.now_serving.patient_name}</span>
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  disabled={completingId === queue.now_serving.appointment_id}
-                  onClick={() => handleComplete(queue.now_serving!.appointment_id)}
-                >
-                  {completingId === queue.now_serving.appointment_id ? 'Saving…' : 'Mark completed'}
-                </button>
-              </>
-            ) : (
-              <span className="muted">Nobody checked in yet today.</span>
-            )}
-          </div>
-
-          {queue.waiting.length > 0 && (
-            <>
-              <h4>Waiting ({queue.waiting.length})</h4>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Token</th>
-                    <th>Patient</th>
-                    <th>Checked in</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {queue.waiting.map((entry) => (
-                    <tr key={entry.appointment_id}>
-                      <td>#{entry.token_number}</td>
-                      <td>{entry.patient_name}</td>
-                      <td>{formatTime(entry.visited_at)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
-
-          {queue.completed.length > 0 && (
-            <>
-              <h4>Completed today ({queue.completed.length})</h4>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Token</th>
-                    <th>Patient</th>
-                    <th>Checked in</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {queue.completed.map((entry) => (
-                    <tr key={entry.appointment_id}>
-                      <td>#{entry.token_number}</td>
-                      <td>{entry.patient_name}</td>
-                      <td>{formatTime(entry.visited_at)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
-        </>
       )}
     </div>
   )
@@ -992,6 +863,11 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
   const [catalog, setCatalog] = useState<AppointmentTypeSummary[]>([])
   const [selected, setSelected] = useState('')
   const [duration, setDuration] = useState(30)
+  // Consultation fee (patient arrival workflow Phase 3) -- entered as a
+  // plain rupee amount, not a placeholder/default the app invents; 0
+  // means "not set yet" both here and on the backend
+  // (get_consultation_charge_service).
+  const [fee, setFee] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [removeTarget, setRemoveTarget] = useState<AppointmentType | null>(null)
 
@@ -1015,9 +891,10 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
     if (!selected) return
     setError(null)
     try {
-      await assignAppointmentTypeToDoctor(doctor.id, Number(selected), duration)
+      await assignAppointmentTypeToDoctor(doctor.id, Number(selected), duration, Number(fee) || 0)
       setSelected('')
       setDuration(30)
+      setFee('')
       load()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not assign appointment type')
@@ -1027,6 +904,7 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
   function resetAssignForm() {
     setSelected('')
     setDuration(30)
+    setFee('')
   }
 
   async function confirmRemove() {
@@ -1050,7 +928,7 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
       <ul className="tag-list">
         {assigned.map((a) => (
           <li key={a.id}>
-            {a.name} ({a.duration_minutes} min)
+            {a.name} ({a.duration_minutes} min · ₹{a.consultation_fee})
             {isAdmin && (
               <button type="button" className="link" onClick={() => setRemoveTarget(a)}>
                 remove
@@ -1095,6 +973,18 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
               ))}
             </div>
           </div>
+
+          <label className="inline-label" style={{ width: '100%' }}>
+            Consultation fee (₹)
+            <input
+              type="number"
+              min={0}
+              step="1"
+              placeholder="0"
+              value={fee}
+              onChange={(e) => setFee(e.target.value)}
+            />
+          </label>
         </form>
       )}
 

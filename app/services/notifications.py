@@ -39,6 +39,13 @@ KIND_SCHEDULING_CONFIRMATION = "SCHEDULING_CONFIRMATION"
 KIND_CANCELLATION = "CANCELLATION"
 KIND_RESCHEDULE = "RESCHEDULE"
 KIND_CHECK_IN = "CHECK_IN"
+# Fires once a queue token is actually issued (patient arrival workflow
+# Phase 4) -- payment success or waiver, app/api/appointments.py's
+# /payment and /waive-payment endpoints -- not check-in itself, since
+# Phase 4 decoupled token issuance from check-in. Same staff-initiated
+# exception as KIND_CHECK_IN (see that constant's own note above): the
+# patient is at the front desk, not mid-chat with the bot.
+KIND_QUEUE_TOKEN = "QUEUE_TOKEN"
 
 
 def send_mock_notification(

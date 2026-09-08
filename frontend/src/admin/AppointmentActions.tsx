@@ -12,6 +12,13 @@ export interface AppointmentActionHandlers {
   onReschedule: (a: AdminAppointment) => void
   onCancel: (a: AdminAppointment) => void
   onViewDetails: (a: AdminAppointment) => void
+  // Both just open the details view to this appointment (patient
+  // arrival workflow Phase 5) -- neither is a single fire-and-forget
+  // action like Confirm/Check-In, since collecting a payment needs a
+  // method choice and waiving needs a reason, so there's no sensible
+  // one-click version of either from the row.
+  onCollectPayment: (a: AdminAppointment) => void
+  onWaiveCharge: (a: AdminAppointment) => void
 }
 
 interface ActionDescriptor {
@@ -43,7 +50,16 @@ export interface AppointmentActionSet {
 // "what can I do with a PENDING appointment" logic. Mirrors the
 // existing per-status conditions this replaces in AppointmentsPanel.tsx
 // (status/hasStarted combinations), not a new business rule.
-export function buildAppointmentActions(a: AdminAppointment, h: AppointmentActionHandlers): AppointmentActionSet {
+//
+// isAdmin gates "Waive Charge" specifically (patient arrival workflow
+// Phase 3's ADMIN-only rule, enforced for real by the backend's
+// require_role dependency -- hiding the button for STAFF here is a UX
+// nicety, not the actual enforcement).
+export function buildAppointmentActions(
+  a: AdminAppointment,
+  h: AppointmentActionHandlers,
+  isAdmin: boolean,
+): AppointmentActionSet {
   const viewDetails: ActionDescriptor = { key: 'details', label: 'View details', onClick: () => h.onViewDetails(a), variant: 'secondary' }
   const reschedule: ActionDescriptor = { key: 'reschedule', label: 'Reschedule', onClick: () => h.onReschedule(a), variant: 'secondary' }
   const cancel: ActionDescriptor = { key: 'cancel', label: 'Cancel', onClick: () => h.onCancel(a), variant: 'danger' }
@@ -70,6 +86,25 @@ export function buildAppointmentActions(a: AdminAppointment, h: AppointmentActio
   }
 
   if (a.status === 'CHECKED_IN') {
+    // Payment/waiver gate the queue (Phases 3-4): only once
+    // payment_status leaves UNPAID/FAILED does "Mark completed" become
+    // the right next action -- until then, the front desk still owes
+    // either a payment or (ADMIN) a waiver.
+    if (a.payment_status === 'UNPAID' || a.payment_status === 'FAILED') {
+      return {
+        primary: {
+          key: 'collect-payment',
+          label: a.payment_status === 'FAILED' ? 'Retry Payment' : 'Collect Payment',
+          onClick: () => h.onCollectPayment(a),
+          variant: 'primary',
+        },
+        secondary: isAdmin
+          ? { key: 'waive-charge', label: 'Waive Charge', onClick: () => h.onWaiveCharge(a), variant: 'secondary' }
+          : null,
+        overflow: [viewDetails],
+        note: null,
+      }
+    }
     return {
       primary: { key: 'complete', label: 'Mark completed', onClick: () => h.onComplete(a), variant: 'primary' },
       secondary: null,

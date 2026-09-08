@@ -247,6 +247,11 @@ def test_patients_endpoints_require_authentication(client):
     )
     assert unauthenticated_post.status_code == 401
 
+    unauthenticated_patch = client.patch(
+        "/api/patients/1", json={"name": "No Auth", "whatsapp_number": "+919000000001"}
+    )
+    assert unauthenticated_patch.status_code == 401
+
 
 def test_patients_endpoints_accept_either_staff_role(client, db_connection):
     staff_headers = create_staff_and_get_headers(db_connection, role="STAFF")
