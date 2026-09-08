@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   Buildings,
   Check,
@@ -35,20 +35,67 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import AddDepartmentModal from './AddDepartmentModal'
 import ManageDepartmentDoctorsModal from './ManageDepartmentDoctorsModal'
 
-// Doctor-list preview, shown on hover (desktop) or tap (mobile) of a
-// card's doctor-count line -- onMouseEnter/onMouseLeave for hover,
-// onClick as the tap-to-toggle fallback (a touch device fires both;
-// toggling on click covers it without needing a separate touch path),
-// same convention MonthGrid.tsx's own day-popover already uses for
-// this exact hover-vs-tap split.
-function DoctorListPreview({ department, count }: { department: Department; count: number }) {
+// One department card, including its hover/tap doctor-list popover.
+// Hover/focus is scoped to the whole card (not just the count line),
+// keyboard-accessible, and deliberately not the native `title`
+// attribute -- this needs real markup (a doctor list, an icon per
+// row), which `title` can't render.
+//
+// Open/close uses Pointer Events gated by pointerType === 'mouse'
+// (onPointerEnter/onPointerLeave), not onMouseEnter/onMouseLeave --
+// exactly MonthGrid.tsx's own day-popover reasoning: a real touch tap
+// synthesizes a full mouse-event burst afterwards (enter, down, up,
+// click, and a trailing leave as the "virtual pointer" lifts), so
+// plain mouse handlers would open-then-immediately-close it within the
+// same tap. onClick (fires for both mouse and touch) always *opens*
+// rather than toggles, for the same reason: a mouse's pointerenter
+// already opened it, so a click while hovering is just a harmless
+// re-open, not an accidental close. A document-level outside-click
+// listener is touch's only dismissal path (no pointerleave to close
+// it); Escape and a plain onBlur on the count button (the keyboard
+// path in independently) cover the rest.
+//
+// Position/collision-avoidance mirrors MonthGrid.tsx's own popoverShift/
+// popoverBelow: shifts horizontally if it would run off the left/right
+// edge, and flips to render above the card instead of below if there's
+// no room underneath (a card in the grid's last row, near the bottom
+// of the viewport).
+function DepartmentCard({
+  department,
+  icon,
+  count,
+  isAdmin,
+  onEdit,
+  onManageDoctors,
+  onDelete,
+}: {
+  department: Department
+  // Rendered by the caller's own .map() (see visibleDepartments.map
+  // below), not resolved here -- oxlint's react(static-components)
+  // heuristic flags `const Icon = departmentIcon(...); <Icon .../>`
+  // when it's directly in a component's own body, even though nothing
+  // is actually being defined (departmentIcon returns a reference to
+  // an existing, stable icon component, the exact same call
+  // SchedulingFlow.tsx already makes without a warning -- from inside
+  // its own .map() callback, which the same heuristic doesn't flag).
+  icon: React.ReactNode
+  count: number
+  isAdmin: boolean
+  onEdit: () => void
+  onManageDoctors: () => void
+  onDelete: () => void
+}) {
   const [open, setOpen] = useState(false)
   // The visible count always comes from the `count` prop (the parent's
   // already-fetched doctorCounts, loaded eagerly for every card) --
   // this component's own lazy `doctors` fetch is only for the popover's
   // detailed per-doctor rows, which nobody needs until they actually
-  // hover/tap, so it stays null until then.
+  // hover/tap/focus, so it stays null until then.
   const [doctors, setDoctors] = useState<Doctor[] | null>(null)
+  const cardRef = useRef<HTMLDivElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
+  const [shift, setShift] = useState(0)
+  const [renderAbove, setRenderAbove] = useState(false)
 
   function load() {
     if (doctors !== null) return
@@ -57,55 +104,142 @@ function DoctorListPreview({ department, count }: { department: Department; coun
       .catch(() => setDoctors([]))
   }
 
-  return (
-    <span
-      className="department-admin-card-count-wrap"
-      style={{ position: 'relative' }}
-      onMouseEnter={() => {
-        load()
-        setOpen(true)
-      }}
-      onMouseLeave={() => setOpen(false)}
-    >
-      <button
-        type="button"
-        className="link"
-        style={{ font: 'inherit', color: 'inherit', padding: 0 }}
-        onClick={(e) => {
-          e.stopPropagation()
-          load()
-          setOpen((v) => !v)
-        }}
-        disabled={count === 0}
-      >
-        <UsersThree size={14} weight="bold" aria-hidden="true" /> {count} {count === 1 ? 'doctor' : 'doctors'}
-      </button>
+  function openPopover() {
+    load()
+    setOpen(true)
+  }
 
-      {open && doctors && doctors.length > 0 && (
-        <div className="department-admin-popover" onClick={(e) => e.stopPropagation()}>
-          <p className="department-admin-popover-title">Doctors in {department.name}</p>
-          {doctors.map((d) => (
-            <div key={d.id} className="department-admin-popover-row">
-              <span
-                className={`department-card-icon ${accentClassFor(d.name)}`}
-                aria-hidden="true"
-                style={{ width: 28, height: 28 }}
+  useLayoutEffect(() => {
+    if (!open) return
+    const el = popoverRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const margin = 8
+    let nextShift = 0
+    if (rect.left < margin) {
+      nextShift = margin - rect.left
+    } else if (rect.right > window.innerWidth - margin) {
+      nextShift = window.innerWidth - margin - rect.right
+    }
+    setShift(nextShift)
+    setRenderAbove(rect.bottom > window.innerHeight - margin)
+  }, [open])
+
+  // Touch's only dismissal path (no pointerleave fires for touch), plus
+  // Escape for everyone.
+  useEffect(() => {
+    if (!open) return
+    function handleOutside(event: MouseEvent) {
+      if (cardRef.current && !cardRef.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('click', handleOutside, true)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('click', handleOutside, true)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [open])
+
+  return (
+    <div
+      ref={cardRef}
+      className="department-admin-card"
+      onPointerEnter={(e) => {
+        if (e.pointerType === 'mouse') openPopover()
+      }}
+      onPointerLeave={(e) => {
+        if (e.pointerType === 'mouse') setOpen(false)
+      }}
+      onClick={openPopover}
+    >
+      <div className="department-admin-card-top">
+        <span className={`department-card-icon ${accentClassFor(department.name)}`} aria-hidden="true">
+          {icon}
+        </span>
+        {isAdmin && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="overflow-menu-trigger"
+                aria-label={`Actions for ${department.name}`}
+                onClick={(e) => e.stopPropagation()}
               >
-                <UsersThree size={14} />
-              </span>
-              <span>
-                <span className="department-admin-popover-doctor-name">{d.name}</span>
-                {(d.qualifications || d.specialization) && (
-                  <span className="department-admin-popover-doctor-meta">
-                    {[d.qualifications, d.specialization].filter(Boolean).join(' · ')}
-                  </span>
-                )}
-              </span>
-            </div>
-          ))}
+                <DotsThreeVertical size={18} weight="bold" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={onEdit}>
+                <PencilSimple size={15} /> Edit department
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={onManageDoctors}>
+                <UsersThree size={15} /> Manage doctors
+              </DropdownMenuItem>
+              <DropdownMenuItem variant="danger" onSelect={onDelete}>
+                <Trash size={15} /> Delete department
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
+
+      <span className="department-admin-card-name">{department.name}</span>
+
+      <span className={`department-admin-card-count${count === 0 ? ' zero' : ''}`}>
+        <button
+          type="button"
+          className="link"
+          style={{ font: 'inherit', color: 'inherit', padding: 0 }}
+          onFocus={() => {
+            load()
+            setOpen(true)
+          }}
+          onBlur={() => setOpen(false)}
+          aria-describedby={open ? `department-popover-${department.id}` : undefined}
+        >
+          <UsersThree size={14} weight="bold" aria-hidden="true" /> {count} {count === 1 ? 'doctor' : 'doctors'}
+        </button>
+      </span>
+
+      {open && (
+        <div
+          ref={popoverRef}
+          id={`department-popover-${department.id}`}
+          role="tooltip"
+          className={`department-admin-popover${renderAbove ? ' above' : ''}`}
+          style={{ '--popover-shift': `${shift}px` } as CSSProperties}
+        >
+          <p className="department-admin-popover-title">Doctors in {department.name}</p>
+          {doctors === null && <p className="muted">Loading…</p>}
+          {doctors !== null && doctors.length === 0 && <p className="muted">No doctors assigned.</p>}
+          {doctors !== null &&
+            doctors.map((d) => (
+              <div key={d.id} className="department-admin-popover-row">
+                <span
+                  className={`department-card-icon ${accentClassFor(d.name)}`}
+                  aria-hidden="true"
+                  style={{ width: 28, height: 28 }}
+                >
+                  <UsersThree size={14} />
+                </span>
+                <span>
+                  <span className="department-admin-popover-doctor-name">{d.name}</span>
+                  {(d.qualifications || d.specialization) && (
+                    <span className="department-admin-popover-doctor-meta">
+                      {[d.qualifications, d.specialization].filter(Boolean).join(' · ')}
+                    </span>
+                  )}
+                </span>
+              </div>
+            ))}
         </div>
       )}
-    </span>
+    </div>
   )
 }
 
@@ -254,8 +388,9 @@ export default function DepartmentsPanel({ isAdmin }: { isAdmin: boolean }) {
 
       {!loading && visibleDepartments.length > 0 && (
         <div className="department-admin-grid" ref={gridRef}>
-          {visibleDepartments.map((d) =>
-            editingId === d.id ? (
+          {visibleDepartments.map((d) => {
+            const Icon = departmentIcon(d.name)
+            return editingId === d.id ? (
               <form
                 key={d.id}
                 className="department-admin-card"
@@ -273,44 +408,18 @@ export default function DepartmentsPanel({ isAdmin }: { isAdmin: boolean }) {
                 </div>
               </form>
             ) : (
-              <div key={d.id} className="department-admin-card">
-                <div className="department-admin-card-top">
-                  <span className={`department-card-icon ${accentClassFor(d.name)}`} aria-hidden="true">
-                    {(() => {
-                      const Icon = departmentIcon(d.name)
-                      return <Icon size={20} weight="duotone" />
-                    })()}
-                  </span>
-                  {isAdmin && (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <button type="button" className="overflow-menu-trigger" aria-label={`Actions for ${d.name}`}>
-                          <DotsThreeVertical size={18} weight="bold" />
-                        </button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onSelect={() => startEdit(d)}>
-                          <PencilSimple size={15} /> Edit department
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => setManageTarget(d)}>
-                          <UsersThree size={15} /> Manage doctors
-                        </DropdownMenuItem>
-                        <DropdownMenuItem variant="danger" onSelect={() => setDeleteTarget(d)}>
-                          <Trash size={15} /> Delete department
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  )}
-                </div>
-
-                <span className="department-admin-card-name">{d.name}</span>
-
-                <span className={`department-admin-card-count${(doctorCounts[d.id] ?? 0) === 0 ? ' zero' : ''}`}>
-                  <DoctorListPreview department={d} count={doctorCounts[d.id] ?? 0} />
-                </span>
-              </div>
-            ),
-          )}
+              <DepartmentCard
+                key={d.id}
+                department={d}
+                icon={<Icon size={20} weight="duotone" />}
+                count={doctorCounts[d.id] ?? 0}
+                isAdmin={isAdmin}
+                onEdit={() => startEdit(d)}
+                onManageDoctors={() => setManageTarget(d)}
+                onDelete={() => setDeleteTarget(d)}
+              />
+            )
+          })}
         </div>
       )}
 
