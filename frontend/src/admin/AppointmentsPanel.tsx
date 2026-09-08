@@ -325,7 +325,7 @@ export default function AppointmentsPanel({
       <div className="tabs">
         {(['upcoming', 'all'] as const).map((t) => (
           <button key={t} type="button" className={t === tab ? 'tab active' : 'tab'} onClick={() => setTab(t)}>
-            {t === 'upcoming' ? `Upcoming (${upcomingCount})` : `All appointments (${allCount})`}
+            {t === 'upcoming' ? `Upcoming Appointments (${upcomingCount})` : `All appointments (${allCount})`}
           </button>
         ))}
       </div>
