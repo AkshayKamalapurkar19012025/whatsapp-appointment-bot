@@ -1215,12 +1215,12 @@ def waive_consultation_fee_service(cur, appointment_id: int, *, reason: str, sta
     Staff (ADMIN only -- enforced at the API layer, app/api/
     appointments.py) waives the consultation fee for this visit. Only
     eligible when the same patient has a COMPLETED visit with this same
-    doctor within the 7 calendar days before this one's check-in --
+    doctor within the 3 calendar days before this one's check-in --
     the clinic's stated policy ("waiver applies only if the patient
-    revisits within 7 days"), not staff discretion. visited_at's
+    revisits within 3 days"), not staff discretion. visited_at's
     doctor-local calendar date is compared on both sides (same pattern
     mark_visited_service/get_doctor_queue use for "which day is this"),
-    not a raw 168-hour timestamp difference.
+    not a raw 72-hour timestamp difference.
 
     Idempotent on an already-WAIVED appointment. Raises
     PaymentStateConflict if already PAID (a completed payment isn't
@@ -1251,7 +1251,7 @@ def waive_consultation_fee_service(cur, appointment_id: int, *, reason: str, sta
           AND status = 'COMPLETED'
           AND id <> %s
           AND visited_at IS NOT NULL
-          AND (visited_at AT TIME ZONE %s)::date >= %s - INTERVAL '7 days'
+          AND (visited_at AT TIME ZONE %s)::date >= %s - INTERVAL '3 days'
           AND (visited_at AT TIME ZONE %s)::date <= %s
         LIMIT 1
         """,

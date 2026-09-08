@@ -87,7 +87,7 @@ class PaymentStateConflict(ServiceError):
 
 class WaiverNotEligible(ServiceError):
     """Raised by waive_consultation_fee_service when the patient has no
-    COMPLETED visit with this same doctor in the 7 calendar days before
+    COMPLETED visit with this same doctor in the 3 calendar days before
     this check-in -- the clinic's waiver policy requires a genuine
     recent revisit, not just staff discretion. Not overridable by role:
     even an ADMIN cannot waive without a qualifying prior visit."""

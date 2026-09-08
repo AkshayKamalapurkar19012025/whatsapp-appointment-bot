@@ -643,7 +643,7 @@ def waive_appointment_payment(
             except svc_exc.WaiverNotEligible:
                 raise HTTPException(
                     status_code=409,
-                    detail="Waiver requires a completed visit with this doctor in the last 7 days",
+                    detail="Waiver requires a completed visit with this doctor in the last 3 days",
                 )
 
     return result

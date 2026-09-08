@@ -1,6 +1,6 @@
 """
 Tests for Phase 3 of the patient arrival workflow: consultation charge
-lookup, payment recording, and the 7-day-revisit waiver rule
+lookup, payment recording, and the 3-day-revisit waiver rule
 (app/services/appointment_services.py's get_consultation_charge_service,
 record_payment_service, waive_consultation_fee_service, and their
 app/api/appointments.py endpoints).
@@ -237,7 +237,7 @@ def test_record_payment_conflict_when_already_waived(client, db_connection):
     _check_in(client, admin_headers, current)
     waive = client.post(
         f"/api/appointments/{current}/waive-payment",
-        json={"reason": "Follow-up within 7 days"},
+        json={"reason": "Follow-up within 3 days"},
         headers=admin_headers,
     )
     assert waive.status_code == 200
@@ -293,7 +293,7 @@ def test_waive_payment_requires_nonempty_reason(client, db_connection):
 
 
 # ---------------------------------------------------------------------
-# Waiver: 7-day-revisit-with-same-doctor eligibility
+# Waiver: 3-day-revisit-with-same-doctor eligibility
 # ---------------------------------------------------------------------
 
 
@@ -315,18 +315,18 @@ def test_waive_rejected_with_no_prior_visit(client, db_connection):
     assert response.status_code == 409
 
 
-def test_waive_accepted_at_exactly_seven_days(client, db_connection):
+def test_waive_accepted_at_exactly_three_days(client, db_connection):
     admin_headers = create_admin_and_get_headers(db_connection)
     seeded = seed_basic_doctor(
-        client, db_connection, doctor_name="Dr. Waive Seven",
-        department_name="Waive Seven Dept", appointment_type_name="Waive Seven Type",
+        client, db_connection, doctor_name="Dr. Waive Three",
+        department_name="Waive Three Dept", appointment_type_name="Waive Three Type",
     )
-    patient = _create_patient(client, admin_headers, "Waive Seven Patient", "+919600000011")
+    patient = _create_patient(client, admin_headers, "Waive Three Patient", "+919600000011")
 
     prior_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"], hour=9)
     _check_in(client, admin_headers, prior_id)
     client.post(f"/api/appointments/{prior_id}/complete", headers=admin_headers)
-    _set_visited_at_days_ago(db_connection, prior_id, 7)
+    _set_visited_at_days_ago(db_connection, prior_id, 3)
 
     current_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"], hour=10)
     _check_in(client, admin_headers, current_id)
@@ -334,7 +334,7 @@ def test_waive_accepted_at_exactly_seven_days(client, db_connection):
 
     response = client.post(
         f"/api/appointments/{current_id}/waive-payment",
-        json={"reason": "Follow-up exactly 7 days later"},
+        json={"reason": "Follow-up exactly 3 days later"},
         headers=admin_headers,
     )
     assert response.status_code == 200
@@ -342,18 +342,18 @@ def test_waive_accepted_at_exactly_seven_days(client, db_connection):
     assert float(response.json()["payment_amount"]) == 0.0
 
 
-def test_waive_rejected_at_eight_days(client, db_connection):
+def test_waive_rejected_at_four_days(client, db_connection):
     admin_headers = create_admin_and_get_headers(db_connection)
     seeded = seed_basic_doctor(
-        client, db_connection, doctor_name="Dr. Waive Eight",
-        department_name="Waive Eight Dept", appointment_type_name="Waive Eight Type",
+        client, db_connection, doctor_name="Dr. Waive Four",
+        department_name="Waive Four Dept", appointment_type_name="Waive Four Type",
     )
-    patient = _create_patient(client, admin_headers, "Waive Eight Patient", "+919600000012")
+    patient = _create_patient(client, admin_headers, "Waive Four Patient", "+919600000012")
 
     prior_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"], hour=9)
     _check_in(client, admin_headers, prior_id)
     client.post(f"/api/appointments/{prior_id}/complete", headers=admin_headers)
-    _set_visited_at_days_ago(db_connection, prior_id, 8)
+    _set_visited_at_days_ago(db_connection, prior_id, 4)
 
     current_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"], hour=10)
     _check_in(client, admin_headers, current_id)
@@ -361,7 +361,7 @@ def test_waive_rejected_at_eight_days(client, db_connection):
 
     response = client.post(
         f"/api/appointments/{current_id}/waive-payment",
-        json={"reason": "Follow-up 8 days later"},
+        json={"reason": "Follow-up 4 days later"},
         headers=admin_headers,
     )
     assert response.status_code == 409
