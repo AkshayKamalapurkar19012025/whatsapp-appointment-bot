@@ -58,14 +58,30 @@ function isUpcoming(a: AdminAppointment, now: number): boolean {
   return ['PENDING', 'CONFIRMED'].includes(a.status) && new Date(a.start_at).getTime() >= now
 }
 
+// Payment status is only a meaningful thing to show once a patient has
+// arrived (patient arrival workflow Phases 3-5) -- a PENDING/CONFIRMED
+// row showing "Unpaid" would just be noise before payment is even
+// collectible, so this renders nothing for either of those statuses.
+function paymentPill(a: AdminAppointment) {
+  if (a.status !== 'CHECKED_IN' && a.status !== 'COMPLETED') return null
+  const label =
+    a.payment_status === 'PAID' ? 'Paid' : a.payment_status === 'WAIVED' ? 'Waived' : a.payment_status.replace(/_/g, ' ')
+  return <span className={`pill payment-${a.payment_status.toLowerCase()}`}>{label}</span>
+}
+
 export default function AppointmentsPanel({
   onBookAppointment,
+  isAdmin,
 }: {
   // Routes to the dedicated Book Appointment section (see AdminApp.tsx)
   // -- booking itself no longer happens inline on this page, which is
   // purely for viewing/filtering/managing appointments that already
   // exist.
   onBookAppointment: () => void
+  // Gates "Waive Charge" (patient arrival workflow Phase 3) -- same
+  // prop DoctorsPanel/DepartmentsPanel/AppointmentTypesPanel already
+  // take from AdminApp.tsx.
+  isAdmin: boolean
 }) {
   const [appointments, setAppointments] = useState<AdminAppointment[]>([])
   const [doctors, setDoctors] = useState<Doctor[]>([])
@@ -223,6 +239,11 @@ export default function AppointmentsPanel({
       setCancelTarget(a)
     },
     onViewDetails: setDetailsTarget,
+    // Both just open the details modal, where the real payment/waiver
+    // form lives (AppointmentDetailsModal's own PaymentSection) --
+    // neither is a single fire-and-forget action.
+    onCollectPayment: setDetailsTarget,
+    onWaiveCharge: setDetailsTarget,
   }
 
   function reschedulePanel(a: AdminAppointment) {
@@ -451,7 +472,7 @@ export default function AppointmentsPanel({
               </thead>
               <tbody ref={tbodyRef}>
                 {visibleAppointments.map((a) => {
-                  const actions = buildAppointmentActions(a, actionHandlers)
+                  const actions = buildAppointmentActions(a, actionHandlers, isAdmin)
                   const busy = lifecycleBusyId === a.id
                   return (
                     <Fragment key={a.id}>
@@ -472,6 +493,7 @@ export default function AppointmentsPanel({
                         </td>
                         <td>
                           <span className={`pill status-${a.status.toLowerCase()}`}>{a.status.replace(/_/g, ' ')}</span>
+                          {paymentPill(a)}
                           {a.token_number !== null && <span className="pill token-pill">Token #{a.token_number}</span>}
                         </td>
                         <td onClick={(e) => e.stopPropagation()}>
@@ -492,12 +514,13 @@ export default function AppointmentsPanel({
 
           <ul className="appointment-mobile-list">
             {visibleAppointments.map((a) => {
-              const actions = buildAppointmentActions(a, actionHandlers)
+              const actions = buildAppointmentActions(a, actionHandlers, isAdmin)
               const busy = lifecycleBusyId === a.id
               return (
                 <li key={a.id} className="appointment-mobile-card" onClick={() => setDetailsTarget(a)}>
                   <div className="appointment-mobile-card-top">
                     <span className={`pill status-${a.status.toLowerCase()}`}>{a.status.replace(/_/g, ' ')}</span>
+                    {paymentPill(a)}
                     {a.token_number !== null && <span className="pill token-pill">Token #{a.token_number}</span>}
                   </div>
                   <strong>{a.patient_name}</strong>
@@ -546,6 +569,8 @@ export default function AppointmentsPanel({
           onClose={() => setDetailsTarget(null)}
           handlers={actionHandlers}
           busy={lifecycleBusyId === detailsTarget.id}
+          isAdmin={isAdmin}
+          onPaymentUpdated={load}
         />
       )}
     </section>

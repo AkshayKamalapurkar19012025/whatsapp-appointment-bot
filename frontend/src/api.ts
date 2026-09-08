@@ -17,6 +17,7 @@ import type {
   DoctorWithSlots,
   MyAppointmentsResponse,
   Patient,
+  PaymentActionResult,
   Staff,
   StaffAccount,
 } from './types'
@@ -563,11 +564,12 @@ export function assignAppointmentTypeToDoctor(
   doctorId: number,
   appointmentTypeId: number,
   durationMinutes: number,
+  consultationFee: number = 0,
 ): Promise<AppointmentType & { appointment_type_name: string }> {
   return request(`/doctors/${doctorId}/appointment-types/${appointmentTypeId}`, {
     method: 'POST',
     auth: 'staff',
-    body: { duration_minutes: durationMinutes },
+    body: { duration_minutes: durationMinutes, consultation_fee: consultationFee },
   })
 }
 
@@ -740,8 +742,43 @@ export function rejectAdminAppointment(
 
 export function visitAdminAppointment(
   appointmentId: number,
-): Promise<{ id: number; status: string; token_number: number; visited_at: string }> {
+  // token_number is always null here as of patient arrival workflow
+  // Phase 4 -- check-in no longer assigns one itself (see
+  // record_appointment_payment/waiveAppointmentPayment below, the
+  // actual queue-entry trigger).
+): Promise<{ id: number; status: string; token_number: null; visited_at: string }> {
   return request(`/appointments/${appointmentId}/visit`, { method: 'POST', auth: 'staff' })
+}
+
+// -- Patient arrival workflow Phases 3-4: consultation charge + payment ----
+
+export function getAppointmentCharge(
+  appointmentId: number,
+): Promise<{ appointment_id: number; consultation_fee: number }> {
+  return request(`/appointments/${appointmentId}/charge`, { auth: 'staff' })
+}
+
+export function recordAppointmentPayment(
+  appointmentId: number,
+  method: 'CASH' | 'UPI' | 'CARD' | 'OTHER',
+  outcome: 'PAID' | 'FAILED',
+): Promise<PaymentActionResult> {
+  return request(`/appointments/${appointmentId}/payment`, {
+    method: 'POST',
+    auth: 'staff',
+    body: { method, outcome },
+  })
+}
+
+export function waiveAppointmentPayment(
+  appointmentId: number,
+  reason: string,
+): Promise<PaymentActionResult> {
+  return request(`/appointments/${appointmentId}/waive-payment`, {
+    method: 'POST',
+    auth: 'staff',
+    body: { reason },
+  })
 }
 
 export function completeAdminAppointment(

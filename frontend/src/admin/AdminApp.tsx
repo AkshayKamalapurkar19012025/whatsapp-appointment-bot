@@ -211,7 +211,9 @@ export default function AdminApp() {
               onGoToPatients={() => goTo('patients')}
             />
           )}
-          {section === 'appointments' && <AppointmentsPanel onBookAppointment={() => goTo('book-appointment')} />}
+          {section === 'appointments' && (
+            <AppointmentsPanel onBookAppointment={() => goTo('book-appointment')} isAdmin={isAdmin} />
+          )}
           {section === 'book-appointment' && (
             <BookAppointmentPanel onViewAppointments={() => goTo('appointments')} />
           )}

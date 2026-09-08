@@ -992,6 +992,11 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
   const [catalog, setCatalog] = useState<AppointmentTypeSummary[]>([])
   const [selected, setSelected] = useState('')
   const [duration, setDuration] = useState(30)
+  // Consultation fee (patient arrival workflow Phase 3) -- entered as a
+  // plain rupee amount, not a placeholder/default the app invents; 0
+  // means "not set yet" both here and on the backend
+  // (get_consultation_charge_service).
+  const [fee, setFee] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [removeTarget, setRemoveTarget] = useState<AppointmentType | null>(null)
 
@@ -1015,9 +1020,10 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
     if (!selected) return
     setError(null)
     try {
-      await assignAppointmentTypeToDoctor(doctor.id, Number(selected), duration)
+      await assignAppointmentTypeToDoctor(doctor.id, Number(selected), duration, Number(fee) || 0)
       setSelected('')
       setDuration(30)
+      setFee('')
       load()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not assign appointment type')
@@ -1027,6 +1033,7 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
   function resetAssignForm() {
     setSelected('')
     setDuration(30)
+    setFee('')
   }
 
   async function confirmRemove() {
@@ -1050,7 +1057,7 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
       <ul className="tag-list">
         {assigned.map((a) => (
           <li key={a.id}>
-            {a.name} ({a.duration_minutes} min)
+            {a.name} ({a.duration_minutes} min · ₹{a.consultation_fee})
             {isAdmin && (
               <button type="button" className="link" onClick={() => setRemoveTarget(a)}>
                 remove
@@ -1095,6 +1102,18 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
               ))}
             </div>
           </div>
+
+          <label className="inline-label" style={{ width: '100%' }}>
+            Consultation fee (₹)
+            <input
+              type="number"
+              min={0}
+              step="1"
+              placeholder="0"
+              value={fee}
+              onChange={(e) => setFee(e.target.value)}
+            />
+          </label>
         </form>
       )}
 
