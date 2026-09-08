@@ -22,7 +22,15 @@ function DropdownMenuContent({
       <DropdownMenuPrimitive.Content
         sideOffset={sideOffset}
         className={cn(
-          'dropdown-menu-content-anim z-50 min-w-[10rem] overflow-hidden rounded-[var(--radius-md)] p-1',
+          // z-[1100]: above .modal-overlay's z-index:1000 (styles.css)
+          // -- both this menu's Portal and the modal's own portal
+          // (AppointmentDetailsModal.tsx etc.) render into document.body
+          // as siblings, so when this menu opens *from inside* a modal
+          // (e.g. its "..." overflow button), it must outrank the
+          // modal's own stacking or it renders hidden behind it. Plain
+          // z-50 only ever worked because every prior use of this menu
+          // opened outside any modal.
+          'dropdown-menu-content-anim z-[1100] min-w-[10rem] overflow-hidden rounded-[var(--radius-md)] p-1',
           'border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)]',
           className,
         )}
