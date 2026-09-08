@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react'
 import { Buildings, PencilSimple, Trash, X, Check } from '@phosphor-icons/react'
-import { ApiError, createDepartment, deleteDepartment, listDepartments, updateDepartment } from '../api'
+import {
+  ApiError,
+  createDepartment,
+  deleteDepartment,
+  listDepartments,
+  listDoctorsInDepartment,
+  updateDepartment,
+} from '../api'
 import type { Department } from '../types'
 import { useStaggerReveal } from '../useStaggerReveal'
 import {
@@ -16,6 +23,12 @@ import {
 
 export default function DepartmentsPanel({ isAdmin }: { isAdmin: boolean }) {
   const [departments, setDepartments] = useState<Department[]>([])
+  // Doctor belongs to a department via a many-to-many join
+  // (doctor_departments), not a column on either row, so there's no
+  // count to read straight off Department -- fetched per-department
+  // the same way DoctorsPanel.tsx already builds its own groups,
+  // rather than adding a new backend aggregate for a handful of rows.
+  const [doctorCounts, setDoctorCounts] = useState<Record<number, number>>({})
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -29,7 +42,13 @@ export default function DepartmentsPanel({ isAdmin }: { isAdmin: boolean }) {
   function load() {
     setLoading(true)
     listDepartments()
-      .then(setDepartments)
+      .then(async (list) => {
+        setDepartments(list)
+        const counts = await Promise.all(
+          list.map((d) => listDoctorsInDepartment(d.id).then((doctors) => doctors.length).catch(() => 0)),
+        )
+        setDoctorCounts(Object.fromEntries(list.map((d, i) => [d.id, counts[i]])))
+      })
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load departments'))
       .finally(() => setLoading(false))
   }
@@ -153,7 +172,12 @@ export default function DepartmentsPanel({ isAdmin }: { isAdmin: boolean }) {
               </form>
             ) : (
               <div key={d.id} className="card-grid-item">
-                <span>{d.name}</span>
+                <span className="card-grid-item-info">
+                  <span>{d.name}</span>
+                  <span className="muted card-grid-item-meta">
+                    {doctorCounts[d.id] ?? 0} {doctorCounts[d.id] === 1 ? 'doctor' : 'doctors'}
+                  </span>
+                </span>
                 {isAdmin && (
                   <span className="card-grid-item-actions">
                     <button type="button" className="icon-btn" onClick={() => startEdit(d)} aria-label={`Edit ${d.name}`}>

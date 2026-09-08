@@ -207,6 +207,12 @@ export interface AdminAppointment {
   status: string
   // Assigned at check-in (status -> VISITED); null until then.
   token_number: number | null
+  // Raw UTC instant (not converted to the doctor's timezone, unlike
+  // start_at/end_at above) -- an audit-log-style "when was this
+  // booked" moment, meant to be shown in the viewer's own local time
+  // via format.ts's formatDateTime, the same convention as a doctor's
+  // created_at elsewhere in this app.
+  created_at: string
 }
 
 export interface AdminAppointmentActionResult {
