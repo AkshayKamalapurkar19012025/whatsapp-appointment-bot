@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { ApiError, getSlotsForDate } from '../api'
 import type { Slot } from '../types'
+import AvailabilityBadge from '../AvailabilityBadge'
 import SlotGrid from '../SlotGrid'
 import AdminCalendar from './AdminCalendar'
-import { formatDate, formatTime } from '../format'
+import { formatAvailability, formatDate, formatTime } from '../format'
 
 // Replaces the old free-form <input type="datetime-local"> this panel
 // used for both "book on behalf of a patient" and "reschedule" -- that
@@ -37,6 +38,12 @@ export default function AdminSlotPicker({
 }) {
   const [date, setDate] = useState(initialDate ?? '')
   const [slots, setSlots] = useState<Slot[]>([])
+  // That day's fixed capacity (see get_available_slots's count_total
+  // docstring) -- feeds formatAvailability's fullness ratio below, the
+  // same red/orange/green rule the patient-facing booking flows use
+  // (format.ts), reusing the total_slots the shared /availability
+  // endpoint already returns rather than a second calculation.
+  const [totalSlots, setTotalSlots] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -50,7 +57,10 @@ export default function AdminSlotPicker({
     setError(null)
     getSlotsForDate(doctorId, appointmentTypeId, date)
       .then((result) => {
-        if (!cancelled) setSlots(result.slots)
+        if (!cancelled) {
+          setSlots(result.slots)
+          setTotalSlots(result.total_slots)
+        }
       })
       .catch((err) => {
         if (!cancelled) {
@@ -71,13 +81,13 @@ export default function AdminSlotPicker({
       <div className="slot-picker-context">
         <span className="pill duration-pill">{durationMinutes} min appointment</span>
         {date && !loading && (
-          <span className="muted">
-            {selectedSlot
-              ? `Selected ${formatTime(selectedSlot.start_at)} on ${formatDate(date)}`
-              : slots.length > 0
-                ? `${slots.length} slot${slots.length === 1 ? '' : 's'} open on ${formatDate(date)} -- pick one below.`
-                : `No open slots on ${formatDate(date)} -- pick another date.`}
-          </span>
+          selectedSlot ? (
+            <span className="muted">
+              Selected {formatTime(selectedSlot.start_at)} on {formatDate(date)}
+            </span>
+          ) : (
+            <AvailabilityBadge availability={formatAvailability(slots.length, totalSlots)} />
+          )
         )}
       </div>
 

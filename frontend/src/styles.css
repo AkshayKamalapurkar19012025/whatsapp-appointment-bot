@@ -1993,6 +1993,14 @@ a.link.danger {
   flex-wrap: wrap;
 }
 
+/* AvailabilityBadge's own margin-top is for stacking below a doctor
+   name (DoctorCard, the Doctor-First Slot step) -- here it's an inline
+   flex sibling next to the duration pill instead, so that top margin
+   would just misalign it against .slot-picker-context's centered row. */
+.slot-picker-context .availability-block {
+  margin-top: 0;
+}
+
 .admin-slot-picker-body {
   display: flex;
   gap: var(--space-5);
