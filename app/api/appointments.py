@@ -136,7 +136,8 @@ def get_appointments(
                     a.start_at,
                     a.end_at,
                     a.status,
-                    a.token_number
+                    a.token_number,
+                    a.created_at
                 FROM appointments a
                 JOIN doctors d
                     ON d.id = a.doctor_id
@@ -179,6 +180,14 @@ def get_appointments(
                 "end_at": convert_to_timezone(row[10], doctor_tz).isoformat(),
                 "status": row[11],
                 "token_number": row[12],
+                # Deliberately NOT converted to doctor_tz like start_at/
+                # end_at above -- unlike a clinic wall-clock slot time,
+                # this is an audit-log-style "when did this happen"
+                # moment (same category as a doctor's created_at in
+                # DoctorProfile), which format.ts's formatDateTime
+                # renders in the *viewer's* own local time, not the
+                # doctor's.
+                "created_at": row[13].isoformat(),
             }
         )
 

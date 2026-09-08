@@ -2,12 +2,12 @@ import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from '@phosphor-icons/react'
 import type { AdminAppointment } from '../types'
-import { formatDate, formatTime } from '../format'
+import { formatDate, formatDateTime, formatTime } from '../format'
 import { AppointmentActionButtons, buildAppointmentActions, type AppointmentActionHandlers } from './AppointmentActions'
 
 // A read-only summary of exactly the fields AdminAppointment actually
-// carries -- no department, booking source, or created-at, since the
-// admin appointments listing doesn't return them (see AdminAppointment
+// carries -- no department or booking source, since the admin
+// appointments listing doesn't return them (see AdminAppointment
 // in types.ts) and inventing placeholder data for fields the backend
 // doesn't provide isn't the goal here. Ported to document.body via
 // createPortal for the same reason DoctorProfileModal.tsx is: this
@@ -80,6 +80,8 @@ export default function AppointmentDetailsModal({
           </span>
           {appointment.token_number !== null && <span className="pill token-pill">Token #{appointment.token_number}</span>}
         </div>
+
+        <p className="muted appointment-details-booked-on">Booked on {formatDateTime(appointment.created_at)}</p>
 
         <div className="appointment-details-actions">
           <AppointmentActionButtons actions={actions} busy={busy} />

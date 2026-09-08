@@ -3357,6 +3357,11 @@ a.link.danger {
   gap: var(--space-2);
 }
 
+.appointment-details-booked-on {
+  margin: var(--space-3) 0 0;
+  font-size: 0.8rem;
+}
+
 .appointment-details-actions {
   margin-top: var(--space-4);
 }
