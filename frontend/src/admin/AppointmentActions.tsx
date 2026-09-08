@@ -112,7 +112,7 @@ export function AppointmentActionButtons({ actions, busy }: { actions: Appointme
       {overflow.length > 1 && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button type="button" className="icon-btn" aria-label="More actions">
+            <button type="button" className="overflow-menu-trigger" aria-label="More actions">
               <DotsThreeVertical size={18} weight="bold" />
             </button>
           </DropdownMenuTrigger>
