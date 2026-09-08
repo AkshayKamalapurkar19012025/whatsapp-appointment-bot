@@ -117,6 +117,7 @@ export default function AdminApp() {
       icon: <Gauge size={20} weight="regular" />,
       active: section === 'dashboard',
       onSelect: () => goTo('dashboard'),
+      group: 'Main',
     },
     {
       key: 'appointments',
@@ -124,6 +125,7 @@ export default function AdminApp() {
       icon: <CalendarCheck size={20} weight="regular" />,
       active: section === 'appointments',
       onSelect: () => goTo('appointments'),
+      group: 'Main',
     },
     {
       key: 'book-appointment',
@@ -131,6 +133,7 @@ export default function AdminApp() {
       icon: <CalendarPlus size={20} weight="regular" />,
       active: section === 'book-appointment',
       onSelect: () => goTo('book-appointment'),
+      group: 'Main',
     },
     {
       key: 'doctors',
@@ -138,6 +141,7 @@ export default function AdminApp() {
       icon: <Stethoscope size={20} weight="regular" />,
       active: section === 'doctors',
       onSelect: () => goTo('doctors'),
+      group: 'Manage',
     },
     {
       key: 'patients',
@@ -145,6 +149,7 @@ export default function AdminApp() {
       icon: <UsersThree size={20} weight="regular" />,
       active: section === 'patients',
       onSelect: () => goTo('patients'),
+      group: 'Manage',
     },
     {
       key: 'departments',
@@ -152,6 +157,7 @@ export default function AdminApp() {
       icon: <Buildings size={20} weight="regular" />,
       active: section === 'departments',
       onSelect: () => goTo('departments'),
+      group: 'Manage',
     },
     {
       key: 'appointment-types',
@@ -159,6 +165,7 @@ export default function AdminApp() {
       icon: <Tag size={20} weight="regular" />,
       active: section === 'appointment-types',
       onSelect: () => goTo('appointment-types'),
+      group: 'Manage',
     },
     ...(isAdmin
       ? [
@@ -168,6 +175,7 @@ export default function AdminApp() {
             icon: <ShieldCheck size={20} weight="regular" />,
             active: section === 'staff-accounts',
             onSelect: () => goTo('staff-accounts'),
+            group: 'Admin',
           } satisfies AdminSidebarItem,
         ]
       : []),
@@ -176,12 +184,14 @@ export default function AdminApp() {
       label: 'Analytics',
       icon: <ChartLineUp size={20} weight="regular" />,
       disabled: true,
+      group: 'Reports',
     },
     {
       key: 'settings',
       label: 'Settings',
       icon: <GearSix size={20} weight="regular" />,
       disabled: true,
+      group: 'Settings',
     },
   ]
 

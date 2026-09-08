@@ -17,6 +17,7 @@ import {
   cancelAdminAppointment,
   completeAdminAppointment,
   confirmAdminAppointment,
+  getDashboardStats,
   listAdminAppointments,
   listAllDoctors,
   listAppointmentTypeCatalog,
@@ -26,9 +27,11 @@ import {
   rescheduleAdminAppointment,
   visitAdminAppointment,
 } from '../api'
-import type { AdminAppointment, AppointmentTypeSummary, Doctor, Patient, Slot } from '../types'
-import { formatDate, formatTime, hasStarted } from '../format'
+import type { AdminAppointment, AppointmentTypeSummary, Doctor, DashboardStats, Patient, Slot } from '../types'
+import { formatDate, formatTime, isoDateOnly } from '../format'
 import AdminSlotPicker from './AdminSlotPicker'
+import AppointmentDetailsModal from './AppointmentDetailsModal'
+import { AppointmentActionButtons, buildAppointmentActions, type AppointmentActionHandlers } from './AppointmentActions'
 
 // Radix Select.Item disallows an empty-string value (it's reserved
 // internally for "no selection"), so the "All" filter option -- which
@@ -45,6 +48,16 @@ function durationBetween(startAt: string, endAt: string): number {
   return Math.round((new Date(endAt).getTime() - new Date(startAt).getTime()) / 60000)
 }
 
+// "Upcoming" means still Pending or Confirmed (the two statuses that
+// haven't happened, been rejected, or been cancelled yet -- see
+// ACTIONABLE_STATUSES in app/services/appointment_services.py) and not
+// yet started; a past Pending/Confirmed appointment falls out of
+// Upcoming on its own without needing a status change. Shared by the
+// tab filter and the tab count so the two can never disagree.
+function isUpcoming(a: AdminAppointment, now: number): boolean {
+  return ['PENDING', 'CONFIRMED'].includes(a.status) && new Date(a.start_at).getTime() >= now
+}
+
 export default function AppointmentsPanel({
   onBookAppointment,
 }: {
@@ -58,6 +71,11 @@ export default function AppointmentsPanel({
   const [doctors, setDoctors] = useState<Doctor[]>([])
   const [patients, setPatients] = useState<Patient[]>([])
   const [appointmentTypes, setAppointmentTypes] = useState<AppointmentTypeSummary[]>([])
+  // Today's/pending counts for the heading context line -- an existing
+  // endpoint (DashboardPanel.tsx's own data source), not a new one;
+  // best-effort only, so the heading just stays clean if it fails
+  // rather than blocking or showing an error banner for a decoration.
+  const [stats, setStats] = useState<DashboardStats | null>(null)
   const [tab, setTab] = useState<'upcoming' | 'all'>('upcoming')
   const [doctorFilter, setDoctorFilter] = useState('')
   const [patientFilter, setPatientFilter] = useState('')
@@ -71,6 +89,7 @@ export default function AppointmentsPanel({
   const [reschedulingId, setReschedulingId] = useState<number | null>(null)
   const [rescheduleSlot, setRescheduleSlot] = useState<Slot | null>(null)
   const [rescheduleBusy, setRescheduleBusy] = useState(false)
+  const [detailsTarget, setDetailsTarget] = useState<AdminAppointment | null>(null)
 
   function load() {
     setLoading(true)
@@ -96,30 +115,27 @@ export default function AppointmentsPanel({
     listAllDoctors().then(setDoctors).catch(() => undefined)
     listPatients().then(setPatients).catch(() => undefined)
     listAppointmentTypeCatalog().then(setAppointmentTypes).catch(() => undefined)
+    getDashboardStats().then(setStats).catch(() => undefined)
   }, [])
 
   // Free-text patient search and the Upcoming/All tab are both applied
   // client-side over whatever the server-side filters above already
   // narrowed down to -- the whole list is already loaded for this
   // panel, so a second round trip for a substring match or a "still in
-  // the future" check would be pure overhead. "Upcoming" means still
-  // Pending or Confirmed (the two statuses that haven't happened, been
-  // rejected, or been cancelled yet -- see ACTIONABLE_STATUSES in
-  // app/services/appointment_services.py) and not yet started; a past
-  // Pending/Confirmed appointment falls out of Upcoming on its own
-  // without needing a status change.
+  // the future" check would be pure overhead.
   const searchNeedle = searchText.trim().toLowerCase()
   const now = Date.now()
-  const visibleAppointments = appointments.filter((a) => {
-    if (
-      tab === 'upcoming' &&
-      (!['PENDING', 'CONFIRMED'].includes(a.status) || new Date(a.start_at).getTime() < now)
-    )
-      return false
+  function matchesSearch(a: AdminAppointment): boolean {
     if (!searchNeedle) return true
     return (
       a.patient_name.toLowerCase().includes(searchNeedle) || a.whatsapp_number.toLowerCase().includes(searchNeedle)
     )
+  }
+  const upcomingCount = appointments.filter((a) => isUpcoming(a, now) && matchesSearch(a)).length
+  const allCount = appointments.filter(matchesSearch).length
+  const visibleAppointments = appointments.filter((a) => {
+    if (tab === 'upcoming' && !isUpcoming(a, now)) return false
+    return matchesSearch(a)
   })
   // Keyed on `appointments` (the server-fetched list), not
   // `visibleAppointments` -- the latter also changes on every keystroke
@@ -144,7 +160,7 @@ export default function AppointmentsPanel({
   }
 
   // Shared handler for the four one-click lifecycle transitions
-  // (Confirm/Reject/Visit/Complete) -- each is a single-column status
+  // (Confirm/Reject/Check In/Complete) -- each is a single-column status
   // update with no follow-up form, unlike cancel (a confirm dialog) or
   // reschedule (a slot picker), so a plain busy-while-in-flight button
   // is enough.
@@ -166,7 +182,8 @@ export default function AppointmentsPanel({
   }
 
   function startReschedule(appointment: AdminAppointment) {
-    setReschedulingId(appointment.id)
+    setDetailsTarget(null)
+    setReschedulingId((current) => (current === appointment.id ? null : appointment.id))
     setRescheduleSlot(null)
   }
 
@@ -188,143 +205,215 @@ export default function AppointmentsPanel({
 
   const reschedulingAppointment = appointments.find((a) => a.id === reschedulingId) ?? null
 
+  // One set of handlers, shared by the table row, the mobile card, and
+  // the details modal (AppointmentActions.tsx's buildAppointmentActions)
+  // -- so "what can I do with this appointment" is never computed two
+  // different ways depending on where it's rendered.
+  const actionHandlers: AppointmentActionHandlers = {
+    onConfirm: (a) => runLifecycleAction(a.id, confirmAdminAppointment, 'Could not confirm the appointment'),
+    onReject: (a) => runLifecycleAction(a.id, rejectAdminAppointment, 'Could not reject the appointment'),
+    onCheckIn: (a) => runLifecycleAction(a.id, visitAdminAppointment, 'Could not check in the appointment'),
+    onNoShow: (a) =>
+      runLifecycleAction(a.id, noShowAdminAppointment, 'Could not mark the appointment as a no-show'),
+    onComplete: (a) =>
+      runLifecycleAction(a.id, completeAdminAppointment, 'Could not mark the appointment completed'),
+    onReschedule: startReschedule,
+    onCancel: (a) => {
+      setDetailsTarget(null)
+      setCancelTarget(a)
+    },
+    onViewDetails: setDetailsTarget,
+  }
+
+  function reschedulePanel(a: AdminAppointment) {
+    if (reschedulingId !== a.id || !reschedulingAppointment) return null
+    return (
+      <div className="detail-section appointment-reschedule-panel">
+        <h4>
+          Reschedule {reschedulingAppointment.patient_name} with {reschedulingAppointment.doctor_name}
+        </h4>
+        <p className="muted">
+          Currently {formatDate(reschedulingAppointment.start_at)} · {formatTime(reschedulingAppointment.start_at)} –{' '}
+          {formatTime(reschedulingAppointment.end_at)}
+        </p>
+        <AdminSlotPicker
+          doctorId={reschedulingAppointment.doctor_id}
+          appointmentTypeId={reschedulingAppointment.appointment_type_id}
+          durationMinutes={durationBetween(reschedulingAppointment.start_at, reschedulingAppointment.end_at)}
+          selectedSlot={rescheduleSlot}
+          onSelect={setRescheduleSlot}
+        />
+        <div className="appointment-reschedule-actions">
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={!rescheduleSlot || rescheduleBusy}
+            onClick={() => confirmReschedule(a.id)}
+          >
+            {rescheduleBusy ? 'Saving…' : 'Confirm new time'}
+          </button>
+          <button type="button" className="btn-secondary btn btn-sm" onClick={() => setReschedulingId(null)}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  const activeFilterCount = [
+    doctorFilter,
+    patientFilter,
+    statusFilter,
+    appointmentTypeFilter,
+    dateFromFilter,
+    dateToFilter,
+    searchText,
+  ].filter(Boolean).length
+
+  function clearFilters() {
+    setDoctorFilter('')
+    setPatientFilter('')
+    setStatusFilter('')
+    setAppointmentTypeFilter('')
+    setDateFromFilter('')
+    setDateToFilter('')
+    setSearchText('')
+  }
+
   return (
     <section>
       <div className="admin-content-header">
-        <h2>Appointments</h2>
+        <div>
+          <h2>Appointments</h2>
+          <p className="muted">Manage, view, filter, and take action on appointments.</p>
+          {stats && (
+            <p className="appointments-context-line">
+              Today ·{' '}
+              {formatDate(isoDateOnly(new Date().getFullYear(), new Date().getMonth() + 1, new Date().getDate()))} ·{' '}
+              {stats.today_appointments} {stats.today_appointments === 1 ? 'appointment' : 'appointments'} ·{' '}
+              {stats.pending_appointments} pending
+            </p>
+          )}
+        </div>
         <button type="button" className="btn btn-sm" onClick={onBookAppointment}>
           + Book appointment
         </button>
       </div>
-      <p className="muted">View, filter, reschedule, and cancel existing appointments.</p>
       {error && <p className="error">{error}</p>}
 
       <div className="tabs">
         {(['upcoming', 'all'] as const).map((t) => (
-          <button
-            key={t}
-            type="button"
-            className={t === tab ? 'tab active' : 'tab'}
-            onClick={() => setTab(t)}
-          >
-            {t === 'upcoming' ? 'Upcoming' : 'All'}
+          <button key={t} type="button" className={t === tab ? 'tab active' : 'tab'} onClick={() => setTab(t)}>
+            {t === 'upcoming' ? `Upcoming (${upcomingCount})` : `All appointments (${allCount})`}
           </button>
         ))}
       </div>
 
       <div className="filter-bar">
-        <label className="inline-label">
-          Doctor
-          <Select
-            value={doctorFilter || ALL_FILTER_VALUE}
-            onValueChange={(v) => setDoctorFilter(v === ALL_FILTER_VALUE ? '' : v)}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_FILTER_VALUE}>All</SelectItem>
-              {doctors.map((d) => (
-                <SelectItem key={d.id} value={String(d.id)}>
-                  {d.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </label>
-        <label className="inline-label">
-          Patient
-          <Select
-            value={patientFilter || ALL_FILTER_VALUE}
-            onValueChange={(v) => setPatientFilter(v === ALL_FILTER_VALUE ? '' : v)}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_FILTER_VALUE}>All</SelectItem>
-              {patients.map((p) => (
-                <SelectItem key={p.id} value={String(p.id)}>
-                  {p.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </label>
-        <label className="inline-label">
-          Status
-          <Select
-            value={statusFilter || ALL_FILTER_VALUE}
-            onValueChange={(v) => setStatusFilter(v === ALL_FILTER_VALUE ? '' : v)}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_FILTER_VALUE}>All</SelectItem>
-              <SelectItem value="PENDING">Pending</SelectItem>
-              <SelectItem value="CONFIRMED">Confirmed</SelectItem>
-              <SelectItem value="REJECTED">Rejected</SelectItem>
-              <SelectItem value="CANCELLED">Cancelled</SelectItem>
-              <SelectItem value="CHECKED_IN">Check In</SelectItem>
-              <SelectItem value="COMPLETED">Completed</SelectItem>
-              <SelectItem value="NO_SHOW">No-Show</SelectItem>
-            </SelectContent>
-          </Select>
-        </label>
-        <label className="inline-label">
-          Appointment type
-          <Select
-            value={appointmentTypeFilter || ALL_FILTER_VALUE}
-            onValueChange={(v) => setAppointmentTypeFilter(v === ALL_FILTER_VALUE ? '' : v)}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_FILTER_VALUE}>All</SelectItem>
-              {appointmentTypes.map((t) => (
-                <SelectItem key={t.id} value={String(t.id)}>
-                  {t.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </label>
-        <label className="inline-label">
-          From
-          <input type="date" value={dateFromFilter} onChange={(e) => setDateFromFilter(e.target.value)} />
-        </label>
-        <label className="inline-label">
-          To
-          <input type="date" value={dateToFilter} onChange={(e) => setDateToFilter(e.target.value)} />
-        </label>
-        <label className="inline-label">
-          Search patient
-          <input
-            type="search"
-            placeholder="Name or number"
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-          />
-        </label>
-        {(doctorFilter || patientFilter || statusFilter || appointmentTypeFilter || dateFromFilter || dateToFilter || searchText) && (
-          <button
-            type="button"
-            className="btn-secondary btn btn-sm"
-            onClick={() => {
-              setDoctorFilter('')
-              setPatientFilter('')
-              setStatusFilter('')
-              setAppointmentTypeFilter('')
-              setDateFromFilter('')
-              setDateToFilter('')
-              setSearchText('')
-            }}
-          >
-            Clear filters
-          </button>
-        )}
+        <div className="filter-bar-fields">
+          <label className="inline-label">
+            Doctor
+            <Select
+              value={doctorFilter || ALL_FILTER_VALUE}
+              onValueChange={(v) => setDoctorFilter(v === ALL_FILTER_VALUE ? '' : v)}
+            >
+              <SelectTrigger className="filter-select-trigger">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_FILTER_VALUE}>All</SelectItem>
+                {doctors.map((d) => (
+                  <SelectItem key={d.id} value={String(d.id)}>
+                    {d.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </label>
+          <label className="inline-label">
+            Patient
+            <Select
+              value={patientFilter || ALL_FILTER_VALUE}
+              onValueChange={(v) => setPatientFilter(v === ALL_FILTER_VALUE ? '' : v)}
+            >
+              <SelectTrigger className="filter-select-trigger">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_FILTER_VALUE}>All</SelectItem>
+                {patients.map((p) => (
+                  <SelectItem key={p.id} value={String(p.id)}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </label>
+          <label className="inline-label">
+            Status
+            <Select
+              value={statusFilter || ALL_FILTER_VALUE}
+              onValueChange={(v) => setStatusFilter(v === ALL_FILTER_VALUE ? '' : v)}
+            >
+              <SelectTrigger className="filter-select-trigger">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_FILTER_VALUE}>All</SelectItem>
+                <SelectItem value="PENDING">Pending</SelectItem>
+                <SelectItem value="CONFIRMED">Confirmed</SelectItem>
+                <SelectItem value="REJECTED">Rejected</SelectItem>
+                <SelectItem value="CANCELLED">Cancelled</SelectItem>
+                <SelectItem value="CHECKED_IN">Checked in</SelectItem>
+                <SelectItem value="COMPLETED">Completed</SelectItem>
+                <SelectItem value="NO_SHOW">No-show</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+          <label className="inline-label">
+            Appointment type
+            <Select
+              value={appointmentTypeFilter || ALL_FILTER_VALUE}
+              onValueChange={(v) => setAppointmentTypeFilter(v === ALL_FILTER_VALUE ? '' : v)}
+            >
+              <SelectTrigger className="filter-select-trigger">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_FILTER_VALUE}>All</SelectItem>
+                {appointmentTypes.map((t) => (
+                  <SelectItem key={t.id} value={String(t.id)}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </label>
+          <label className="inline-label">
+            From
+            <input type="date" value={dateFromFilter} onChange={(e) => setDateFromFilter(e.target.value)} />
+          </label>
+          <label className="inline-label">
+            To
+            <input type="date" value={dateToFilter} onChange={(e) => setDateToFilter(e.target.value)} />
+          </label>
+        </div>
+        <div className="filter-bar-search-row">
+          <label className="inline-label filter-bar-search">
+            Search patient
+            <input
+              type="search"
+              placeholder="Name or number"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+            />
+          </label>
+          {activeFilterCount > 0 && (
+            <button type="button" className="btn-secondary btn btn-sm" onClick={clearFilters}>
+              Clear filters
+            </button>
+          )}
+        </div>
       </div>
 
       {loading && (
@@ -347,174 +436,90 @@ export default function AppointmentsPanel({
       )}
 
       {!loading && visibleAppointments.length > 0 && (
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Patient</th>
-              <th>Doctor</th>
-              <th>Type</th>
-              <th>When</th>
-              <th>Status</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody ref={tbodyRef}>
-            {visibleAppointments.map((a) => (
-              <Fragment key={a.id}>
+        <>
+          <div className="data-table-wrap">
+            <table className="data-table">
+              <thead>
                 <tr>
-                  <td>
-                    {a.patient_name}
-                    <div className="muted">{a.whatsapp_number}</div>
-                  </td>
-                  <td>{a.doctor_name}</td>
-                  <td>{a.appointment_type_name}</td>
-                  <td>
-                    {formatDate(a.start_at)} · {formatTime(a.start_at)} – {formatTime(a.end_at)}
-                  </td>
-                  <td>
+                  <th>Patient</th>
+                  <th>Doctor</th>
+                  <th>Type</th>
+                  <th>When</th>
+                  <th>Status</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody ref={tbodyRef}>
+                {visibleAppointments.map((a) => {
+                  const actions = buildAppointmentActions(a, actionHandlers)
+                  const busy = lifecycleBusyId === a.id
+                  return (
+                    <Fragment key={a.id}>
+                      <tr className="appointment-row" onClick={() => setDetailsTarget(a)}>
+                        <td>
+                          <strong>{a.patient_name}</strong>
+                          <div className="muted">{a.whatsapp_number}</div>
+                        </td>
+                        <td>{a.doctor_name}</td>
+                        <td>{a.appointment_type_name}</td>
+                        <td>
+                          <div className="appointment-when">
+                            <span className="appointment-when-date">{formatDate(a.start_at)}</span>
+                            <span className="muted appointment-when-time">
+                              {formatTime(a.start_at)} – {formatTime(a.end_at)}
+                            </span>
+                          </div>
+                        </td>
+                        <td>
+                          <span className={`pill status-${a.status.toLowerCase()}`}>{a.status.replace(/_/g, ' ')}</span>
+                          {a.token_number !== null && <span className="pill token-pill">Token #{a.token_number}</span>}
+                        </td>
+                        <td onClick={(e) => e.stopPropagation()}>
+                          <AppointmentActionButtons actions={actions} busy={busy} />
+                        </td>
+                      </tr>
+                      {reschedulingId === a.id && (
+                        <tr onClick={(e) => e.stopPropagation()}>
+                          <td colSpan={6}>{reschedulePanel(a)}</td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <ul className="appointment-mobile-list">
+            {visibleAppointments.map((a) => {
+              const actions = buildAppointmentActions(a, actionHandlers)
+              const busy = lifecycleBusyId === a.id
+              return (
+                <li key={a.id} className="appointment-mobile-card" onClick={() => setDetailsTarget(a)}>
+                  <div className="appointment-mobile-card-top">
                     <span className={`pill status-${a.status.toLowerCase()}`}>{a.status.replace(/_/g, ' ')}</span>
                     {a.token_number !== null && <span className="pill token-pill">Token #{a.token_number}</span>}
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                      {a.status === 'PENDING' && (
-                        <>
-                          <button
-                            type="button"
-                            className="link"
-                            disabled={lifecycleBusyId === a.id}
-                            onClick={() =>
-                              runLifecycleAction(a.id, confirmAdminAppointment, 'Could not confirm the appointment')
-                            }
-                          >
-                            Confirm
-                          </button>
-                          <button
-                            type="button"
-                            className="link danger"
-                            disabled={lifecycleBusyId === a.id}
-                            onClick={() =>
-                              runLifecycleAction(a.id, rejectAdminAppointment, 'Could not reject the appointment')
-                            }
-                          >
-                            Reject
-                          </button>
-                        </>
-                      )}
-                      {a.status === 'CONFIRMED' && hasStarted(a.start_at) && (
-                        <>
-                          <button
-                            type="button"
-                            className="link"
-                            disabled={lifecycleBusyId === a.id}
-                            onClick={() =>
-                              runLifecycleAction(a.id, visitAdminAppointment, 'Could not check in the appointment')
-                            }
-                          >
-                            Check In
-                          </button>
-                          <button
-                            type="button"
-                            className="link danger"
-                            disabled={lifecycleBusyId === a.id}
-                            onClick={() =>
-                              runLifecycleAction(
-                                a.id,
-                                noShowAdminAppointment,
-                                'Could not mark the appointment as a no-show',
-                              )
-                            }
-                          >
-                            Mark No-Show
-                          </button>
-                        </>
-                      )}
-                      {a.status === 'CONFIRMED' && !hasStarted(a.start_at) && (
-                        <span className="muted">Not started yet</span>
-                      )}
-                      {a.status === 'CHECKED_IN' && (
-                        <button
-                          type="button"
-                          className="link"
-                          disabled={lifecycleBusyId === a.id}
-                          onClick={() =>
-                            runLifecycleAction(
-                              a.id,
-                              completeAdminAppointment,
-                              'Could not mark the appointment completed',
-                            )
-                          }
-                        >
-                          Mark completed
-                        </button>
-                      )}
-                      {(a.status === 'PENDING' || a.status === 'CONFIRMED') && (
-                        <>
-                          <button
-                            type="button"
-                            className="link"
-                            onClick={() =>
-                              reschedulingId === a.id ? setReschedulingId(null) : startReschedule(a)
-                            }
-                          >
-                            {reschedulingId === a.id ? 'Close' : 'Reschedule'}
-                          </button>
-                          <button type="button" className="link danger" onClick={() => setCancelTarget(a)}>
-                            Cancel
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-                {reschedulingId === a.id && reschedulingAppointment && (
-                  <tr>
-                    <td colSpan={6}>
-                      <div className="detail-section" style={{ margin: '8px 0' }}>
-                        <h4>
-                          Reschedule {reschedulingAppointment.patient_name} with{' '}
-                          {reschedulingAppointment.doctor_name}
-                        </h4>
-                        <p className="muted">
-                          Currently {formatDate(reschedulingAppointment.start_at)} ·{' '}
-                          {formatTime(reschedulingAppointment.start_at)} –{' '}
-                          {formatTime(reschedulingAppointment.end_at)}
-                        </p>
-                        <AdminSlotPicker
-                          doctorId={reschedulingAppointment.doctor_id}
-                          appointmentTypeId={reschedulingAppointment.appointment_type_id}
-                          durationMinutes={durationBetween(
-                            reschedulingAppointment.start_at,
-                            reschedulingAppointment.end_at,
-                          )}
-                          selectedSlot={rescheduleSlot}
-                          onSelect={setRescheduleSlot}
-                        />
-                        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                          <button
-                            type="button"
-                            className="btn btn-sm"
-                            disabled={!rescheduleSlot || rescheduleBusy}
-                            onClick={() => confirmReschedule(a.id)}
-                          >
-                            {rescheduleBusy ? 'Saving…' : 'Confirm new time'}
-                          </button>
-                          <button
-                            type="button"
-                            className="btn-secondary btn btn-sm"
-                            onClick={() => setReschedulingId(null)}
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                )}
-              </Fragment>
-            ))}
-          </tbody>
-        </table>
+                  </div>
+                  <strong>{a.patient_name}</strong>
+                  <div className="muted">{a.whatsapp_number}</div>
+                  <div className="appointment-mobile-card-doctor">
+                    {a.doctor_name} · {a.appointment_type_name}
+                  </div>
+                  <div className="appointment-when">
+                    <span className="appointment-when-date">{formatDate(a.start_at)}</span>
+                    <span className="muted appointment-when-time">
+                      {formatTime(a.start_at)} – {formatTime(a.end_at)}
+                    </span>
+                  </div>
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <AppointmentActionButtons actions={actions} busy={busy} />
+                    {reschedulingId === a.id && reschedulePanel(a)}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        </>
       )}
 
       <AlertDialog open={cancelTarget !== null} onOpenChange={(open) => !open && setCancelTarget(null)}>
@@ -534,6 +539,15 @@ export default function AppointmentsPanel({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {detailsTarget && (
+        <AppointmentDetailsModal
+          appointment={detailsTarget}
+          onClose={() => setDetailsTarget(null)}
+          handlers={actionHandlers}
+          busy={lifecycleBusyId === detailsTarget.id}
+        />
+      )}
     </section>
   )
 }

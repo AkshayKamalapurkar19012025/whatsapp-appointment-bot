@@ -2966,10 +2966,17 @@ a.link.danger {
 
 .admin-content-header {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-4);
   margin-bottom: var(--space-2);
+}
+
+.appointments-context-line {
+  margin: var(--space-2) 0 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
 }
 
 .admin-topbar {
@@ -3065,6 +3072,20 @@ a.link.danger {
   gap: 2px;
 }
 
+.admin-sidebar-group-label {
+  margin: var(--space-3) 0 2px;
+  padding: 0 var(--space-3);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+.admin-sidebar-list > .admin-sidebar-group-label:first-child {
+  margin-top: 0;
+}
+
 .admin-sidebar-item {
   display: flex;
   align-items: center;
@@ -3128,6 +3149,10 @@ a.link.danger {
    Data tables
    =========================================================== */
 
+.data-table-wrap {
+  overflow-x: auto;
+}
+
 .data-table {
   width: 100%;
   border-collapse: collapse;
@@ -3140,6 +3165,7 @@ a.link.danger {
   text-align: left;
   padding: 11px 12px;
   border-bottom: 1px solid var(--color-border);
+  vertical-align: middle;
 }
 
 .data-table th {
@@ -3156,6 +3182,188 @@ a.link.danger {
 
 .data-table tbody tr:hover {
   background: var(--color-bg-subtle);
+}
+
+.appointment-row {
+  cursor: pointer;
+}
+
+/* WHEN column: date is the primary scan target, the time range is
+   secondary -- two stacked lines instead of one dense
+   "date · start – end" line, per the information-hierarchy pass this
+   table went through (patient/doctor/type/status all already read at a
+   glance; date/time was the one column still asking the reader to
+   parse a single run-on string). */
+.appointment-when {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.appointment-when-date {
+  font-weight: 600;
+}
+
+.appointment-when-time {
+  font-size: 0.82rem;
+}
+
+/* Actions column: primary + secondary + (a single plain button, or a
+   "..." menu once there's more than one leftover action) -- see
+   AppointmentActions.tsx's buildAppointmentActions for which of those
+   three a given status gets. nowrap plus no flex-wrap here is
+   deliberate: this replaces a row of plain text links that used to
+   wrap onto a second line the moment a status had 4 actions
+   (Reschedule/Cancel wrapping below Confirm/Reject), which read as a
+   broken layout rather than a busy one. */
+.appointment-actions-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.appointment-actions-note {
+  font-size: 0.82rem;
+}
+
+.btn-outline-danger {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.btn-outline-danger:hover {
+  background: var(--color-danger-soft);
+  border-color: var(--color-danger);
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+}
+
+.icon-btn:hover {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary-hover);
+}
+
+.appointment-reschedule-panel {
+  margin: 8px 0;
+}
+
+.appointment-reschedule-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* ===========================================================
+   Appointments -- mobile card list (AppointmentsPanel.tsx)
+   =========================================================== */
+
+.appointment-mobile-list {
+  display: none;
+  list-style: none;
+  margin: var(--space-3) 0 var(--space-6);
+  padding: 0;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.appointment-mobile-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.appointment-mobile-card:hover {
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.appointment-mobile-card-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: 2px;
+}
+
+.appointment-mobile-card-doctor {
+  font-size: 0.88rem;
+  color: var(--color-text-secondary);
+  margin: 2px 0 4px;
+}
+
+.appointment-mobile-card .appointment-when {
+  margin-bottom: 6px;
+}
+
+.appointment-mobile-card .appointment-actions-row {
+  flex-wrap: wrap;
+  white-space: normal;
+}
+
+@media (max-width: 860px) {
+  .data-table-wrap {
+    display: none;
+  }
+  .appointment-mobile-list {
+    display: flex;
+  }
+}
+
+/* ===========================================================
+   Appointment details modal (AppointmentDetailsModal.tsx)
+   =========================================================== */
+
+.appointment-details-panel {
+  max-width: 420px;
+}
+
+.appointment-details-heading {
+  margin: 0 0 var(--space-4);
+}
+
+.appointment-details-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.appointment-details-block:last-of-type {
+  border-bottom: none;
+}
+
+.appointment-details-status {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.appointment-details-actions {
+  margin-top: var(--space-4);
+}
+
+.appointment-details-actions .appointment-actions-row {
+  flex-wrap: wrap;
+  white-space: normal;
 }
 
 /* ===========================================================
@@ -3244,13 +3452,51 @@ a.link.danger {
 
 .filter-bar {
   display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-4);
+}
+
+.filter-bar-fields {
+  display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   gap: var(--space-3);
-  padding: var(--space-4);
-  background: var(--color-bg-subtle);
-  border-radius: var(--radius-md);
-  margin-bottom: var(--space-4);
+}
+
+.filter-bar-fields .inline-label {
+  min-width: 130px;
+}
+
+/* A tighter trigger than select.tsx's own default padding -- this is a
+   compact filter toolbar, not a form, so the same control reads too
+   tall at the default form-field size used everywhere else. */
+.filter-select-trigger {
+  padding-top: 7px !important;
+  padding-bottom: 7px !important;
+  font-size: 0.85rem !important;
+}
+
+.filter-bar-search-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.filter-bar-search {
+  flex: 1;
+  min-width: 200px;
+  max-width: 320px;
+}
+
+.filter-bar-search input {
+  margin-bottom: 0;
 }
 
 /* ===========================================================
@@ -3355,6 +3601,12 @@ a.link.danger {
     flex-wrap: wrap;
     flex: 1;
     gap: var(--space-1);
+  }
+  /* The MAIN/MANAGE/... group labels only make sense stacked above a
+     vertical column of items -- inside the horizontal wrapping strip
+     this becomes, they'd sit as stray text between icon buttons. */
+  .admin-sidebar-group-label {
+    display: none;
   }
   .admin-content {
     padding: var(--space-5);

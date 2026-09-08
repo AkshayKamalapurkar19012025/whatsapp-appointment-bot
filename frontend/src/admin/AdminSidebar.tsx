@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import { Fragment, type ReactElement } from 'react'
 
 export interface AdminSidebarItem {
   key: string
@@ -7,6 +7,11 @@ export interface AdminSidebarItem {
   active?: boolean
   disabled?: boolean
   onSelect?: () => void
+  // Optional section label (e.g. "MAIN", "MANAGE") shown above this
+  // item when it differs from the previous item's group -- purely a
+  // rendering grouping, not a route or a nested menu, so callers keep
+  // passing the exact same flat list/navigation they always have.
+  group?: string
 }
 
 // A plain, always-visible left sidebar -- no toggle, no open/close
@@ -27,23 +32,30 @@ export default function AdminSidebar({ items }: { items: AdminSidebarItem[] }) {
       </div>
 
       <ul className="admin-sidebar-list">
-        {items.map((item) => (
-          <li key={item.key}>
-            <button
-              type="button"
-              className={`admin-sidebar-item${item.active ? ' active' : ''}${item.disabled ? ' disabled' : ''}`}
-              disabled={item.disabled}
-              onClick={item.onSelect}
-            >
-              <span className="admin-sidebar-item-icon" aria-hidden="true">
-                {item.icon}
-              </span>
-              <span className="admin-sidebar-item-label">
-                {item.label}
-                {item.disabled && <span className="admin-sidebar-item-badge">Coming soon</span>}
-              </span>
-            </button>
-          </li>
+        {items.map((item, index) => (
+          <Fragment key={item.key}>
+            {item.group && item.group !== items[index - 1]?.group && (
+              <li className="admin-sidebar-group-label" aria-hidden="true">
+                {item.group}
+              </li>
+            )}
+            <li>
+              <button
+                type="button"
+                className={`admin-sidebar-item${item.active ? ' active' : ''}${item.disabled ? ' disabled' : ''}`}
+                disabled={item.disabled}
+                onClick={item.onSelect}
+              >
+                <span className="admin-sidebar-item-icon" aria-hidden="true">
+                  {item.icon}
+                </span>
+                <span className="admin-sidebar-item-label">
+                  {item.label}
+                  {item.disabled && <span className="admin-sidebar-item-badge">Coming soon</span>}
+                </span>
+              </button>
+            </li>
+          </Fragment>
         ))}
       </ul>
     </nav>
