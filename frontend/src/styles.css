@@ -1805,6 +1805,205 @@ a.link.danger {
 }
 
 /* ===========================================================
+   Departments admin redesign (DepartmentsPanel.tsx). A dedicated grid
+   class rather than reusing .card-grid above (also used by
+   AppointmentTypesPanel.tsx, which this redesign doesn't touch) -- an
+   explicit 4/3/2/1 breakpoint ladder instead of that one's auto-fill,
+   so column count is deliberate rather than however many 200px cards
+   happen to fit.
+   =========================================================== */
+
+.department-admin-header-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: var(--space-1) 0 var(--space-4);
+}
+
+.department-admin-search {
+  position: relative;
+  max-width: 360px;
+  margin-bottom: var(--space-4);
+}
+
+.department-admin-search svg {
+  position: absolute;
+  left: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-text-muted);
+  pointer-events: none;
+}
+
+.department-admin-search input {
+  width: 100%;
+  padding-left: calc(var(--space-3) * 2 + 16px);
+}
+
+.department-admin-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-3);
+}
+
+@media (max-width: 1100px) {
+  .department-admin-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  .department-admin-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .department-admin-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.department-admin-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  /* min-height, not height: a uniform baseline for the common case,
+     but an unusually long department name (see .department-admin-
+     card-name's overflow-wrap) grows the card instead of clipping or
+     visually overflowing its border. */
+  min-height: 128px;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.08s ease;
+}
+
+.department-admin-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.department-admin-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.department-admin-card-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+
+.department-admin-card-count {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+  margin-top: auto;
+}
+
+.department-admin-card-count.zero {
+  color: var(--color-danger);
+}
+
+/* Doctor-list popover, triggered by hover (desktop) or tap (mobile) on
+   a card's doctor-count line -- same absolute-positioned-below-trigger
+   shape as .calendar-day-popover (MonthGrid.tsx), simplified (no
+   viewport-edge shift correction: these cards never sit close enough
+   to the grid's own edge to need it, unlike a full-width month
+   calendar). */
+.department-admin-popover {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  z-index: 30;
+  min-width: 220px;
+  max-width: 280px;
+  padding: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+
+.department-admin-popover-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-2);
+}
+
+.department-admin-popover-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+}
+
+.department-admin-popover-row + .department-admin-popover-row {
+  border-top: 1px solid var(--color-border);
+}
+
+.department-admin-popover-doctor-name {
+  display: block;
+  font-weight: 500;
+  font-size: 0.88rem;
+}
+
+.department-admin-popover-doctor-meta {
+  display: block;
+  font-size: 0.76rem;
+  color: var(--color-text-muted);
+}
+
+/* Manage-doctors modal (ManageDepartmentDoctorsModal.tsx) -- a plain
+   checklist, one row per doctor in the system, reusing the existing
+   modal-overlay/modal-panel shape (AppointmentDetailsModal.tsx). */
+.manage-doctors-list {
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.manage-doctors-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.manage-doctors-row:last-child {
+  border-bottom: none;
+}
+
+.manage-doctors-row label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.manage-doctors-row input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  accent-color: var(--color-primary);
+}
+
+/* ===========================================================
    Dashboard (DashboardPanel.tsx)
    =========================================================== */
 
