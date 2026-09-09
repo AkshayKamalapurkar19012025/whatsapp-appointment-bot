@@ -63,7 +63,9 @@ export default function SlotGrid({
         .filter((g) => g.slots.length > 0)
         .map((group) => (
           <div key={group.label} className="slot-group">
-            <div className="slot-group-label">{group.label}</div>
+            <div className="slot-group-label">
+              {group.label} ({group.slots.length} slot{group.slots.length === 1 ? '' : 's'})
+            </div>
             <div className="slot-grid">
               {group.slots.map((slot) => (
                 <button

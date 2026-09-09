@@ -3843,6 +3843,326 @@ a.link.danger {
   }
 }
 
+/* ===========================================================
+   Book Appointment admin page (BookAppointmentPanel.tsx)
+   =========================================================== */
+
+.booking-source-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.booking-source-pills {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.book-appointment-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.book-appointment-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.book-appointment-side {
+  position: sticky;
+  top: var(--space-4);
+}
+
+.book-step-card {
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  transition: opacity 0.15s ease;
+}
+
+.book-step-disabled {
+  opacity: 0.55;
+}
+
+.book-step-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.book-step-heading h3 {
+  margin: 0;
+}
+
+.book-step-heading .muted {
+  margin: 2px 0 0;
+}
+
+.book-step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-text-muted);
+  font-weight: 700;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.book-step-number.current,
+.book-step-number.done {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+.book-step1-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(220px, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.book-patient-search {
+  position: relative;
+}
+
+.book-patient-search-input {
+  width: 100%;
+  padding: 0 var(--space-3);
+}
+
+.book-patient-search-input input {
+  padding: 9px 0;
+  width: 100%;
+}
+
+.book-patient-results {
+  position: absolute;
+  z-index: 5;
+  left: 0;
+  right: 0;
+  margin: 4px 0 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, 0.08));
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.book-patient-result {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  text-align: left;
+}
+
+.book-patient-result:hover,
+.book-patient-result:focus-visible {
+  background: var(--color-bg-subtle);
+}
+
+.book-patient-result-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.book-patient-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-weight: 700;
+  font-size: 0.8rem;
+  flex-shrink: 0;
+}
+
+.book-patient-no-results {
+  position: absolute;
+  z-index: 5;
+  left: 0;
+  right: 0;
+  margin: 4px 0 0;
+  padding: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  text-align: center;
+}
+
+.book-register-btn {
+  margin-top: var(--space-3);
+}
+
+.book-selected-patient-card {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-primary-soft-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-primary-soft);
+}
+
+.book-selected-patient-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-primary);
+  margin-bottom: var(--space-2);
+}
+
+.book-selected-patient-body {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.book-selected-patient-body > div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.book-selected-patient-type {
+  margin-top: var(--space-2);
+  font-size: 0.8rem;
+  color: var(--color-primary-hover);
+  font-weight: 600;
+}
+
+.book-date-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.book-date-nav-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.book-availability-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+}
+
+.book-review-card {
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.book-review-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: var(--space-2) 0;
+}
+
+.book-review-list > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.book-review-list > div:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.book-review-list dt {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.book-review-list dd {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+  margin: 0;
+}
+
+.book-review-hint {
+  font-size: 0.82rem;
+}
+
+.book-review-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+}
+
+@media (max-width: 1024px) {
+  .book-appointment-layout {
+    grid-template-columns: 1fr;
+  }
+  .book-appointment-side {
+    position: static;
+  }
+}
+
+@media (max-width: 720px) {
+  .book-step1-body {
+    grid-template-columns: 1fr;
+  }
+  .booking-source-picker {
+    align-items: flex-start;
+  }
+  .admin-content-header .booking-source-picker {
+    width: 100%;
+  }
+}
+
 .admin-topbar {
   display: flex;
   justify-content: flex-end;
