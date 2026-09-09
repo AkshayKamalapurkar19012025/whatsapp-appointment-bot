@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import {
   Buildings,
   Check,
@@ -34,6 +34,7 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu'
 import AddDepartmentModal from './AddDepartmentModal'
 import ManageDepartmentDoctorsModal from './ManageDepartmentDoctorsModal'
+import { usePreviewPopover } from '../usePreviewPopover'
 
 // One department card, including its hover/tap doctor-list popover.
 // Hover/focus is scoped to the whole card (not just the count line),
@@ -55,11 +56,13 @@ import ManageDepartmentDoctorsModal from './ManageDepartmentDoctorsModal'
 // it); Escape and a plain onBlur on the count button (the keyboard
 // path in independently) cover the rest.
 //
-// Position/collision-avoidance mirrors MonthGrid.tsx's own popoverShift/
-// popoverBelow: shifts horizontally if it would run off the left/right
-// edge, and flips to render above the card instead of below if there's
-// no room underneath (a card in the grid's last row, near the bottom
-// of the viewport).
+// Position/collision-avoidance (shift horizontally if it would run off
+// the left/right edge; flip to render above the card instead of below
+// if there's no room underneath -- a card in the grid's last row, near
+// the bottom of the viewport) and outside-click/Escape dismissal come
+// from usePreviewPopover.ts, shared with DoctorsPanel.tsx's own
+// DoctorPreviewTrigger (both started as copies of MonthGrid.tsx's
+// popoverShift/popoverBelow before being extracted).
 function DepartmentCard({
   department,
   icon,
@@ -85,17 +88,14 @@ function DepartmentCard({
   onManageDoctors: () => void
   onDelete: () => void
 }) {
-  const [open, setOpen] = useState(false)
   // The visible count always comes from the `count` prop (the parent's
   // already-fetched doctorCounts, loaded eagerly for every card) --
   // this component's own lazy `doctors` fetch is only for the popover's
   // detailed per-doctor rows, which nobody needs until they actually
   // hover/tap/focus, so it stays null until then.
   const [doctors, setDoctors] = useState<Doctor[] | null>(null)
-  const cardRef = useRef<HTMLDivElement>(null)
-  const popoverRef = useRef<HTMLDivElement>(null)
-  const [shift, setShift] = useState(0)
-  const [renderAbove, setRenderAbove] = useState(false)
+  const { open, setOpen, containerRef, popoverRef, shift, overflowsBottom } =
+    usePreviewPopover<HTMLDivElement>()
 
   function load() {
     if (doctors !== null) return
@@ -109,45 +109,9 @@ function DepartmentCard({
     setOpen(true)
   }
 
-  useLayoutEffect(() => {
-    if (!open) return
-    const el = popoverRef.current
-    if (!el) return
-    const rect = el.getBoundingClientRect()
-    const margin = 8
-    let nextShift = 0
-    if (rect.left < margin) {
-      nextShift = margin - rect.left
-    } else if (rect.right > window.innerWidth - margin) {
-      nextShift = window.innerWidth - margin - rect.right
-    }
-    setShift(nextShift)
-    setRenderAbove(rect.bottom > window.innerHeight - margin)
-  }, [open])
-
-  // Touch's only dismissal path (no pointerleave fires for touch), plus
-  // Escape for everyone.
-  useEffect(() => {
-    if (!open) return
-    function handleOutside(event: MouseEvent) {
-      if (cardRef.current && !cardRef.current.contains(event.target as Node)) {
-        setOpen(false)
-      }
-    }
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('click', handleOutside, true)
-    document.addEventListener('keydown', handleEscape)
-    return () => {
-      document.removeEventListener('click', handleOutside, true)
-      document.removeEventListener('keydown', handleEscape)
-    }
-  }, [open])
-
   return (
     <div
-      ref={cardRef}
+      ref={containerRef}
       className="department-admin-card"
       onPointerEnter={(e) => {
         if (e.pointerType === 'mouse') openPopover()
@@ -211,7 +175,7 @@ function DepartmentCard({
           ref={popoverRef}
           id={`department-popover-${department.id}`}
           role="tooltip"
-          className={`department-admin-popover${renderAbove ? ' above' : ''}`}
+          className={`department-admin-popover${overflowsBottom ? ' above' : ''}`}
           style={{ '--popover-shift': `${shift}px` } as CSSProperties}
         >
           <p className="department-admin-popover-title">Doctors in {department.name}</p>

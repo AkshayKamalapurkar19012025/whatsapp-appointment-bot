@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { Buildings, CalendarCheck, MagnifyingGlass, Stethoscope, UsersThree } from '@phosphor-icons/react'
 import {
   ApiError,
@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { currentDayOfWeek, formatWorkingHours, isAvailableNow, isoDateToday, todaysScheduleEntries } from './doctorSchedule'
 import AddDoctorModal from './AddDoctorModal'
 import DoctorWorkspace from './DoctorWorkspace'
+import { usePreviewPopover } from '../usePreviewPopover'
 
 const ALL_FILTER_VALUE = '__all__'
 
@@ -33,51 +34,19 @@ interface DoctorRow {
 // itself is always plain visible text in the row (never hidden behind
 // this), so the popover is purely an enhancement for a faster look at
 // specialization/departments/experience without opening the full
-// workspace. Same pointerType-gated hover + focus + viewport-edge
-// collision-avoidance pattern as DepartmentsPanel.tsx's DepartmentCard
-// (proven there against the full 1440-360px breakpoint sweep), adapted
-// to a directory row instead of a card.
+// workspace. Same pointerType-gated hover + focus trigger as
+// DepartmentsPanel.tsx's DepartmentCard; the viewport-edge collision-
+// avoidance and dismissal mechanics come from usePreviewPopover.ts,
+// shared with that same card rather than a second copy.
 function DoctorPreviewTrigger({ row, onView }: { row: DoctorRow; onView: () => void }) {
-  const [open, setOpen] = useState(false)
-  const wrapRef = useRef<HTMLSpanElement>(null)
-  const popoverRef = useRef<HTMLDivElement>(null)
-  const [shift, setShift] = useState(0)
-  const [renderAbove, setRenderAbove] = useState(false)
-
-  useLayoutEffect(() => {
-    if (!open) return
-    const el = popoverRef.current
-    if (!el) return
-    const rect = el.getBoundingClientRect()
-    const margin = 8
-    let nextShift = 0
-    if (rect.left < margin) nextShift = margin - rect.left
-    else if (rect.right > window.innerWidth - margin) nextShift = window.innerWidth - margin - rect.right
-    setShift(nextShift)
-    setRenderAbove(rect.bottom > window.innerHeight - margin)
-  }, [open])
-
-  useEffect(() => {
-    if (!open) return
-    function handleOutside(event: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(event.target as Node)) setOpen(false)
-    }
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('click', handleOutside, true)
-    document.addEventListener('keydown', handleEscape)
-    return () => {
-      document.removeEventListener('click', handleOutside, true)
-      document.removeEventListener('keydown', handleEscape)
-    }
-  }, [open])
+  const { open, setOpen, containerRef, popoverRef, shift, overflowsBottom } =
+    usePreviewPopover<HTMLSpanElement>()
 
   const summaryLine = doctorSummaryLine(row.doctor)
 
   return (
     <span
-      ref={wrapRef}
+      ref={containerRef}
       className="doctor-name-trigger"
       onPointerEnter={(e) => {
         if (e.pointerType === 'mouse') setOpen(true)
@@ -106,7 +75,7 @@ function DoctorPreviewTrigger({ row, onView }: { row: DoctorRow; onView: () => v
           ref={popoverRef}
           id={`doctor-preview-${row.doctor.id}`}
           role="tooltip"
-          className={`doctor-preview-popover${renderAbove ? ' above' : ''}`}
+          className={`doctor-preview-popover${overflowsBottom ? ' above' : ''}`}
           style={{ '--popover-shift': `${shift}px` } as CSSProperties}
         >
           <p className="doctor-preview-name">{row.doctor.name}</p>
