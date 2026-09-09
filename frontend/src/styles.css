@@ -495,6 +495,12 @@ p {
   font-size: 0.85rem;
 }
 
+/* Marks a required field's label; unmarked labels are optional. */
+.required-mark {
+  color: var(--color-danger, #c0392b);
+  margin-left: 2px;
+}
+
 /* ===========================================================
    Forms
    =========================================================== */

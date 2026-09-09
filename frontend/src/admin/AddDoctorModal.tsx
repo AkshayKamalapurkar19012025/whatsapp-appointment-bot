@@ -72,7 +72,7 @@ export default function AddDoctorModal({
 
         <form className="doctor-form-grid" onSubmit={handleSubmit}>
           <label className="inline-label doctor-form-full">
-            Name
+            Name<span className="required-mark">*</span>
             <input
               autoFocus
               placeholder="Dr. Jane Doe"
@@ -82,7 +82,7 @@ export default function AddDoctorModal({
             />
           </label>
           <label className="inline-label">
-            Specialization
+            Specialization<span className="required-mark">*</span>
             <input
               placeholder="Cardiology"
               list={specializationListId}
@@ -97,7 +97,7 @@ export default function AddDoctorModal({
             </datalist>
           </label>
           <label className="inline-label">
-            Sub-specialization <span className="muted">(optional)</span>
+            Sub-specialization
             <input
               placeholder="Interventional Cardiology"
               value={subSpecialization}
@@ -105,7 +105,7 @@ export default function AddDoctorModal({
             />
           </label>
           <label className="inline-label">
-            Years of experience <span className="muted">(optional)</span>
+            Years of experience
             <input
               type="number"
               min={0}
