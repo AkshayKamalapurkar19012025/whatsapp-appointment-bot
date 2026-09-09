@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { CalendarBlank, CaretDown, CaretLeft, CaretRight, CheckCircle, MagnifyingGlass } from '@phosphor-icons/react'
+import { ArrowRight, CalendarBlank, CaretDown, CaretLeft, CaretRight, CheckCircle, MagnifyingGlass } from '@phosphor-icons/react'
 import {
   ApiError,
   createAdminAppointment,
@@ -29,7 +29,9 @@ const BOOKING_SOURCES: { key: BookingSource; label: string }[] = [
   { key: 'ONLINE', label: 'Online' },
   { key: 'PHONE', label: 'Phone' },
   { key: 'WALK_IN', label: 'Walk-in' },
-  { key: 'STAFF', label: 'Staff' },
+  // Display-only rename -- the stored key is still 'STAFF' everywhere,
+  // this just reads better to staff booking on someone's behalf.
+  { key: 'STAFF', label: 'Staff-assisted' },
 ]
 
 function addDays(dateStr: string, days: number): string {
@@ -46,7 +48,9 @@ function addDays(dateStr: string, days: number): string {
 // same list with a form silently toggled open inside it.
 export default function BookAppointmentPanel({ onViewAppointments }: { onViewAppointments: () => void }) {
   const [doctors, setDoctors] = useState<Doctor[]>([])
+  const [doctorsLoading, setDoctorsLoading] = useState(true)
   const [patients, setPatients] = useState<Patient[]>([])
+  const [patientsLoading, setPatientsLoading] = useState(true)
   const [timezoneLabel, setTimezoneLabel] = useState<string | null>(null)
 
   const [bookingSource, setBookingSource] = useState<BookingSource>('WALK_IN')
@@ -78,8 +82,14 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
   const [justBooked, setJustBooked] = useState<{ doctorName: string; patientName: string; slot: Slot } | null>(null)
 
   useEffect(() => {
-    listAllDoctors().then(setDoctors).catch(() => undefined)
-    listPatients().then(setPatients).catch(() => undefined)
+    listAllDoctors()
+      .then(setDoctors)
+      .catch(() => undefined)
+      .finally(() => setDoctorsLoading(false))
+    listPatients()
+      .then(setPatients)
+      .catch(() => undefined)
+      .finally(() => setPatientsLoading(false))
     getAppConfig()
       .then((c) => setTimezoneLabel(c.default_timezone))
       .catch(() => undefined)
@@ -125,7 +135,7 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
       })
       .catch((err) => {
         if (cancelled) return
-        setSlotsError(err instanceof ApiError ? err.message : 'Could not load time slots')
+        setSlotsError(err instanceof ApiError ? err.message : 'Unable to load available slots. Please try again.')
         setSlots([])
         setTotalSlots(0)
       })
@@ -298,7 +308,14 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
                   />
                 </label>
 
-                {searchNeedle &&
+                {searchNeedle && patientsLoading && (
+                  <div className="book-patient-no-results">
+                    <span className="spinner" aria-hidden="true" />
+                    <p className="muted">Loading patients…</p>
+                  </div>
+                )}
+
+                {searchNeedle && !patientsLoading &&
                   (patientResults.length > 0 ? (
                     <ul className="book-patient-results">
                       {patientResults.map((p) => (
@@ -310,8 +327,11 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
                             <span className="book-patient-result-info">
                               <strong>{p.name}</strong>
                               <span className="muted">
-                                #{p.id} · {p.whatsapp_number}
+                                Patient ID: {p.id} · {p.whatsapp_number}
                               </span>
+                            </span>
+                            <span className="book-patient-result-hint" aria-hidden="true">
+                              Select <ArrowRight size={13} weight="bold" />
                             </span>
                           </button>
                         </li>
@@ -319,7 +339,8 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
                     </ul>
                   ) : (
                     <div className="book-patient-no-results">
-                      <p className="muted">No patients found.</p>
+                      <p>No patient found</p>
+                      <p className="muted">Try another name, phone number, or patient ID.</p>
                     </div>
                   ))}
 
@@ -331,9 +352,11 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
               {selectedPatient && (
                 <div className="book-selected-patient-card">
                   <div className="book-selected-patient-header">
-                    <span>Selected patient</span>
+                    <span>
+                      <CheckCircle size={14} weight="bold" aria-hidden="true" /> Patient selected
+                    </span>
                     <button type="button" className="link" onClick={() => setSelectedPatient(null)}>
-                      Edit
+                      Change
                     </button>
                   </div>
                   <div className="book-selected-patient-body">
@@ -370,8 +393,13 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
             <div className="inline-form wrap" style={{ marginTop: 0 }}>
               <label className="inline-label">
                 Doctor
-                <select value={doctorId} onChange={(e) => setDoctorId(e.target.value)} disabled={!selectedPatient} required>
-                  <option value="">Choose…</option>
+                <select
+                  value={doctorId}
+                  onChange={(e) => setDoctorId(e.target.value)}
+                  disabled={!selectedPatient || doctorsLoading}
+                  required
+                >
+                  <option value="">{doctorsLoading ? 'Loading doctors…' : 'Choose…'}</option>
                   {doctors.map((d) => (
                     <option key={d.id} value={d.id}>
                       {d.name}
@@ -510,7 +538,7 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
                     <>
                       <strong>{selectedPatient.name}</strong>
                       <span className="muted">
-                        #{selectedPatient.id} · {selectedPatient.whatsapp_number}
+                        Patient ID: {selectedPatient.id} · {selectedPatient.whatsapp_number}
                       </span>
                     </>
                   ) : (

@@ -3789,10 +3789,31 @@ a.link.danger {
   margin: 0;
   padding: 7px 0;
   background: none;
+  /* type="search" gets its own native appearance in WebKit (an inset
+     border/shadow plus a built-in clear button) on top of this
+     wrapper's own border -- without resetting it, the two visibly
+     stack into what reads as a double border around the field. */
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.filter-bar-search-input input::-webkit-search-decoration,
+.filter-bar-search-input input::-webkit-search-cancel-button,
+.filter-bar-search-input input::-webkit-search-results-button,
+.filter-bar-search-input input::-webkit-search-results-decoration {
+  -webkit-appearance: none;
+}
+
+.filter-bar-search-input input:focus {
+  /* The wrapper already shows focus via :focus-within below -- the
+     global input:focus box-shadow ring would otherwise draw a second,
+     tighter ring just inside the wrapper's border. */
+  box-shadow: none;
 }
 
 .filter-bar-search-input:focus-within {
   border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
 }
 
 .filter-bar-toolbar-actions {
@@ -3887,8 +3908,14 @@ a.link.danger {
   transition: opacity 0.15s ease;
 }
 
+/* Not-yet-reached steps stay fully readable -- only the actual form
+   controls inside them are disabled (which already renders its own
+   muted/greyed appearance via the global input:disabled/select:disabled
+   rule). Dimming the whole card would make the heading and helper
+   text hard to read before there's any reason to. The step-number
+   circle (grey vs. filled) is what signals "not reached yet" instead. */
 .book-step-disabled {
-  opacity: 0.55;
+  background: var(--color-bg-subtle);
 }
 
 .book-step-heading {
@@ -3928,11 +3955,16 @@ a.link.danger {
   color: var(--color-on-primary);
 }
 
+/* Single column, not a fixed two-column grid: reserving a permanent
+   side column for the "selected patient" card was shrinking the
+   search input's real width even while that column sat empty (before
+   any patient was picked), which is what was clipping the search
+   placeholder. The selected-patient card instead simply appears
+   below the search once there's something to show. */
 .book-step1-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(220px, 1fr);
-  gap: var(--space-4);
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }
 
 .book-patient-search {
@@ -3985,6 +4017,18 @@ a.link.danger {
 .book-patient-result-info {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.book-patient-result-hint {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-primary);
 }
 
 .book-patient-avatar {
@@ -4012,6 +4056,14 @@ a.link.danger {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.book-patient-no-results p {
+  margin: 0;
 }
 
 .book-register-btn {
@@ -4035,6 +4087,12 @@ a.link.danger {
   letter-spacing: 0.04em;
   color: var(--color-primary);
   margin-bottom: var(--space-2);
+}
+
+.book-selected-patient-header > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .book-selected-patient-body {
@@ -4152,9 +4210,6 @@ a.link.danger {
 }
 
 @media (max-width: 720px) {
-  .book-step1-body {
-    grid-template-columns: 1fr;
-  }
   .booking-source-picker {
     align-items: flex-start;
   }
