@@ -674,6 +674,14 @@ a.link:hover {
   text-decoration: underline;
 }
 
+/* PatientFormModal's optional-fields disclosure -- smaller and
+   uppercase-free, unlike the rest of .link, since it's a toggle, not a
+   navigational/action link. */
+.patient-form-more-toggle {
+  font-size: 0.82rem;
+  margin: var(--space-1) 0 var(--space-3);
+}
+
 /* Destructive text-link actions (e.g. cancelling an appointment) get
    the same danger color the app already uses elsewhere for destructive
    actions (the confirm-cancel dialog button, the patient-side "Cancel"
@@ -3465,6 +3473,28 @@ a.link.danger {
 
 .pill.token-pill {
   margin-left: var(--space-2);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-hover);
+}
+
+/* Arrival-workflow labels (migrations/0023, format.ts's describeArrival)
+   -- these override the plain status-confirmed/status-checked_in pill
+   only where arrived_at/payment/token state adds real information the
+   bare status word doesn't carry. .status-arrived-early reuses the
+   warning amber (a soft "not yet actionable" cue, same reasoning as
+   .status-pending) rather than the plain .status-confirmed green, so
+   reception can tell "confirmed, nothing to do yet" apart from
+   "confirmed, but physically here and worth noticing" at a glance.
+   .status-arrived and .status-queued both reuse .status-checked_in's
+   primary tone -- still the same underlying CHECKED_IN-adjacent state,
+   just with more specific text. */
+.pill.status-arrived-early {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.pill.status-arrived,
+.pill.status-queued {
   background: var(--color-primary-soft);
   color: var(--color-primary-hover);
 }

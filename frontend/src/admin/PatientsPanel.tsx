@@ -1,22 +1,25 @@
 import { useEffect, useState } from 'react'
 import { UsersThree } from '@phosphor-icons/react'
-import { ApiError, createPatientAdmin, listPatients } from '../api'
+import { ApiError, listPatients } from '../api'
 import type { Patient } from '../types'
-import PhoneInput from '../PhoneInput'
+import { formatDate } from '../format'
 import { useStaggerReveal } from '../useStaggerReveal'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
+import PatientFormModal from './PatientFormModal'
 
 type PatientTypeFilter = 'all' | 'first-time' | 'recurring'
 
 export default function PatientsPanel() {
   const [patients, setPatients] = useState<Patient[]>([])
-  const [name, setName] = useState('')
-  const [whatsappNumber, setWhatsappNumber] = useState('')
   const [searchText, setSearchText] = useState('')
   const [typeFilter, setTypeFilter] = useState<PatientTypeFilter>('all')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState(false)
+  // 'add' opens PatientFormModal in create mode; a Patient opens it in
+  // edit mode for that row (PATCH /patients/{id}, migrations/0023 --
+  // wired to the UI here for the first time). Both share the exact
+  // same modal/component -- there is no second patient form anywhere.
+  const [formTarget, setFormTarget] = useState<'add' | Patient | null>(null)
 
   // Both the free-text search and the first-time/recurring filter are
   // applied client-side over the already-loaded list, same pattern as
@@ -26,7 +29,11 @@ export default function PatientsPanel() {
   const visiblePatients = patients.filter((p) => {
     if (typeFilter !== 'all' && (p.patient_type ?? 'first-time') !== typeFilter) return false
     if (!searchNeedle) return true
-    return p.name.toLowerCase().includes(searchNeedle) || p.whatsapp_number.toLowerCase().includes(searchNeedle)
+    return (
+      p.name.toLowerCase().includes(searchNeedle) ||
+      p.whatsapp_number.toLowerCase().includes(searchNeedle) ||
+      String(p.id).includes(searchNeedle)
+    )
   })
   const tbodyRef = useStaggerReveal<HTMLTableSectionElement>([patients])
 
@@ -40,51 +47,33 @@ export default function PatientsPanel() {
 
   useEffect(load, [])
 
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault()
-    setError(null)
-    setBusy(true)
-    try {
-      await createPatientAdmin(name, whatsappNumber)
-      setName('')
-      setWhatsappNumber('')
-      load()
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not create patient')
-    } finally {
-      setBusy(false)
-    }
+  function handleSaved(saved: Patient) {
+    setPatients((prev) => {
+      const exists = prev.some((p) => p.id === saved.id)
+      if (exists) return prev.map((p) => (p.id === saved.id ? { ...p, ...saved } : p))
+      return [...prev, saved]
+    })
   }
 
   return (
     <section>
       <h2>Patients</h2>
       <p className="muted">
-        A patient record can also be created here directly (e.g. registering someone over the
-        phone) -- the same table WhatsApp and the patient web login write to.
+        The permanent patient directory -- the same record WhatsApp, the patient web login, and every
+        appointment (whatever its booking source) all read and write.
       </p>
       {error && <p className="error">{error}</p>}
 
-      <form className="inline-form wrap" onSubmit={handleCreate}>
-        <label className="inline-label">
-          Name
-          <input placeholder="Full name" value={name} onChange={(e) => setName(e.target.value)} required />
-        </label>
-        <label className="inline-label">
-          Mobile number
-          <PhoneInput value={whatsappNumber} onChange={setWhatsappNumber} />
-        </label>
-        <button type="submit" className="btn-sm" disabled={busy}>
-          {busy ? 'Creating…' : 'Add patient'}
-        </button>
-      </form>
+      <button type="button" className="btn btn-sm" onClick={() => setFormTarget('add')}>
+        + Add patient
+      </button>
 
       <div className="filter-bar">
         <label className="inline-label">
           Search
           <input
             type="search"
-            placeholder="Name or number"
+            placeholder="Name, phone number, or patient ID"
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
           />
@@ -135,9 +124,12 @@ export default function PatientsPanel() {
         <table className="data-table">
           <thead>
             <tr>
-              <th>Name</th>
+              <th>Patient</th>
               <th>Contact number</th>
+              <th>Date of birth</th>
+              <th>Gender</th>
               <th>Type</th>
+              <th>Action</th>
             </tr>
           </thead>
           <tbody ref={tbodyRef}>
@@ -145,18 +137,38 @@ export default function PatientsPanel() {
               const patientType = p.patient_type ?? 'first-time'
               return (
                 <tr key={p.id}>
-                  <td>{p.name}</td>
+                  <td>
+                    <strong>{p.name}</strong>
+                    <div className="muted">Patient ID: {p.id}</div>
+                  </td>
                   <td>{p.whatsapp_number}</td>
+                  <td>{p.date_of_birth ? formatDate(p.date_of_birth) : <span className="muted">—</span>}</td>
+                  <td>{p.gender ?? <span className="muted">—</span>}</td>
                   <td>
                     <span className={`pill patient-${patientType}`}>
                       {patientType === 'recurring' ? 'Recurring' : 'First-time'}
                     </span>
+                  </td>
+                  <td>
+                    <button type="button" className="btn-secondary btn btn-sm" onClick={() => setFormTarget(p)}>
+                      Edit
+                    </button>
                   </td>
                 </tr>
               )
             })}
           </tbody>
         </table>
+      )}
+
+      {formTarget && (
+        <PatientFormModal
+          mode={formTarget === 'add' ? 'create' : 'edit'}
+          patient={formTarget === 'add' ? null : formTarget}
+          title={formTarget === 'add' ? 'Add patient' : 'Edit patient'}
+          onClose={() => setFormTarget(null)}
+          onSaved={handleSaved}
+        />
       )}
     </section>
   )

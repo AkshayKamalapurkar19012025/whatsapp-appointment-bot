@@ -30,7 +30,16 @@ def test_update_patient_changes_name_and_number(client, db_connection):
 
     assert response.status_code == 200
     body = response.json()
-    assert body == {"id": patient["id"], "name": "Corrected Name", "whatsapp_number": "+919700000009"}
+    # date_of_birth/gender (migrations/0023) round-trip as null here --
+    # this test never set either, and PatientUpdate leaves them null
+    # rather than inventing a value when the caller omits them.
+    assert body == {
+        "id": patient["id"],
+        "name": "Corrected Name",
+        "whatsapp_number": "+919700000009",
+        "date_of_birth": None,
+        "gender": None,
+    }
 
 
 def test_update_patient_not_found_is_404(client, db_connection):

@@ -93,6 +93,75 @@ export function hasStarted(isoString: string): boolean {
   return start.getTime() <= Date.now()
 }
 
+export interface ArrivalDisplay {
+  label: string
+  sub?: string
+  className: string
+}
+
+// One shared derivation of "what should this appointment row's status
+// pill say" for the arrival-workflow states that plain a.status can't
+// express on its own -- used by AppointmentsPanel's table/mobile card,
+// DoctorWorkspace, and QueueSection alike, so the label logic never
+// drifts into three near-identical copies.
+//
+// Deliberately reads nothing that isn't already on the appointment:
+// arrived_at/start_at/status (migrations/0023's arrived_at, distinct
+// from visited_at -- see mark_arrived_service) and payment_status/
+// token_number (already existed). Returns null when the plain status
+// pill is exactly right as-is (every status except CONFIRMED-with-
+// arrived_at and CHECKED_IN, where payment/queue state adds real
+// information the bare word "Checked in" doesn't carry).
+//
+// Never claims a CHECKED_IN appointment without a token is "waiting on
+// payment" -- that specific wording is used ONLY when payment_status
+// is actually UNPAID; a FAILED attempt says so explicitly instead, and
+// a PAID/WAIVED appointment always has a token by the time this is
+// read (both record_payment_service and waive_consultation_fee_service
+// generate it atomically in the same transaction as the payment_status
+// write), so token_number is checked first, before payment_status.
+export function describeArrival(
+  a: {
+    status: string
+    arrived_at?: string | null
+    start_at: string
+    payment_status?: string | null
+    token_number?: number | null
+  },
+): ArrivalDisplay | null {
+  if (a.status === 'CONFIRMED' && a.arrived_at) {
+    if (!hasStarted(a.start_at)) {
+      return {
+        label: 'Arrived early',
+        sub: `Appointment at ${formatTime(a.start_at)}`,
+        className: 'pill status-arrived-early',
+      }
+    }
+    return {
+      label: 'Arrived',
+      sub: 'Ready to check in',
+      className: 'pill status-arrived',
+    }
+  }
+
+  if (a.status === 'CHECKED_IN') {
+    if (a.token_number != null) {
+      return {
+        label: `Queue Token #${a.token_number}`,
+        className: 'pill status-queued',
+      }
+    }
+    if (a.payment_status === 'FAILED') {
+      return { label: 'Checked in', sub: 'Payment failed', className: 'pill status-checked_in' }
+    }
+    if (a.payment_status === 'UNPAID') {
+      return { label: 'Checked in', sub: 'Awaiting payment', className: 'pill status-checked_in' }
+    }
+  }
+
+  return null
+}
+
 // "N years experience · MBBS, MD (Cardiology)" -- the one-line summary
 // shown on every compact doctor card (DoctorCard.tsx's patient-facing
 // selection cards, and the admin Doctors grid), so both places read

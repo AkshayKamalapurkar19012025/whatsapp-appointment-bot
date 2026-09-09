@@ -1,9 +1,12 @@
 import type {
   AdminAppointment,
   AdminAppointmentActionResult,
+  ArrivalActionResult,
+  MarkArrivedResult,
   AppointmentType,
   AppointmentTypeSummary,
   ScheduledAppointment,
+  BookingSource,
   CalendarMonth,
   DashboardStats,
   DashboardTrends,
@@ -18,6 +21,7 @@ import type {
   DoctorWithSlots,
   MyAppointmentsResponse,
   Patient,
+  PatientGender,
   PaymentActionResult,
   Staff,
   StaffAccount,
@@ -692,11 +696,43 @@ export function listPatients(): Promise<Patient[]> {
   return request('/patients', { auth: 'staff' })
 }
 
-export function createPatientAdmin(name: string, whatsappNumber: string): Promise<Patient> {
+export function createPatientAdmin(
+  name: string,
+  whatsappNumber: string,
+  dateOfBirth?: string | null,
+  gender?: PatientGender | null,
+): Promise<Patient> {
   return request('/patients', {
     method: 'POST',
     auth: 'staff',
-    body: { name, whatsapp_number: whatsappNumber },
+    body: {
+      name,
+      whatsapp_number: whatsappNumber,
+      date_of_birth: dateOfBirth || null,
+      gender: gender || null,
+    },
+  })
+}
+
+// PATCH /patients/{id} -- staff correcting/completing a patient's
+// details (front-desk "verify details" step, or the Patients page's
+// Edit action). Same required/optional shape as createPatientAdmin.
+export function updatePatientAdmin(
+  patientId: number,
+  name: string,
+  whatsappNumber: string,
+  dateOfBirth?: string | null,
+  gender?: PatientGender | null,
+): Promise<Patient> {
+  return request(`/patients/${patientId}`, {
+    method: 'PATCH',
+    auth: 'staff',
+    body: {
+      name,
+      whatsapp_number: whatsappNumber,
+      date_of_birth: dateOfBirth || null,
+      gender: gender || null,
+    },
   })
 }
 
@@ -728,6 +764,7 @@ export function createAdminAppointment(
   patientId: number,
   appointmentTypeId: number,
   startAt: string,
+  bookingSource?: BookingSource | null,
 ): Promise<AdminAppointmentActionResult> {
   return request('/appointments', {
     method: 'POST',
@@ -737,6 +774,7 @@ export function createAdminAppointment(
       patient_id: patientId,
       appointment_type_id: appointmentTypeId,
       start_at: startAt,
+      booking_source: bookingSource || null,
     },
   })
 }
@@ -785,6 +823,21 @@ export function visitAdminAppointment(
   // actual queue-entry trigger).
 ): Promise<{ id: number; status: string; token_number: null; visited_at: string }> {
   return request(`/appointments/${appointmentId}/visit`, { method: 'POST', auth: 'staff' })
+}
+
+// Records a physical arrival -- usable any time before start_at (most
+// commonly an early arrival), never sets status=CHECKED_IN and never
+// generates a queue token. See ArrivalActionResult/mark_arrived_service.
+export function markArrivedAdmin(appointmentId: number): Promise<MarkArrivedResult> {
+  return request(`/appointments/${appointmentId}/arrive`, { method: 'POST', auth: 'staff' })
+}
+
+// The walk-in "Confirm & Check In" combined action -- composes
+// confirm/visit/arrive server-side (confirm_and_check_in_service).
+// result.arrival_kind says whether it actually reached CHECKED_IN or
+// fell back to "arrived early" because start_at was still in the future.
+export function confirmAndCheckInAdmin(appointmentId: number): Promise<ArrivalActionResult> {
+  return request(`/appointments/${appointmentId}/confirm-and-checkin`, { method: 'POST', auth: 'staff' })
 }
 
 // -- Patient arrival workflow Phases 3-4: consultation charge + payment ----

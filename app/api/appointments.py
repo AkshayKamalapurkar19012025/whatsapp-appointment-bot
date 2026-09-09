@@ -38,6 +38,8 @@ from app.services.appointment_services import (
     confirm_appointment_service,
     reject_appointment_service,
     mark_visited_service,
+    mark_arrived_service,
+    confirm_and_check_in_service,
     mark_completed_service,
     mark_no_show_service,
     get_consultation_charge_service,
@@ -61,6 +63,21 @@ class AppointmentCreate(BaseModel):
     patient_id: int
     appointment_type_id: int
     start_at: datetime
+    # Optional -- appointments created before this field existed, and
+    # any caller that omits it, stay NULL rather than a fabricated
+    # guess (see migrations/0023). Patient web/WhatsApp booking always
+    # passes 'ONLINE'; the admin Book Appointment page passes whichever
+    # of the 4 pills staff picked.
+    booking_source: str | None = None
+
+    @field_validator("booking_source")
+    @classmethod
+    def validate_booking_source(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value not in ("ONLINE", "PHONE", "WALK_IN", "STAFF_ASSISTED"):
+            raise ValueError("booking_source must be one of ONLINE, PHONE, WALK_IN, STAFF_ASSISTED")
+        return value
 
 
 class AppointmentReschedule(BaseModel):
@@ -177,7 +194,9 @@ def get_appointments(
                     a.payment_method,
                     a.payment_amount,
                     a.payment_recorded_at,
-                    a.waive_reason
+                    a.waive_reason,
+                    a.arrived_at,
+                    a.booking_source
                 FROM appointments a
                 JOIN doctors d
                     ON d.id = a.doctor_id
@@ -237,6 +256,12 @@ def get_appointments(
                 "payment_amount": row[17],
                 "paid_at": row[18].isoformat() if row[18] else None,
                 "waive_reason": row[19],
+                # Doctor-local, same convention as start_at/end_at above
+                # (a clinic wall-clock moment, not an audit-log one) --
+                # this is what the "Arrived early/late" label is
+                # computed from on the frontend, alongside start_at.
+                "arrived_at": convert_to_timezone(row[20], doctor_tz).isoformat() if row[20] else None,
+                "booking_source": row[21],
             }
         )
 
@@ -311,6 +336,7 @@ def create_appointment(
                     # to the patient-facing current+3-month scheduling
                     # window (e.g. recording a past visit, or scheduling
                     # further out than a self-service patient could).
+                    booking_source=appointment.booking_source,
                 )
             except svc_exc.DoctorNotFound:
                 raise HTTPException(
@@ -556,6 +582,82 @@ def visit_appointment(
         "token_number": result["token_number"],
         "visited_at": result["visited_at"],
     }
+
+
+@router.post("/{appointment_id}/arrive")
+def arrive_appointment(
+    appointment_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    """
+    Front desk records that a Confirmed patient has physically shown up
+    -- usable any time before their scheduled start_at, most commonly
+    for an early arrival (a 2pm appointment whose patient arrives at
+    1:30). Deliberately separate from /visit: this never sets
+    status=CHECKED_IN and never generates a queue token (see
+    mark_arrived_service's docstring) -- once start_at actually
+    arrives, staff use the ordinary Check-In action, unchanged.
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = mark_arrived_service(cur, appointment_id)
+            except svc_exc.AppointmentNotFound:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            except svc_exc.InvalidStatusTransition:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Only a Confirmed appointment can be marked arrived",
+                )
+
+    return result
+
+
+@router.post("/{appointment_id}/confirm-and-checkin")
+def confirm_and_check_in_appointment(
+    appointment_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    """
+    The walk-in "Confirm & Check In" button -- composes confirm/visit/
+    arrive (see confirm_and_check_in_service's docstring) into one
+    round trip. Never bypasses mark_visited_service's start_at <= now
+    guard: if the appointment's slot is still in the future, this ends
+    up in the "arrived early" state instead (arrival_kind:
+    "arrived_early" in the response) rather than raising an error, so a
+    walk-in booked a few minutes out doesn't dead-end the front desk.
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = confirm_and_check_in_service(cur, appointment_id)
+            except svc_exc.AppointmentNotFound:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            except svc_exc.InvalidStatusTransition:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Only a Pending or Confirmed appointment can be confirmed and checked in",
+                )
+
+            if result["arrival_kind"] == "checked_in":
+                cur.execute(
+                    """
+                    SELECT p.whatsapp_number, p.name, d.name
+                    FROM patients p, doctors d
+                    WHERE p.id = %s AND d.id = %s
+                    """,
+                    (result["patient_id"], result["doctor_id"]),
+                )
+                patient_number, patient_name, doctor_name = cur.fetchone()
+                send_mock_notification(
+                    cur,
+                    patient_number,
+                    KIND_CHECK_IN,
+                    f"Hi {patient_name}, you're checked in with {doctor_name}. "
+                    f"Please complete registration and payment at the front desk.",
+                )
+
+    return result
 
 
 @router.get("/{appointment_id}/charge")

@@ -7,6 +7,10 @@ export interface AppointmentActionHandlers {
   onConfirm: (a: AdminAppointment) => void
   onReject: (a: AdminAppointment) => void
   onCheckIn: (a: AdminAppointment) => void
+  // Records a physical arrival ahead of start_at (migrations/0023) --
+  // never a queue token, never status=CHECKED_IN. See
+  // format.ts's describeArrival and mark_arrived_service's docstring.
+  onMarkArrived: (a: AdminAppointment) => void
   onNoShow: (a: AdminAppointment) => void
   onComplete: (a: AdminAppointment) => void
   onReschedule: (a: AdminAppointment) => void
@@ -82,7 +86,21 @@ export function buildAppointmentActions(
         note: null,
       }
     }
-    return { primary: null, secondary: null, overflow: [viewDetails, reschedule, cancel], note: 'Not started yet' }
+    // Not started yet -- but the patient may already be physically
+    // present (migrations/0023's arrived_at). Once they are, "Mark
+    // Arrived" has nothing left to do (idempotent, but re-showing it
+    // is just noise), so the row falls back to a note instead --
+    // describeArrival's "Arrived early -- appointment at HH:MM" label
+    // is what actually communicates this state, not this note.
+    if (a.arrived_at) {
+      return { primary: null, secondary: null, overflow: [viewDetails, reschedule, cancel], note: null }
+    }
+    return {
+      primary: { key: 'mark-arrived', label: 'Mark Arrived', onClick: () => h.onMarkArrived(a), variant: 'primary' },
+      secondary: null,
+      overflow: [viewDetails, reschedule, cancel],
+      note: 'Not started yet',
+    }
   }
 
   if (a.status === 'CHECKED_IN') {

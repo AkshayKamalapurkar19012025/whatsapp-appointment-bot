@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ArrowRight, CalendarBlank, CaretDown, CaretLeft, CaretRight, CheckCircle, MagnifyingGlass } from '@phosphor-icons/react'
 import {
   ApiError,
+  confirmAndCheckInAdmin,
   createAdminAppointment,
   getAppConfig,
   getSlotsForDate,
@@ -9,29 +10,21 @@ import {
   listAppointmentTypesForDoctor,
   listPatients,
 } from '../api'
-import type { AppointmentType, Doctor, Patient, Slot } from '../types'
+import type { ArrivalActionResult, AppointmentType, BookingSource, Doctor, Patient, Slot } from '../types'
 import { formatAvailability, formatDate, formatTime } from '../format'
 import { isoDateToday } from './doctorSchedule'
 import AvailabilityBadge from '../AvailabilityBadge'
 import SlotGrid from '../SlotGrid'
 import AdminCalendar from './AdminCalendar'
-import RegisterPatientModal from './RegisterPatientModal'
+import PatientFormModal from './PatientFormModal'
 
-// Booking source is UI-only (not sent to the backend): appointments has
-// no source/channel column, and inventing one silently would mean this
-// page shows a value that isn't actually stored anywhere -- see the
-// redesign report's "Backend changes" section for the real column/API
-// field this would need if it's wanted for real. Kept in local state
-// only, shown on the review card so the admin can see what they picked
-// for this booking session.
-type BookingSource = 'ONLINE' | 'PHONE' | 'WALK_IN' | 'STAFF'
+// Now persisted on the appointment (migrations/0023) -- see types.ts's
+// BookingSource for the ONLINE/PHONE/WALK_IN/STAFF_ASSISTED reasoning.
 const BOOKING_SOURCES: { key: BookingSource; label: string }[] = [
   { key: 'ONLINE', label: 'Online' },
   { key: 'PHONE', label: 'Phone' },
   { key: 'WALK_IN', label: 'Walk-in' },
-  // Display-only rename -- the stored key is still 'STAFF' everywhere,
-  // this just reads better to staff booking on someone's behalf.
-  { key: 'STAFF', label: 'Staff-assisted' },
+  { key: 'STAFF_ASSISTED', label: 'Staff-assisted' },
 ]
 
 function addDays(dateStr: string, days: number): string {
@@ -79,7 +72,19 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
 
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [justBooked, setJustBooked] = useState<{ doctorName: string; patientName: string; slot: Slot } | null>(null)
+  const [justBooked, setJustBooked] = useState<{
+    appointmentId: number
+    doctorName: string
+    patientName: string
+    slot: Slot
+    bookingSource: BookingSource
+  } | null>(null)
+  // The walk-in "Confirm & Check In" combined action's own state --
+  // separate from the create-appointment busy/error above, since it's
+  // a second, later action against an appointment that already exists.
+  const [arrivalResult, setArrivalResult] = useState<ArrivalActionResult | null>(null)
+  const [arrivalBusy, setArrivalBusy] = useState(false)
+  const [arrivalError, setArrivalError] = useState<string | null>(null)
 
   useEffect(() => {
     listAllDoctors()
@@ -202,8 +207,22 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
     setError(null)
     setBusy(true)
     try {
-      await createAdminAppointment(Number(doctorId), selectedPatient.id, Number(appointmentTypeId), selectedSlot.start_at)
-      setJustBooked({ doctorName: selectedDoctor.name, patientName: selectedPatient.name, slot: selectedSlot })
+      const created = await createAdminAppointment(
+        Number(doctorId),
+        selectedPatient.id,
+        Number(appointmentTypeId),
+        selectedSlot.start_at,
+        bookingSource,
+      )
+      setJustBooked({
+        appointmentId: created.id,
+        doctorName: selectedDoctor.name,
+        patientName: selectedPatient.name,
+        slot: selectedSlot,
+        bookingSource,
+      })
+      setArrivalResult(null)
+      setArrivalError(null)
       resetForm()
     } catch (err) {
       setError(
@@ -213,6 +232,25 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
       )
     } finally {
       setBusy(false)
+    }
+  }
+
+  // The walk-in combined action -- composes confirm/visit/arrive
+  // server-side (confirm_and_check_in_service). Never assumes the
+  // result reached CHECKED_IN: arrival_kind says which of the two
+  // branches actually happened, and the success screen below reflects
+  // whichever one it was rather than always claiming "checked in."
+  async function handleConfirmAndCheckIn() {
+    if (!justBooked) return
+    setArrivalBusy(true)
+    setArrivalError(null)
+    try {
+      const result = await confirmAndCheckInAdmin(justBooked.appointmentId)
+      setArrivalResult(result)
+    } catch (err) {
+      setArrivalError(err instanceof ApiError ? err.message : 'Could not confirm and check in this appointment.')
+    } finally {
+      setArrivalBusy(false)
     }
   }
 
@@ -241,8 +279,41 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
             Booked {justBooked.patientName} with {justBooked.doctorName} at {formatTime(justBooked.slot.start_at)} on{' '}
             {formatDate(justBooked.slot.start_at)}.
           </p>
+
+          {/* Walk-in only -- the patient is physically present, so
+              reception can confirm and check them in immediately
+              instead of finding this same appointment again on the
+              Appointments page. Never claims the patient is queued:
+              arrival_kind decides which message shows below, and
+              payment/waiver (unchanged) still gates the actual queue
+              token either way. */}
+          {justBooked.bookingSource === 'WALK_IN' && !arrivalResult && (
+            <div style={{ marginTop: 8 }}>
+              {arrivalError && <p className="error">{arrivalError}</p>}
+              <button type="button" className="btn btn-sm" disabled={arrivalBusy} onClick={handleConfirmAndCheckIn}>
+                {arrivalBusy ? 'Confirming…' : 'Confirm & Check In'}
+              </button>
+            </div>
+          )}
+
+          {arrivalResult && (
+            <p className="muted" style={{ marginTop: 4 }}>
+              {arrivalResult.arrival_kind === 'checked_in'
+                ? 'Checked in -- go to Appointments to collect payment or waive the fee and add them to the queue.'
+                : `Confirmed -- this patient will be eligible to check in once their ${formatTime(justBooked.slot.start_at)} appointment time arrives.`}
+            </p>
+          )}
+
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginTop: 8 }}>
-            <button type="button" className="btn btn-sm" onClick={() => setJustBooked(null)}>
+            <button
+              type="button"
+              className="btn-secondary btn btn-sm"
+              onClick={() => {
+                setJustBooked(null)
+                setArrivalResult(null)
+                setArrivalError(null)
+              }}
+            >
               Book another
             </button>
             <button type="button" className="btn-secondary btn btn-sm" onClick={onViewAppointments}>
@@ -613,7 +684,12 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
       </div>
 
       {showRegisterModal && (
-        <RegisterPatientModal onClose={() => setShowRegisterModal(false)} onCreated={handlePatientRegistered} />
+        <PatientFormModal
+          mode="create"
+          title="Register new patient"
+          onClose={() => setShowRegisterModal(false)}
+          onSaved={handlePatientRegistered}
+        />
       )}
     </section>
   )

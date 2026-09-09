@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
@@ -11,20 +13,34 @@ router = APIRouter(
 )
 
 
-def insert_patient(cur, name: str, whatsapp_number: str):
+def insert_patient(
+    cur,
+    name: str,
+    whatsapp_number: str,
+    date_of_birth: date | None = None,
+    gender: str | None = None,
+):
+    """date_of_birth/gender are optional everywhere this is called from
+    (admin create_patient below, and app/api/scheduling.py's WhatsApp
+    registration, which never collects either) -- defaulting to None
+    keeps that WhatsApp call site unchanged."""
     cur.execute(
         """
         INSERT INTO patients (
             name,
-            whatsapp_number
+            whatsapp_number,
+            date_of_birth,
+            gender
         )
-        VALUES (%s, %s)
+        VALUES (%s, %s, %s, %s)
         ON CONFLICT (whatsapp_number) DO NOTHING
-        RETURNING id, name, whatsapp_number
+        RETURNING id, name, whatsapp_number, date_of_birth, gender
         """,
         (
             name,
             whatsapp_number,
+            date_of_birth,
+            gender,
         ),
     )
 
@@ -37,6 +53,8 @@ def insert_patient(cur, name: str, whatsapp_number: str):
         "id": row[0],
         "name": row[1],
         "whatsapp_number": row[2],
+        "date_of_birth": row[3].isoformat() if row[3] else None,
+        "gender": row[4],
     }
 
 
@@ -69,24 +87,41 @@ class _PatientFieldValidators:
 
         return normalize_whatsapp_number(value)
 
+    @field_validator("gender")
+    @classmethod
+    def validate_gender(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value not in ("MALE", "FEMALE", "OTHER"):
+            raise ValueError("gender must be one of MALE, FEMALE, OTHER")
+        return value
+
 
 class PatientCreate(_PatientFieldValidators, BaseModel):
     name: str = Field(min_length=1, max_length=150)
     whatsapp_number: str = Field(min_length=1, max_length=30)
+    # Optional -- fast registration (especially for a walk-in) must
+    # never be blocked on these. Staff can add them now or later via
+    # PatientUpdate.
+    date_of_birth: date | None = None
+    gender: str | None = None
 
 
 class PatientUpdate(_PatientFieldValidators, BaseModel):
     """For PATCH /patients/{id} -- staff correcting a patient's name or
     WhatsApp number discovered wrong during front-desk verification.
-    Same two fields, same validation as PatientCreate; the two models
-    stay separate (rather than making PatientCreate's fields optional
-    and reusing it directly) since create and update have different
-    semantics (whatsapp_number collision means "already exists" on
-    create, "belongs to a different patient" on update -- see
-    update_patient below)."""
+    Same two required fields, same validation as PatientCreate, plus
+    the same two optional demographics; the two models stay separate
+    (rather than making PatientCreate's fields optional and reusing it
+    directly) since create and update have different semantics
+    (whatsapp_number collision means "already exists" on create,
+    "belongs to a different patient" on update -- see update_patient
+    below)."""
 
     name: str = Field(min_length=1, max_length=150)
     whatsapp_number: str = Field(min_length=1, max_length=30)
+    date_of_birth: date | None = None
+    gender: str | None = None
 
 
 @router.get("")
@@ -102,10 +137,12 @@ def get_patients(staff: dict = Depends(get_current_staff)):
                     -- a.status::text: see availability_engine.py's
                     -- get_available_slots for why (enum-typed
                     -- appointments.status on some databases).
-                    COUNT(a.id) FILTER (WHERE NOT (a.status::text = ANY(ARRAY['CANCELLED', 'REJECTED'])))
+                    COUNT(a.id) FILTER (WHERE NOT (a.status::text = ANY(ARRAY['CANCELLED', 'REJECTED']))),
+                    p.date_of_birth,
+                    p.gender
                 FROM patients p
                 LEFT JOIN appointments a ON a.patient_id = p.id
-                GROUP BY p.id, p.name, p.whatsapp_number
+                GROUP BY p.id, p.name, p.whatsapp_number, p.date_of_birth, p.gender
                 ORDER BY p.name
                 """
             )
@@ -126,6 +163,8 @@ def get_patients(staff: dict = Depends(get_current_staff)):
             "whatsapp_number": row[2],
             "appointment_count": row[3],
             "patient_type": "recurring" if row[3] > 1 else "first-time",
+            "date_of_birth": row[4].isoformat() if row[4] else None,
+            "gender": row[5],
         }
         for row in rows
     ]
@@ -158,6 +197,8 @@ def create_patient(
                 cur,
                 patient.name,
                 patient.whatsapp_number,
+                patient.date_of_birth,
+                patient.gender,
             )
 
             if created_patient is None:
@@ -211,13 +252,21 @@ def update_patient(
                 UPDATE patients
                 SET name = %s,
                     whatsapp_number = %s,
+                    date_of_birth = %s,
+                    gender = %s,
                     updated_at = NOW()
                 WHERE id = %s
-                RETURNING id, name, whatsapp_number
+                RETURNING id, name, whatsapp_number, date_of_birth, gender
                 """,
-                (patient.name, patient.whatsapp_number, patient_id),
+                (patient.name, patient.whatsapp_number, patient.date_of_birth, patient.gender, patient_id),
             )
 
             row = cur.fetchone()
 
-    return {"id": row[0], "name": row[1], "whatsapp_number": row[2]}
+    return {
+        "id": row[0],
+        "name": row[1],
+        "whatsapp_number": row[2],
+        "date_of_birth": row[3].isoformat() if row[3] else None,
+        "gender": row[4],
+    }

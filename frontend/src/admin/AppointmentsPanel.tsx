@@ -33,13 +33,14 @@ import {
   listAdminAppointments,
   listAllDoctors,
   listAppointmentTypeCatalog,
+  markArrivedAdmin,
   noShowAdminAppointment,
   rejectAdminAppointment,
   rescheduleAdminAppointment,
   visitAdminAppointment,
 } from '../api'
 import type { AdminAppointment, AppointmentTypeSummary, Doctor, Slot } from '../types'
-import { formatDate, formatTime } from '../format'
+import { describeArrival, formatDate, formatTime } from '../format'
 import { isoDateToday } from './doctorSchedule'
 import AdminSlotPicker from './AdminSlotPicker'
 import AppointmentDetailsModal from './AppointmentDetailsModal'
@@ -156,6 +157,25 @@ function paymentPill(a: AdminAppointment) {
   const label =
     a.payment_status === 'PAID' ? 'Paid' : a.payment_status === 'WAIVED' ? 'Waived' : a.payment_status.replace(/_/g, ' ')
   return <span className={`pill payment-${a.payment_status.toLowerCase()}`}>{label}</span>
+}
+
+// Only overrides the plain status pill for the CONFIRMED-with-
+// arrived_at case (migrations/0023's early/late arrival) -- CHECKED_IN
+// already has its own real breakdown here (paymentPill + the token
+// pill below), so describeArrival's CHECKED_IN branch is deliberately
+// not used at this call site to avoid two pills disagreeing.
+function statusPill(a: AdminAppointment) {
+  if (a.status === 'CONFIRMED') {
+    const arrival = describeArrival(a)
+    if (arrival) {
+      return (
+        <span className={arrival.className} title={arrival.sub}>
+          {arrival.label}
+        </span>
+      )
+    }
+  }
+  return <span className={`pill status-${a.status.toLowerCase()}`}>{a.status.replace(/_/g, ' ')}</span>
 }
 
 export default function AppointmentsPanel({
@@ -337,6 +357,7 @@ export default function AppointmentsPanel({
     onConfirm: (a) => runLifecycleAction(a.id, confirmAdminAppointment, 'Could not confirm the appointment'),
     onReject: (a) => runLifecycleAction(a.id, rejectAdminAppointment, 'Could not reject the appointment'),
     onCheckIn: (a) => runLifecycleAction(a.id, visitAdminAppointment, 'Could not check in the appointment'),
+    onMarkArrived: (a) => runLifecycleAction(a.id, markArrivedAdmin, 'Could not record the arrival'),
     onNoShow: (a) => runLifecycleAction(a.id, noShowAdminAppointment, 'Could not mark the appointment as a no-show'),
     onComplete: (a) => runLifecycleAction(a.id, completeAdminAppointment, 'Could not mark the appointment completed'),
     onReschedule: startReschedule,
@@ -690,7 +711,7 @@ export default function AppointmentsPanel({
                         </td>
                         <td>{a.appointment_type_name}</td>
                         <td>
-                          <span className={`pill status-${a.status.toLowerCase()}`}>{a.status.replace(/_/g, ' ')}</span>
+                          {statusPill(a)}
                           {paymentPill(a)}
                           {a.token_number !== null && <span className="pill token-pill">Token #{a.token_number}</span>}
                         </td>
@@ -718,7 +739,7 @@ export default function AppointmentsPanel({
               return (
                 <li key={a.id} className="appointment-mobile-card" onClick={() => setDetailsTarget(a)}>
                   <div className="appointment-mobile-card-top">
-                    <span className={`pill status-${a.status.toLowerCase()}`}>{a.status.replace(/_/g, ' ')}</span>
+                    {statusPill(a)}
                     {paymentPill(a)}
                     {a.token_number !== null && <span className="pill token-pill">Token #{a.token_number}</span>}
                   </div>
