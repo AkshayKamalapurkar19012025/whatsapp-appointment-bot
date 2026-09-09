@@ -37,6 +37,8 @@ import type {
 } from '../types'
 import { formatDate, formatTime, formatTimeOfDay, doctorSummaryLine } from '../format'
 import DoctorAvatar from '../DoctorAvatar'
+import DepartmentChip from '../DepartmentChip'
+import { departmentIcon } from '../departmentIcon'
 import AdminDatePicker from './AdminDatePicker'
 import AdminSlotPicker from './AdminSlotPicker'
 import {
@@ -640,19 +642,23 @@ function DepartmentAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmin: bo
         apply once a doctor is assigned here.
       </p>
       {error && <p className="error">{error}</p>}
-      <ul className="tag-list">
-        {assigned.map((d) => (
-          <li key={d.id}>
-            {d.name}
-            {isAdmin && (
-              <button type="button" className="link" onClick={() => setRemoveTarget(d)}>
-                remove
-              </button>
-            )}
-          </li>
-        ))}
-        {assigned.length === 0 && <li className="muted">Not assigned to any department.</li>}
-      </ul>
+      {assigned.length > 0 ? (
+        <span className="doctor-department-chips">
+          {assigned.map((d) => {
+            const Icon = departmentIcon(d.name)
+            return (
+              <DepartmentChip
+                key={d.id}
+                department={d}
+                icon={<Icon size={12} weight="bold" />}
+                onRemove={isAdmin ? () => setRemoveTarget(d) : undefined}
+              />
+            )
+          })}
+        </span>
+      ) : (
+        <p className="muted">Not assigned to any department.</p>
+      )}
       {isAdmin && unassigned.length > 0 && (
         <form className="inline-form wrap" onSubmit={handleAssign}>
           <select value={selected} onChange={(e) => setSelected(e.target.value)} required>

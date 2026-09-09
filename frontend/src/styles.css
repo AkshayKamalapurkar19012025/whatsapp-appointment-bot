@@ -1467,6 +1467,42 @@ a.link.danger {
   color: #c34a7c;
 }
 
+/* DepartmentChip.tsx -- a department name shown anywhere as a small
+   tag, using the same icon + accent color (see cardAccent.ts) as the
+   Departments page's own cards, instead of a plain colorless pill. */
+.department-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px 3px 6px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.department-chip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.department-chip .link {
+  margin: 0 -4px 0 2px;
+  padding: 2px 6px;
+  font-size: 0.7rem;
+  border-radius: 999px;
+  color: inherit;
+  opacity: 0.75;
+}
+
+.department-chip .link:hover {
+  opacity: 1;
+  background: rgb(0 0 0 / 0.08);
+  color: inherit;
+}
+
 .department-card-name {
   flex: 1;
   min-width: 0;
@@ -1581,15 +1617,6 @@ a.link.danger {
   color: var(--color-text-muted);
 }
 
-.doctor-preview-departments {
-  list-style: none;
-  margin: 0 0 var(--space-2);
-  padding: 0;
-  font-size: 0.85rem;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
 
 .doctor-preview-view {
   width: 100%;

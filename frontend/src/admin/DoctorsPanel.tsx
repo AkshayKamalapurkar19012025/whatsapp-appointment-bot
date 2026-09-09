@@ -11,6 +11,8 @@ import {
 } from '../api'
 import type { AdminAppointment, Department, Doctor, DoctorBlockEntry, DoctorScheduleEntry } from '../types'
 import DoctorAvatar from '../DoctorAvatar'
+import DepartmentChip from '../DepartmentChip'
+import { departmentIcon } from '../departmentIcon'
 import { doctorSummaryLine } from '../format'
 import { useStaggerReveal } from '../useStaggerReveal'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
@@ -84,11 +86,12 @@ function DoctorPreviewTrigger({ row, onView }: { row: DoctorRow; onView: () => v
           {row.doctor.education_location && <p className="muted doctor-preview-line">{row.doctor.education_location}</p>}
           <p className="doctor-preview-departments-label">Departments</p>
           {row.departments.length > 0 ? (
-            <ul className="doctor-preview-departments">
-              {row.departments.map((d) => (
-                <li key={d.id}>{d.name}</li>
-              ))}
-            </ul>
+            <div className="doctor-department-chips">
+              {row.departments.map((d) => {
+                const Icon = departmentIcon(d.name)
+                return <DepartmentChip key={d.id} department={d} icon={<Icon size={12} weight="bold" />} />
+              })}
+            </div>
           ) : (
             <p className="muted doctor-preview-line">Not assigned to any department.</p>
           )}
@@ -358,11 +361,10 @@ export default function DoctorsPanel({
                     <td>
                       {row.departments.length > 0 ? (
                         <span className="doctor-department-chips">
-                          {row.departments.map((d) => (
-                            <span key={d.id} className="pill role-staff">
-                              {d.name}
-                            </span>
-                          ))}
+                          {row.departments.map((d) => {
+                            const Icon = departmentIcon(d.name)
+                            return <DepartmentChip key={d.id} department={d} icon={<Icon size={12} weight="bold" />} />
+                          })}
                         </span>
                       ) : (
                         <span className="muted">Unassigned</span>
@@ -410,11 +412,10 @@ export default function DoctorsPanel({
                 </div>
                 {row.departments.length > 0 && (
                   <span className="doctor-department-chips">
-                    {row.departments.map((d) => (
-                      <span key={d.id} className="pill role-staff">
-                        {d.name}
-                      </span>
-                    ))}
+                    {row.departments.map((d) => {
+                      const Icon = departmentIcon(d.name)
+                      return <DepartmentChip key={d.id} department={d} icon={<Icon size={12} weight="bold" />} />
+                    })}
                   </span>
                 )}
                 <div className="muted">
