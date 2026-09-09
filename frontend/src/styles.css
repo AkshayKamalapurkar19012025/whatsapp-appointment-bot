@@ -2667,17 +2667,19 @@ a.link.danger {
 }
 
 /* ===========================================================
-   Duration stepper (appointment-type assignment)
+   Day-of-week multiselect (ScheduleSection's "Add working hours" form)
+   -- same pill-toggle look this class used for the old appointment-
+   type duration stepper, before that became a plain <select>.
    =========================================================== */
 
-.duration-stepper {
+.day-multiselect {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   margin: 0 0 var(--space-3);
 }
 
-.duration-stepper button {
+.day-multiselect button {
   padding: 7px 12px;
   border: 1px solid var(--color-border-strong);
   border-radius: 999px;
@@ -2688,12 +2690,12 @@ a.link.danger {
   font-variant-numeric: tabular-nums;
 }
 
-.duration-stepper button:hover {
+.day-multiselect button:hover {
   border-color: var(--color-primary);
   color: var(--color-primary-hover);
 }
 
-.duration-stepper button.selected {
+.day-multiselect button.selected {
   background: var(--color-primary);
   border-color: var(--color-primary);
   color: var(--color-on-primary);
@@ -3875,7 +3877,20 @@ a.link.danger {
   background: var(--color-surface);
   box-shadow: var(--shadow-md);
   width: 280px;
-  max-width: 100%;
+  /* Not `max-width: 100%` -- for an absolutely positioned element,
+     that percentage resolves against its containing block, which is
+     .admin-date-picker itself (the nearest `position: relative`
+     ancestor). Inside `.inline-form.wrap`, that's a shrink-to-fit flex
+     item barely wider than its own "Pick a date" link text (~100px,
+     confirmed via getBoundingClientRect), so `max-width: 100%` was
+     silently clamping this 280px panel down to ~100px -- narrow enough
+     that the calendar grid inside it overflowed the shrunken box, with
+     "+ Add working hours"/"+ Add time off" (later in the same row)
+     painting over that overflow instead of staying below it. Capped to
+     the viewport instead, which is what this max-width is actually
+     protecting against (a narrow phone screen), not the width of an
+     unrelated sibling field. */
+  max-width: calc(100vw - 2 * var(--space-4));
 }
 
 .filter-bar {
