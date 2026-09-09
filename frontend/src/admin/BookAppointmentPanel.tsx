@@ -1,37 +1,78 @@
 import { useEffect, useState } from 'react'
-import { CheckCircle } from '@phosphor-icons/react'
+import { CalendarBlank, CaretDown, CaretLeft, CaretRight, CheckCircle, MagnifyingGlass } from '@phosphor-icons/react'
 import {
   ApiError,
   createAdminAppointment,
-  createPatientAdmin,
+  getAppConfig,
+  getSlotsForDate,
   listAllDoctors,
   listAppointmentTypesForDoctor,
   listPatients,
 } from '../api'
 import type { AppointmentType, Doctor, Patient, Slot } from '../types'
-import AdminSlotPicker from './AdminSlotPicker'
-import PhoneInput from '../PhoneInput'
+import { formatAvailability, formatDate, formatTime } from '../format'
+import { isoDateToday } from './doctorSchedule'
+import AvailabilityBadge from '../AvailabilityBadge'
+import SlotGrid from '../SlotGrid'
+import AdminCalendar from './AdminCalendar'
+import RegisterPatientModal from './RegisterPatientModal'
 
-const NEW_PATIENT_VALUE = '__new__'
+// Booking source is UI-only (not sent to the backend): appointments has
+// no source/channel column, and inventing one silently would mean this
+// page shows a value that isn't actually stored anywhere -- see the
+// redesign report's "Backend changes" section for the real column/API
+// field this would need if it's wanted for real. Kept in local state
+// only, shown on the review card so the admin can see what they picked
+// for this booking session.
+type BookingSource = 'ONLINE' | 'PHONE' | 'WALK_IN' | 'STAFF'
+const BOOKING_SOURCES: { key: BookingSource; label: string }[] = [
+  { key: 'ONLINE', label: 'Online' },
+  { key: 'PHONE', label: 'Phone' },
+  { key: 'WALK_IN', label: 'Walk-in' },
+  { key: 'STAFF', label: 'Staff' },
+]
+
+function addDays(dateStr: string, days: number): string {
+  const d = new Date(`${dateStr}T00:00:00`)
+  d.setDate(d.getDate() + days)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 // A dedicated page for the one thing it does: put a new appointment on
 // the calendar for a patient who isn't booking it themselves (phone
 // call, walk-in, etc.) -- kept separate from the Appointments section
 // (which lists/filters/reschedules/cancels *existing* appointments) so
 // the two nav items land somewhere visibly different instead of the
-// same list with a form silently toggled open inside it. Direct
-// feedback: the two used to look identical because "Book Appointment"
-// just flipped a boolean on the Appointments page.
+// same list with a form silently toggled open inside it.
 export default function BookAppointmentPanel({ onViewAppointments }: { onViewAppointments: () => void }) {
   const [doctors, setDoctors] = useState<Doctor[]>([])
   const [patients, setPatients] = useState<Patient[]>([])
+  const [timezoneLabel, setTimezoneLabel] = useState<string | null>(null)
+
+  const [bookingSource, setBookingSource] = useState<BookingSource>('WALK_IN')
+
+  const [patientSearch, setPatientSearch] = useState('')
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
+  const [showRegisterModal, setShowRegisterModal] = useState(false)
+
   const [doctorId, setDoctorId] = useState('')
-  const [patientId, setPatientId] = useState('')
   const [appointmentTypeId, setAppointmentTypeId] = useState('')
   const [types, setTypes] = useState<AppointmentType[]>([])
+
+  const [date, setDate] = useState('')
+  const [showCalendar, setShowCalendar] = useState(false)
+  // Deliberately the SAME fetch (getSlotsForDate, the shared
+  // availability_engine every other booking path in this app already
+  // uses) that produces BOTH the displayed count and the displayed
+  // slot buttons below -- slots.length is never computed separately
+  // from what's rendered, so "12 slots available" always means
+  // exactly 12 selectable buttons.
+  const [slots, setSlots] = useState<Slot[]>([])
+  const [totalSlots, setTotalSlots] = useState(0)
+  const [slotsLoading, setSlotsLoading] = useState(false)
+  const [slotsError, setSlotsError] = useState<string | null>(null)
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null)
-  const [newPatientName, setNewPatientName] = useState('')
-  const [newPatientPhone, setNewPatientPhone] = useState('')
+
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [justBooked, setJustBooked] = useState<{ doctorName: string; patientName: string; slot: Slot } | null>(null)
@@ -39,12 +80,15 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
   useEffect(() => {
     listAllDoctors().then(setDoctors).catch(() => undefined)
     listPatients().then(setPatients).catch(() => undefined)
+    getAppConfig()
+      .then((c) => setTimezoneLabel(c.default_timezone))
+      .catch(() => undefined)
   }, [])
-
-  const isNewPatient = patientId === NEW_PATIENT_VALUE
 
   useEffect(() => {
     setAppointmentTypeId('')
+    setDate('')
+    setShowCalendar(false)
     setSelectedSlot(null)
     if (!doctorId) {
       setTypes([])
@@ -56,24 +100,76 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
   }, [doctorId])
 
   useEffect(() => {
+    setDate('')
     setSelectedSlot(null)
   }, [appointmentTypeId])
 
   const selectedType = types.find((t) => String(t.id) === appointmentTypeId) ?? null
   const selectedDoctor = doctors.find((d) => String(d.id) === doctorId) ?? null
 
-  // What's still missing before this can be submitted, in the order a
-  // staff member would naturally fill the form -- null once everything
-  // required (including an actual time slot, not just a date) is in
-  // place. Drives both the disabled state below and the helper text,
-  // so the two can never drift out of sync with each other.
+  useEffect(() => {
+    if (!date || !selectedType || !doctorId) {
+      setSlots([])
+      setTotalSlots(0)
+      return
+    }
+    let cancelled = false
+    setSlotsLoading(true)
+    setSlotsError(null)
+    setSelectedSlot(null)
+    getSlotsForDate(Number(doctorId), selectedType.id, date)
+      .then((result) => {
+        if (cancelled) return
+        setSlots(result.slots)
+        setTotalSlots(result.total_slots)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setSlotsError(err instanceof ApiError ? err.message : 'Could not load time slots')
+        setSlots([])
+        setTotalSlots(0)
+      })
+      .finally(() => {
+        if (!cancelled) setSlotsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- selectedType is derived from types+appointmentTypeId every render; .id is the only part that should retrigger this fetch
+  }, [date, doctorId, selectedType?.id])
+
+  const searchNeedle = patientSearch.trim().toLowerCase()
+  const patientResults = searchNeedle
+    ? patients
+        .filter(
+          (p) =>
+            p.name.toLowerCase().includes(searchNeedle) ||
+            p.whatsapp_number.toLowerCase().includes(searchNeedle) ||
+            String(p.id).includes(searchNeedle),
+        )
+        .slice(0, 8)
+    : []
+
+  function selectPatient(p: Patient) {
+    setSelectedPatient(p)
+    setPatientSearch('')
+  }
+
+  function handlePatientRegistered(p: Patient) {
+    setPatients((prev) => [...prev, p])
+    selectPatient(p)
+  }
+
+  // What's still missing before this can be submitted, in the order the
+  // page's own steps are numbered -- null once everything required
+  // (including an actual time slot, not just a date) is in place. Drives
+  // both the Book button's disabled state and the helper text below the
+  // review card, so the two can never drift out of sync.
   function missingSelectionMessage(): string | null {
-    if (!doctorId) return 'Select a doctor to see available dates.'
-    if (!appointmentTypeId) return 'Select an appointment type to see available dates.'
+    if (!selectedPatient) return 'Search for or register a patient to continue.'
+    if (!doctorId) return 'Select a doctor to continue.'
+    if (!appointmentTypeId) return 'Select an appointment type to continue.'
     if (!selectedSlot) return 'Pick an available date and time slot to continue.'
-    if (!patientId) return 'Select a patient (or add a new one) to continue.'
-    if (isNewPatient && !newPatientName.trim()) return "Enter the new patient's name to continue."
-    if (isNewPatient && !newPatientPhone) return "Enter the new patient's mobile number to continue."
     return null
   }
 
@@ -81,43 +177,46 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
   const canSubmit = !busy && missingSelection === null
 
   function resetForm() {
+    setSelectedPatient(null)
+    setPatientSearch('')
     setDoctorId('')
-    setPatientId('')
     setAppointmentTypeId('')
+    setDate('')
+    setShowCalendar(false)
     setSelectedSlot(null)
-    setNewPatientName('')
-    setNewPatientPhone('')
+    setBookingSource('WALK_IN')
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!doctorId || !patientId || !appointmentTypeId || !selectedSlot || !selectedDoctor) return
-    if (isNewPatient && (!newPatientName.trim() || !newPatientPhone)) return
+  async function handleSubmit() {
+    if (!selectedPatient || !doctorId || !appointmentTypeId || !selectedSlot || !selectedDoctor) return
     setError(null)
     setBusy(true)
     try {
-      let targetPatientId = Number(patientId)
-      let targetPatientName = patients.find((p) => String(p.id) === patientId)?.name ?? ''
-      if (isNewPatient) {
-        const created = await createPatientAdmin(newPatientName.trim(), newPatientPhone)
-        setPatients((prev) => [...prev, created])
-        targetPatientId = created.id
-        targetPatientName = created.name
-      }
-      await createAdminAppointment(Number(doctorId), targetPatientId, Number(appointmentTypeId), selectedSlot.start_at)
-      setJustBooked({ doctorName: selectedDoctor.name, patientName: targetPatientName, slot: selectedSlot })
+      await createAdminAppointment(Number(doctorId), selectedPatient.id, Number(appointmentTypeId), selectedSlot.start_at)
+      setJustBooked({ doctorName: selectedDoctor.name, patientName: selectedPatient.name, slot: selectedSlot })
       resetForm()
     } catch (err) {
       setError(
         err instanceof ApiError
           ? err.message
-          : isNewPatient
-            ? 'Could not create the new patient'
-            : 'Could not create appointment',
+          : 'That slot is no longer available. Please select another slot.',
       )
     } finally {
       setBusy(false)
     }
+  }
+
+  const today = isoDateToday()
+
+  function jumpToDate(target: string) {
+    setDate(target)
+    setShowCalendar(false)
+  }
+
+  function stepDay(delta: number) {
+    const next = addDays(date || today, delta)
+    if (next < today) return
+    setDate(next)
   }
 
   if (justBooked) {
@@ -129,7 +228,8 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
             <CheckCircle size={28} weight="light" />
           </span>
           <p>
-            Booked {justBooked.patientName} with {justBooked.doctorName}.
+            Booked {justBooked.patientName} with {justBooked.doctorName} at {formatTime(justBooked.slot.start_at)} on{' '}
+            {formatDate(justBooked.slot.start_at)}.
           </p>
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginTop: 8 }}>
             <button type="button" className="btn btn-sm" onClick={() => setJustBooked(null)}>
@@ -145,91 +245,348 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
   }
 
   return (
-    <section>
-      <h2>Book Appointment</h2>
-      <p className="muted">Put a new appointment on the calendar for a patient -- phone call, walk-in, or on their behalf.</p>
+    <section className="book-appointment-page">
+      <div className="admin-content-header">
+        <div>
+          <h2>Book Appointment</h2>
+          <p className="muted">Schedule an appointment for a patient by phone, walk-in, or on their behalf.</p>
+        </div>
+        <div className="booking-source-picker">
+          <span className="field-label">Booking source</span>
+          <div className="booking-source-pills" role="radiogroup" aria-label="Booking source">
+            {BOOKING_SOURCES.map((s) => (
+              <button
+                key={s.key}
+                type="button"
+                role="radio"
+                aria-checked={s.key === bookingSource}
+                className={s.key === bookingSource ? 'date-scope-pill active' : 'date-scope-pill'}
+                onClick={() => setBookingSource(s.key)}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
 
-      <form className="detail-section" onSubmit={handleSubmit}>
-        <div className="inline-form wrap">
-          <label className="inline-label">
-            Doctor
-            <select value={doctorId} onChange={(e) => setDoctorId(e.target.value)} required>
-              <option value="">Choose…</option>
-              {doctors.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="inline-label">
-            Patient
-            <select value={patientId} onChange={(e) => setPatientId(e.target.value)} required>
-              <option value="">Choose…</option>
-              <option value={NEW_PATIENT_VALUE}>+ New patient…</option>
-              {patients.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="inline-label">
-            Appointment type
-            <select
-              value={appointmentTypeId}
-              onChange={(e) => setAppointmentTypeId(e.target.value)}
-              required
-              disabled={!doctorId}
-            >
-              <option value="">Choose…</option>
-              {types.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name} ({t.duration_minutes} min)
-                </option>
-              ))}
-            </select>
-          </label>
+      {error && <p className="error">{error}</p>}
+
+      <div className="book-appointment-layout">
+        <div className="book-appointment-main">
+          {/* Step 1: Patient */}
+          <div className="book-step-card">
+            <div className="book-step-heading">
+              <span className={`book-step-number${selectedPatient ? ' done' : ' current'}`} aria-hidden="true">
+                1
+              </span>
+              <div>
+                <h3>Patient</h3>
+                <p className="muted">Search for an existing patient or register a new one.</p>
+              </div>
+            </div>
+            <div className="book-step1-body">
+              <div className="book-patient-search">
+                <label className="filter-bar-search-input book-patient-search-input">
+                  <MagnifyingGlass size={16} aria-hidden="true" />
+                  <input
+                    type="search"
+                    placeholder="Search by name, phone number or patient ID…"
+                    value={patientSearch}
+                    onChange={(e) => setPatientSearch(e.target.value)}
+                    aria-label="Search by name, phone number or patient ID"
+                  />
+                </label>
+
+                {searchNeedle &&
+                  (patientResults.length > 0 ? (
+                    <ul className="book-patient-results">
+                      {patientResults.map((p) => (
+                        <li key={p.id}>
+                          <button type="button" className="book-patient-result" onClick={() => selectPatient(p)}>
+                            <span className="book-patient-avatar" aria-hidden="true">
+                              {p.name.slice(0, 2).toUpperCase()}
+                            </span>
+                            <span className="book-patient-result-info">
+                              <strong>{p.name}</strong>
+                              <span className="muted">
+                                #{p.id} · {p.whatsapp_number}
+                              </span>
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="book-patient-no-results">
+                      <p className="muted">No patients found.</p>
+                    </div>
+                  ))}
+
+                <button type="button" className="btn-secondary btn btn-sm book-register-btn" onClick={() => setShowRegisterModal(true)}>
+                  + Register new patient
+                </button>
+              </div>
+
+              {selectedPatient && (
+                <div className="book-selected-patient-card">
+                  <div className="book-selected-patient-header">
+                    <span>Selected patient</span>
+                    <button type="button" className="link" onClick={() => setSelectedPatient(null)}>
+                      Edit
+                    </button>
+                  </div>
+                  <div className="book-selected-patient-body">
+                    <span className="book-patient-avatar" aria-hidden="true">
+                      {selectedPatient.name.slice(0, 2).toUpperCase()}
+                    </span>
+                    <div>
+                      <strong>{selectedPatient.name}</strong>
+                      <div className="muted">Patient ID: {selectedPatient.id}</div>
+                      <div className="muted">{selectedPatient.whatsapp_number}</div>
+                    </div>
+                  </div>
+                  {selectedPatient.patient_type && (
+                    <div className="book-selected-patient-type">
+                      {selectedPatient.patient_type === 'recurring' ? 'Existing patient' : 'First-time patient'}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Step 2: Appointment Details */}
+          <div className={`book-step-card${!selectedPatient ? ' book-step-disabled' : ''}`}>
+            <div className="book-step-heading">
+              <span className={`book-step-number${selectedType ? ' done' : selectedPatient ? ' current' : ''}`} aria-hidden="true">
+                2
+              </span>
+              <div>
+                <h3>Appointment Details</h3>
+                <p className="muted">Select doctor and appointment type.</p>
+              </div>
+            </div>
+            <div className="inline-form wrap" style={{ marginTop: 0 }}>
+              <label className="inline-label">
+                Doctor
+                <select value={doctorId} onChange={(e) => setDoctorId(e.target.value)} disabled={!selectedPatient} required>
+                  <option value="">Choose…</option>
+                  {doctors.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                      {d.specialization ? ` — ${d.specialization}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="inline-label">
+                Appointment type
+                <select
+                  value={appointmentTypeId}
+                  onChange={(e) => setAppointmentTypeId(e.target.value)}
+                  disabled={!doctorId}
+                  required
+                >
+                  <option value="">Choose…</option>
+                  {types.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} ({t.duration_minutes} min)
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </div>
+
+          {/* Step 3: Date & Time */}
+          <div className={`book-step-card${!selectedType ? ' book-step-disabled' : ''}`}>
+            <div className="book-step-heading">
+              <span className={`book-step-number${selectedSlot ? ' done' : selectedType ? ' current' : ''}`} aria-hidden="true">
+                3
+              </span>
+              <div>
+                <h3>Date &amp; Time</h3>
+                <p className="muted">Select a date and available time slot.</p>
+              </div>
+            </div>
+
+            <div className="book-date-nav">
+              <button type="button" className="icon-btn" aria-label="Previous day" disabled={!selectedType} onClick={() => stepDay(-1)}>
+                <CaretLeft size={16} />
+              </button>
+              <button
+                type="button"
+                className="book-date-nav-label"
+                disabled={!selectedType}
+                onClick={() => setShowCalendar((v) => !v)}
+                aria-expanded={showCalendar}
+              >
+                <CalendarBlank size={15} weight="bold" aria-hidden="true" />
+                {date ? formatDate(date) : 'Select a date'}
+                <CaretDown size={12} weight="bold" aria-hidden="true" />
+              </button>
+              <button type="button" className="icon-btn" aria-label="Next day" disabled={!selectedType} onClick={() => stepDay(1)}>
+                <CaretRight size={16} />
+              </button>
+            </div>
+
+            <div className="date-scope-row">
+              <button type="button" className={date === today ? 'date-scope-pill active' : 'date-scope-pill'} disabled={!selectedType} onClick={() => jumpToDate(today)}>
+                Today
+              </button>
+              <button type="button" className={date === addDays(today, 1) ? 'date-scope-pill active' : 'date-scope-pill'} disabled={!selectedType} onClick={() => jumpToDate(addDays(today, 1))}>
+                Tomorrow
+              </button>
+              {/* This Week/This Month/Custom Range all open the same
+                  month calendar below rather than setting a date RANGE:
+                  a booking is for exactly one date, so "This Week"/
+                  "This Month" are just faster ways to get to the
+                  calendar (which already lets you go to any day, this
+                  month or later) rather than a second, distinct kind of
+                  filter. */}
+              <button type="button" className="date-scope-pill" disabled={!selectedType} onClick={() => setShowCalendar(true)}>
+                This Week
+              </button>
+              <button type="button" className="date-scope-pill" disabled={!selectedType} onClick={() => setShowCalendar(true)}>
+                This Month
+              </button>
+              <button type="button" className="date-scope-pill" disabled={!selectedType} onClick={() => setShowCalendar(true)}>
+                <CalendarBlank size={14} weight="bold" aria-hidden="true" /> Custom Range
+              </button>
+            </div>
+
+            {showCalendar && selectedType && (
+              <AdminCalendar doctorId={Number(doctorId)} appointmentTypeId={selectedType.id} onSelectDate={jumpToDate} selectedDate={date || null} />
+            )}
+
+            {date && selectedType && (
+              <>
+                <div className="book-availability-row">
+                  {!slotsLoading && <AvailabilityBadge availability={formatAvailability(slots.length, totalSlots)} />}
+                  {timezoneLabel && <span className="muted">Doctor's time zone: {timezoneLabel}</span>}
+                </div>
+                {slotsError && <p className="error">{slotsError}</p>}
+                <SlotGrid
+                  slots={slots}
+                  selectedSlot={selectedSlot}
+                  onSelect={setSelectedSlot}
+                  loading={slotsLoading}
+                  // total_slots (from the same availability response
+                  // slots.length itself comes from) is 0 only when the
+                  // doctor's schedule generates no candidate windows at
+                  // all that day -- distinct from "generated some, but
+                  // every one is already booked/blocked", which is what
+                  // a non-zero total_slots with an empty slots list means.
+                  emptyMessage={
+                    totalSlots === 0
+                      ? 'Doctor is not available on this date.'
+                      : 'No slots available for this date -- try another date or doctor.'
+                  }
+                />
+              </>
+            )}
+          </div>
         </div>
 
-        {isNewPatient && (
-          <div className="inline-form wrap" style={{ marginTop: 0 }}>
-            <label className="inline-label">
-              New patient's name
-              <input
-                placeholder="Full name"
-                value={newPatientName}
-                onChange={(e) => setNewPatientName(e.target.value)}
-                required
-              />
-            </label>
-            <label className="inline-label">
-              Mobile number
-              <PhoneInput value={newPatientPhone} onChange={setNewPatientPhone} />
-            </label>
+        {/* Step 4: Review */}
+        <div className="book-appointment-side">
+          <div className="book-review-card">
+            <div className="book-step-heading">
+              <span className={`book-step-number${canSubmit ? ' done' : ''}`} aria-hidden="true">
+                4
+              </span>
+              <div>
+                <h3>Review Appointment</h3>
+                <p className="muted">Confirm the details before booking.</p>
+              </div>
+            </div>
+
+            <dl className="book-review-list">
+              <div>
+                <dt>Patient</dt>
+                <dd>
+                  {selectedPatient ? (
+                    <>
+                      <strong>{selectedPatient.name}</strong>
+                      <span className="muted">
+                        #{selectedPatient.id} · {selectedPatient.whatsapp_number}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="muted">Not selected</span>
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt>Doctor</dt>
+                <dd>
+                  {selectedDoctor ? (
+                    <>
+                      <strong>{selectedDoctor.name}</strong>
+                      {selectedDoctor.specialization && <span className="muted">{selectedDoctor.specialization}</span>}
+                    </>
+                  ) : (
+                    <span className="muted">Not selected</span>
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt>Appointment type</dt>
+                <dd>
+                  {selectedType ? (
+                    <>
+                      <strong>{selectedType.name}</strong>
+                      <span className="muted">{selectedType.duration_minutes} minutes</span>
+                    </>
+                  ) : (
+                    <span className="muted">Not selected</span>
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt>Date</dt>
+                <dd>{date ? <strong>{formatDate(date)}</strong> : <span className="muted">Not selected</span>}</dd>
+              </div>
+              <div>
+                <dt>Time</dt>
+                <dd>
+                  {selectedSlot ? (
+                    <strong>
+                      {formatTime(selectedSlot.start_at)} – {formatTime(selectedSlot.end_at)}
+                    </strong>
+                  ) : (
+                    <span className="muted">Not selected</span>
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt>Booking source</dt>
+                <dd>
+                  <strong>{BOOKING_SOURCES.find((s) => s.key === bookingSource)?.label}</strong>
+                </dd>
+              </div>
+            </dl>
+
+            {!busy && (
+              <p className="muted book-review-hint" aria-live="polite">
+                {missingSelection ?? 'Ready to book -- review the details above, then confirm.'}
+              </p>
+            )}
+
+            <button type="button" className="btn book-review-cta" disabled={!canSubmit} onClick={handleSubmit}>
+              <CalendarBlank size={16} weight="bold" aria-hidden="true" /> {busy ? 'Booking…' : 'Book Appointment'}
+            </button>
+            <button type="button" className="btn-secondary btn" onClick={resetForm}>
+              Cancel
+            </button>
           </div>
-        )}
+        </div>
+      </div>
 
-        {doctorId && selectedType && (
-          <AdminSlotPicker
-            doctorId={Number(doctorId)}
-            appointmentTypeId={selectedType.id}
-            durationMinutes={selectedType.duration_minutes}
-            selectedSlot={selectedSlot}
-            onSelect={setSelectedSlot}
-          />
-        )}
-
-        {error && <p className="error">{error}</p>}
-        {!busy && (
-          <p className="muted" aria-live="polite">
-            {missingSelection ?? 'Ready to book -- review the details above, then confirm.'}
-          </p>
-        )}
-        <button type="submit" className="btn btn-sm" disabled={!canSubmit}>
-          {busy ? 'Booking…' : 'Book appointment'}
-        </button>
-      </form>
+      {showRegisterModal && (
+        <RegisterPatientModal onClose={() => setShowRegisterModal(false)} onCreated={handlePatientRegistered} />
+      )}
     </section>
   )
 }
