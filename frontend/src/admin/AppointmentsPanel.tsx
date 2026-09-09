@@ -1,5 +1,17 @@
 import { Fragment, useEffect, useState } from 'react'
-import { ClipboardText } from '@phosphor-icons/react'
+import {
+  CalendarBlank,
+  CalendarCheck,
+  CaretDown,
+  CaretLeft,
+  CaretRight,
+  CheckCircle,
+  Clock,
+  FunnelSimple,
+  HourglassMedium,
+  MagnifyingGlass,
+  UserCheck,
+} from '@phosphor-icons/react'
 import { useStaggerReveal } from '../useStaggerReveal'
 import {
   AlertDialog,
@@ -11,33 +23,120 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../components/ui/alert-dialog'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import {
   ApiError,
   cancelAdminAppointment,
   completeAdminAppointment,
   confirmAdminAppointment,
-  getDashboardStats,
   listAdminAppointments,
   listAllDoctors,
   listAppointmentTypeCatalog,
-  listPatients,
   noShowAdminAppointment,
   rejectAdminAppointment,
   rescheduleAdminAppointment,
   visitAdminAppointment,
 } from '../api'
-import type { AdminAppointment, AppointmentTypeSummary, Doctor, DashboardStats, Patient, Slot } from '../types'
-import { formatDate, formatTime, isoDateOnly } from '../format'
+import type { AdminAppointment, AppointmentTypeSummary, Doctor, Slot } from '../types'
+import { formatDate, formatTime } from '../format'
+import { isoDateToday } from './doctorSchedule'
 import AdminSlotPicker from './AdminSlotPicker'
 import AppointmentDetailsModal from './AppointmentDetailsModal'
 import { AppointmentActionButtons, buildAppointmentActions, type AppointmentActionHandlers } from './AppointmentActions'
 
-// Radix Select.Item disallows an empty-string value (it's reserved
-// internally for "no selection"), so the "All" filter option -- which
-// maps to '' for the actual doctorFilter/etc. state, meaning "don't
-// filter" -- needs a distinct sentinel value instead.
+// Radix Select.Item disallows an empty-string value (reserved internally
+// for "no selection") -- the "All" filter option, which maps to '' for
+// the actual doctorFilter/etc. state (meaning "don't filter"), needs a
+// distinct sentinel value instead.
 const ALL_FILTER_VALUE = '__all__'
+
+const PAGE_SIZE = 8
+
+// Every real appointment status this app has (see app/services/
+// appointment_services.py), plus 'all' -- one status filter, driven by
+// EITHER the tab row or the compact Status dropdown, never two
+// independently-tracked sources of truth that could disagree with each
+// other. The Rejected/No Show statuses live behind the tab row's own
+// "More" menu (not equal top-level tabs, per the operational split from
+// Confirmed/Cancelled -- they're rare, and Cancelled already means
+// "never happened" without conflating it with a doctor's own rejection
+// or a patient's no-show), but they're still first-class values here.
+type StatusFilter = 'all' | 'PENDING' | 'CONFIRMED' | 'CHECKED_IN' | 'COMPLETED' | 'CANCELLED' | 'REJECTED' | 'NO_SHOW'
+
+const PRIMARY_TABS: { key: StatusFilter; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'PENDING', label: 'Pending' },
+  { key: 'CONFIRMED', label: 'Confirmed' },
+  { key: 'CHECKED_IN', label: 'Checked In' },
+  { key: 'COMPLETED', label: 'Completed' },
+  { key: 'CANCELLED', label: 'Cancelled' },
+]
+
+const MORE_TABS: { key: StatusFilter; label: string }[] = [
+  { key: 'REJECTED', label: 'Rejected' },
+  { key: 'NO_SHOW', label: 'No Show' },
+]
+
+const STATUS_DROPDOWN_OPTIONS: { key: StatusFilter; label: string }[] = [
+  { key: 'all', label: 'All statuses' },
+  ...PRIMARY_TABS.slice(1),
+  ...MORE_TABS,
+]
+
+type DateScope = 'today' | 'tomorrow' | 'week' | 'month' | 'custom'
+
+function addDays(dateStr: string, days: number): string {
+  const d = new Date(`${dateStr}T00:00:00`)
+  d.setDate(d.getDate() + days)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function startOfWeek(dateStr: string): string {
+  const jsDay = new Date(`${dateStr}T00:00:00`).getDay()
+  const mondayOffset = jsDay === 0 ? -6 : 1 - jsDay
+  return addDays(dateStr, mondayOffset)
+}
+
+function startOfMonth(dateStr: string): string {
+  return `${dateStr.slice(0, 7)}-01`
+}
+
+function endOfMonth(dateStr: string): string {
+  const [y, m] = dateStr.split('-').map(Number)
+  const lastDay = new Date(y, m, 0).getDate()
+  return `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+}
+
+// The date-quick-filter row's from/to + a human label for the header --
+// the one place "what does 'This week'/'This month' mean" is computed,
+// shared by the summary cards, the tab counts, and the server query.
+// Returns null only for an incomplete Custom Range (no from/to chosen
+// yet), which callers treat as "don't fetch yet".
+function dateRangeFor(
+  scope: DateScope,
+  customFrom: string,
+  customTo: string,
+): { from: string; to: string; label: string } | null {
+  const today = isoDateToday()
+  if (scope === 'today') return { from: today, to: today, label: `Today, ${formatDate(today)}` }
+  if (scope === 'tomorrow') {
+    const t = addDays(today, 1)
+    return { from: t, to: t, label: `Tomorrow, ${formatDate(t)}` }
+  }
+  if (scope === 'week') {
+    const from = startOfWeek(today)
+    const to = addDays(from, 6)
+    return { from, to, label: `This week, ${formatDate(from)} – ${formatDate(to)}` }
+  }
+  if (scope === 'month') {
+    const from = startOfMonth(today)
+    const to = endOfMonth(today)
+    return { from, to, label: `This month, ${formatDate(from)} – ${formatDate(to)}` }
+  }
+  if (!customFrom || !customTo) return null
+  return { from: customFrom, to: customTo, label: `${formatDate(customFrom)} – ${formatDate(customTo)}` }
+}
 
 // Duration in minutes between two ISO timestamps -- AdminAppointment
 // doesn't carry duration_minutes directly (it's a doctor_appointment_
@@ -46,16 +145,6 @@ const ALL_FILTER_VALUE = '__all__'
 // this component can already compute from what it has.
 function durationBetween(startAt: string, endAt: string): number {
   return Math.round((new Date(endAt).getTime() - new Date(startAt).getTime()) / 60000)
-}
-
-// "Upcoming" means still Pending or Confirmed (the two statuses that
-// haven't happened, been rejected, or been cancelled yet -- see
-// ACTIONABLE_STATUSES in app/services/appointment_services.py) and not
-// yet started; a past Pending/Confirmed appointment falls out of
-// Upcoming on its own without needing a status change. Shared by the
-// tab filter and the tab count so the two can never disagree.
-function isUpcoming(a: AdminAppointment, now: number): boolean {
-  return ['PENDING', 'CONFIRMED'].includes(a.status) && new Date(a.start_at).getTime() >= now
 }
 
 // Payment status is only a meaningful thing to show once a patient has
@@ -83,84 +172,103 @@ export default function AppointmentsPanel({
   // take from AdminApp.tsx.
   isAdmin: boolean
 }) {
-  const [appointments, setAppointments] = useState<AdminAppointment[]>([])
+  // The date-scoped fetch: every appointment in the selected date
+  // range, with NO doctor/status/type/search filter applied server-side
+  // -- summary cards and tab counts both read from this same list so
+  // they always agree with each other, and a doctor/status/type/search
+  // filter never shifts either (see dateRangeFor's docstring / the
+  // redesign plan: "date scope drives the cards, detail filters filter
+  // the list below").
+  const [dateScopedAppointments, setDateScopedAppointments] = useState<AdminAppointment[]>([])
   const [doctors, setDoctors] = useState<Doctor[]>([])
-  const [patients, setPatients] = useState<Patient[]>([])
   const [appointmentTypes, setAppointmentTypes] = useState<AppointmentTypeSummary[]>([])
-  // Today's/pending counts for the heading context line -- an existing
-  // endpoint (DashboardPanel.tsx's own data source), not a new one;
-  // best-effort only, so the heading just stays clean if it fails
-  // rather than blocking or showing an error banner for a decoration.
-  const [stats, setStats] = useState<DashboardStats | null>(null)
-  const [tab, setTab] = useState<'upcoming' | 'all'>('upcoming')
+
+  const [dateScope, setDateScope] = useState<DateScope>('today')
+  const [customFrom, setCustomFrom] = useState('')
+  const [customTo, setCustomTo] = useState('')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [doctorFilter, setDoctorFilter] = useState('')
-  const [patientFilter, setPatientFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
   const [appointmentTypeFilter, setAppointmentTypeFilter] = useState('')
-  const [dateFromFilter, setDateFromFilter] = useState('')
-  const [dateToFilter, setDateToFilter] = useState('')
   const [searchText, setSearchText] = useState('')
+  const [page, setPage] = useState(1)
+
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [reschedulingId, setReschedulingId] = useState<number | null>(null)
   const [rescheduleSlot, setRescheduleSlot] = useState<Slot | null>(null)
   const [rescheduleBusy, setRescheduleBusy] = useState(false)
   const [detailsTarget, setDetailsTarget] = useState<AdminAppointment | null>(null)
+  const [cancelTarget, setCancelTarget] = useState<AdminAppointment | null>(null)
+  const [lifecycleBusyId, setLifecycleBusyId] = useState<number | null>(null)
+
+  const range = dateRangeFor(dateScope, customFrom, customTo)
 
   function load() {
+    if (!range) {
+      // Custom Range chosen but from/to not both picked yet -- nothing
+      // to fetch, and showing a loading spinner for a query that isn't
+      // happening would be misleading.
+      setDateScopedAppointments([])
+      setLoading(false)
+      return
+    }
     setLoading(true)
     setError(null)
-    listAdminAppointments({
-      doctor_id: doctorFilter ? Number(doctorFilter) : undefined,
-      patient_id: patientFilter ? Number(patientFilter) : undefined,
-      status: statusFilter || undefined,
-      appointment_type_id: appointmentTypeFilter ? Number(appointmentTypeFilter) : undefined,
-      date_from: dateFromFilter || undefined,
-      date_to: dateToFilter || undefined,
-    })
-      .then(setAppointments)
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'Could not load appointments'),
-      )
+    listAdminAppointments({ date_from: range.from, date_to: range.to })
+      .then((list) => setDateScopedAppointments([...list].sort((a, b) => a.start_at.localeCompare(b.start_at))))
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load appointments'))
       .finally(() => setLoading(false))
   }
 
-  useEffect(load, [doctorFilter, patientFilter, statusFilter, appointmentTypeFilter, dateFromFilter, dateToFilter])
+  useEffect(load, [range?.from, range?.to])
 
   useEffect(() => {
     listAllDoctors().then(setDoctors).catch(() => undefined)
-    listPatients().then(setPatients).catch(() => undefined)
     listAppointmentTypeCatalog().then(setAppointmentTypes).catch(() => undefined)
-    getDashboardStats().then(setStats).catch(() => undefined)
   }, [])
 
-  // Free-text patient search and the Upcoming/All tab are both applied
-  // client-side over whatever the server-side filters above already
-  // narrowed down to -- the whole list is already loaded for this
-  // panel, so a second round trip for a substring match or a "still in
-  // the future" check would be pure overhead.
+  // Reset to page 1 whenever any filter (or the date scope itself)
+  // changes -- staying on, say, page 3 after narrowing the list down to
+  // one page's worth of rows would just show an empty page.
+  useEffect(() => {
+    setPage(1)
+  }, [dateScope, customFrom, customTo, statusFilter, doctorFilter, appointmentTypeFilter, searchText])
+
+  function doctorSpecialization(doctorId: number): string | null {
+    return doctors.find((d) => d.id === doctorId)?.specialization ?? null
+  }
+
   const searchNeedle = searchText.trim().toLowerCase()
-  const now = Date.now()
   function matchesSearch(a: AdminAppointment): boolean {
     if (!searchNeedle) return true
     return (
-      a.patient_name.toLowerCase().includes(searchNeedle) || a.whatsapp_number.toLowerCase().includes(searchNeedle)
+      a.patient_name.toLowerCase().includes(searchNeedle) ||
+      a.whatsapp_number.toLowerCase().includes(searchNeedle) ||
+      String(a.patient_id).includes(searchNeedle)
     )
   }
-  const upcomingCount = appointments.filter((a) => isUpcoming(a, now) && matchesSearch(a)).length
-  const allCount = appointments.filter(matchesSearch).length
-  const visibleAppointments = appointments.filter((a) => {
-    if (tab === 'upcoming' && !isUpcoming(a, now)) return false
+
+  // Tab/status counts -- deliberately over dateScopedAppointments (the
+  // date-scoped set), not the doctor/type/search-filtered list below,
+  // so picking a doctor never makes these numbers disagree with the
+  // summary cards above.
+  function countFor(status: StatusFilter): number {
+    if (status === 'all') return dateScopedAppointments.length
+    return dateScopedAppointments.filter((a) => a.status === status).length
+  }
+
+  const filteredAppointments = dateScopedAppointments.filter((a) => {
+    if (statusFilter !== 'all' && a.status !== statusFilter) return false
+    if (doctorFilter && a.doctor_id !== Number(doctorFilter)) return false
+    if (appointmentTypeFilter && a.appointment_type_id !== Number(appointmentTypeFilter)) return false
     return matchesSearch(a)
   })
-  // Keyed on `appointments` (the server-fetched list), not
-  // `visibleAppointments` -- the latter also changes on every keystroke
-  // of the client-side name/number search above, which would restage
-  // the whole table mid-typing instead of just when the underlying data
-  // actually reloads.
-  const tbodyRef = useStaggerReveal<HTMLTableSectionElement>([appointments])
-  const [cancelTarget, setCancelTarget] = useState<AdminAppointment | null>(null)
-  const [lifecycleBusyId, setLifecycleBusyId] = useState<number | null>(null)
+
+  const totalPages = Math.max(1, Math.ceil(filteredAppointments.length / PAGE_SIZE))
+  const currentPage = Math.min(page, totalPages)
+  const pagedAppointments = filteredAppointments.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+
+  const tbodyRef = useStaggerReveal<HTMLTableSectionElement>([pagedAppointments])
 
   async function confirmCancel() {
     if (!cancelTarget) return
@@ -176,10 +284,10 @@ export default function AppointmentsPanel({
   }
 
   // Shared handler for the four one-click lifecycle transitions
-  // (Confirm/Reject/Check In/Complete) -- each is a single-column status
-  // update with no follow-up form, unlike cancel (a confirm dialog) or
-  // reschedule (a slot picker), so a plain busy-while-in-flight button
-  // is enough.
+  // (Confirm/Reject/Check In/Complete/No-Show) -- each is a single-
+  // column status update with no follow-up form, unlike cancel (a
+  // confirm dialog) or reschedule (a slot picker), so a plain
+  // busy-while-in-flight button is enough.
   async function runLifecycleAction(
     appointmentId: number,
     action: (id: number) => Promise<{ id: number; status: string }>,
@@ -219,7 +327,7 @@ export default function AppointmentsPanel({
     }
   }
 
-  const reschedulingAppointment = appointments.find((a) => a.id === reschedulingId) ?? null
+  const reschedulingAppointment = dateScopedAppointments.find((a) => a.id === reschedulingId) ?? null
 
   // One set of handlers, shared by the table row, the mobile card, and
   // the details modal (AppointmentActions.tsx's buildAppointmentActions)
@@ -229,10 +337,8 @@ export default function AppointmentsPanel({
     onConfirm: (a) => runLifecycleAction(a.id, confirmAdminAppointment, 'Could not confirm the appointment'),
     onReject: (a) => runLifecycleAction(a.id, rejectAdminAppointment, 'Could not reject the appointment'),
     onCheckIn: (a) => runLifecycleAction(a.id, visitAdminAppointment, 'Could not check in the appointment'),
-    onNoShow: (a) =>
-      runLifecycleAction(a.id, noShowAdminAppointment, 'Could not mark the appointment as a no-show'),
-    onComplete: (a) =>
-      runLifecycleAction(a.id, completeAdminAppointment, 'Could not mark the appointment completed'),
+    onNoShow: (a) => runLifecycleAction(a.id, noShowAdminAppointment, 'Could not mark the appointment as a no-show'),
+    onComplete: (a) => runLifecycleAction(a.id, completeAdminAppointment, 'Could not mark the appointment completed'),
     onReschedule: startReschedule,
     onCancel: (a) => {
       setDetailsTarget(null)
@@ -281,56 +387,147 @@ export default function AppointmentsPanel({
     )
   }
 
-  const activeFilterCount = [
-    doctorFilter,
-    patientFilter,
-    statusFilter,
-    appointmentTypeFilter,
-    dateFromFilter,
-    dateToFilter,
-    searchText,
-  ].filter(Boolean).length
+  const detailFiltersActive = Boolean(doctorFilter || appointmentTypeFilter || searchText)
+  const anyFilterActive = detailFiltersActive || statusFilter !== 'all'
 
   function clearFilters() {
+    setStatusFilter('all')
     setDoctorFilter('')
-    setPatientFilter('')
-    setStatusFilter('')
     setAppointmentTypeFilter('')
-    setDateFromFilter('')
-    setDateToFilter('')
     setSearchText('')
   }
+
+  const activeTabLabel = [...PRIMARY_TABS, ...MORE_TABS].find((t) => t.key === statusFilter)?.label ?? 'All'
 
   return (
     <section>
       <div className="admin-content-header">
         <div>
           <h2>Appointments</h2>
-          <p className="muted">Manage, view, filter, and take action on appointments.</p>
-          {stats && (
-            <p className="appointments-context-line">
-              Today ·{' '}
-              {formatDate(isoDateOnly(new Date().getFullYear(), new Date().getMonth() + 1, new Date().getDate()))} ·{' '}
-              {stats.today_appointments} {stats.today_appointments === 1 ? 'appointment' : 'appointments'} ·{' '}
-              {stats.pending_appointments} pending
-            </p>
-          )}
+          <p className="muted">Manage appointments, bookings and patient visits.</p>
         </div>
         <button type="button" className="btn btn-sm" onClick={onBookAppointment}>
           + Book appointment
         </button>
       </div>
+
+      {range && (
+        <p className="appointments-date-scope-line">
+          <CalendarBlank size={15} weight="bold" aria-hidden="true" /> {range.label}
+        </p>
+      )}
+
       {error && <p className="error">{error}</p>}
 
-      <div className="tabs">
-        {(['upcoming', 'all'] as const).map((t) => (
-          <button key={t} type="button" className={t === tab ? 'tab active' : 'tab'} onClick={() => setTab(t)}>
-            {t === 'upcoming' ? `Upcoming Appointments (${upcomingCount})` : `All appointments (${allCount})`}
-          </button>
-        ))}
+      <div className="dashboard-grid appointments-summary-grid">
+        <div className="stat-card">
+          <span className="stat-icon" aria-hidden="true">
+            <CalendarCheck size={22} weight="regular" />
+          </span>
+          <div className="stat-body">
+            <span className="stat-value">{countFor('all')}</span>
+            <span className="stat-label">Total appointments</span>
+          </div>
+        </div>
+        <div className="stat-card">
+          <span className="stat-icon" aria-hidden="true">
+            <HourglassMedium size={22} weight="regular" />
+          </span>
+          <div className="stat-body">
+            <span className="stat-value">{countFor('PENDING')}</span>
+            <span className="stat-label">Pending</span>
+          </div>
+        </div>
+        <div className="stat-card">
+          <span className="stat-icon" aria-hidden="true">
+            <UserCheck size={22} weight="regular" />
+          </span>
+          <div className="stat-body">
+            <span className="stat-value">{countFor('CONFIRMED')}</span>
+            <span className="stat-label">Confirmed</span>
+          </div>
+        </div>
+        <div className="stat-card">
+          <span className="stat-icon" aria-hidden="true">
+            <CheckCircle size={22} weight="regular" />
+          </span>
+          <div className="stat-body">
+            <span className="stat-value">{countFor('COMPLETED')}</span>
+            <span className="stat-label">Completed</span>
+          </div>
+        </div>
       </div>
 
-      <div className="filter-bar">
+      <div className="tabs appointments-tabs">
+        {PRIMARY_TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            className={t.key === statusFilter ? 'tab active' : 'tab'}
+            onClick={() => setStatusFilter(t.key)}
+          >
+            {t.label} ({countFor(t.key)})
+          </button>
+        ))}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className={MORE_TABS.some((t) => t.key === statusFilter) ? 'tab active' : 'tab'}
+            >
+              More ({countFor('REJECTED') + countFor('NO_SHOW')}) <CaretDown size={12} weight="bold" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            {MORE_TABS.map((t) => (
+              <DropdownMenuItem key={t.key} onSelect={() => setStatusFilter(t.key)}>
+                {t.label} ({countFor(t.key)})
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      <div className="date-scope-row">
+        {(
+          [
+            ['today', 'Today'],
+            ['tomorrow', 'Tomorrow'],
+            ['week', 'This Week'],
+            ['month', 'This Month'],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            className={dateScope === key ? 'date-scope-pill active' : 'date-scope-pill'}
+            onClick={() => setDateScope(key)}
+          >
+            {label}
+          </button>
+        ))}
+        <button
+          type="button"
+          className={dateScope === 'custom' ? 'date-scope-pill active' : 'date-scope-pill'}
+          onClick={() => setDateScope('custom')}
+        >
+          <CalendarBlank size={14} weight="bold" aria-hidden="true" /> Custom Range
+        </button>
+        {dateScope === 'custom' && (
+          <span className="date-scope-custom-inputs">
+            <label className="inline-label">
+              From
+              <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} />
+            </label>
+            <label className="inline-label">
+              To
+              <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} />
+            </label>
+          </span>
+        )}
+      </div>
+
+      <div className="filter-bar appointments-filter-bar">
         <div className="filter-bar-fields">
           <label className="inline-label">
             Doctor
@@ -342,7 +539,7 @@ export default function AppointmentsPanel({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={ALL_FILTER_VALUE}>All</SelectItem>
+                <SelectItem value={ALL_FILTER_VALUE}>All doctors</SelectItem>
                 {doctors.map((d) => (
                   <SelectItem key={d.id} value={String(d.id)}>
                     {d.name}
@@ -352,42 +549,17 @@ export default function AppointmentsPanel({
             </Select>
           </label>
           <label className="inline-label">
-            Patient
-            <Select
-              value={patientFilter || ALL_FILTER_VALUE}
-              onValueChange={(v) => setPatientFilter(v === ALL_FILTER_VALUE ? '' : v)}
-            >
+            Status
+            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as StatusFilter)}>
               <SelectTrigger className="filter-select-trigger">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={ALL_FILTER_VALUE}>All</SelectItem>
-                {patients.map((p) => (
-                  <SelectItem key={p.id} value={String(p.id)}>
-                    {p.name}
+                {STATUS_DROPDOWN_OPTIONS.map((o) => (
+                  <SelectItem key={o.key} value={o.key}>
+                    {o.label}
                   </SelectItem>
                 ))}
-              </SelectContent>
-            </Select>
-          </label>
-          <label className="inline-label">
-            Status
-            <Select
-              value={statusFilter || ALL_FILTER_VALUE}
-              onValueChange={(v) => setStatusFilter(v === ALL_FILTER_VALUE ? '' : v)}
-            >
-              <SelectTrigger className="filter-select-trigger">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL_FILTER_VALUE}>All</SelectItem>
-                <SelectItem value="PENDING">Pending</SelectItem>
-                <SelectItem value="CONFIRMED">Confirmed</SelectItem>
-                <SelectItem value="REJECTED">Rejected</SelectItem>
-                <SelectItem value="CANCELLED">Cancelled</SelectItem>
-                <SelectItem value="CHECKED_IN">Checked in</SelectItem>
-                <SelectItem value="COMPLETED">Completed</SelectItem>
-                <SelectItem value="NO_SHOW">No-show</SelectItem>
               </SelectContent>
             </Select>
           </label>
@@ -401,7 +573,7 @@ export default function AppointmentsPanel({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={ALL_FILTER_VALUE}>All</SelectItem>
+                <SelectItem value={ALL_FILTER_VALUE}>All types</SelectItem>
                 {appointmentTypes.map((t) => (
                   <SelectItem key={t.id} value={String(t.id)}>
                     {t.name}
@@ -410,30 +582,25 @@ export default function AppointmentsPanel({
               </SelectContent>
             </Select>
           </label>
-          <label className="inline-label">
-            From
-            <input type="date" value={dateFromFilter} onChange={(e) => setDateFromFilter(e.target.value)} />
-          </label>
-          <label className="inline-label">
-            To
-            <input type="date" value={dateToFilter} onChange={(e) => setDateToFilter(e.target.value)} />
-          </label>
-        </div>
-        <div className="filter-bar-search-row">
           <label className="inline-label filter-bar-search">
             Search patient
-            <input
-              type="search"
-              placeholder="Name or number"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-            />
+            <span className="filter-bar-search-input">
+              <MagnifyingGlass size={15} aria-hidden="true" />
+              <input
+                type="search"
+                placeholder="Name, phone number or patient ID"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+              />
+            </span>
           </label>
-          {activeFilterCount > 0 && (
-            <button type="button" className="btn-secondary btn btn-sm" onClick={clearFilters}>
-              Clear filters
-            </button>
-          )}
+          <div className="filter-bar-toolbar-actions">
+            {anyFilterActive && (
+              <button type="button" className="btn-secondary btn btn-sm" onClick={clearFilters}>
+                Reset
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -443,20 +610,44 @@ export default function AppointmentsPanel({
           Loading appointments…
         </div>
       )}
-      {!loading && visibleAppointments.length === 0 && (
+
+      {!loading && dateScopedAppointments.length === 0 && (
         <div className="state-block empty">
           <span className="state-icon" aria-hidden="true">
-            <ClipboardText size={28} weight="light" />
+            <CalendarBlank size={28} weight="light" />
           </span>
-          {appointments.length === 0
-            ? 'No appointments found.'
-            : tab === 'upcoming'
-              ? 'No upcoming appointments.'
-              : 'No appointments match your search.'}
+          <strong>No appointments {range ? `for ${range.label}` : 'in this range'}</strong>
+          <p className="muted">
+            {range
+              ? `There are no appointments scheduled for ${range.label}.`
+              : 'Pick a From and To date to see appointments in that range.'}
+          </p>
+          <button type="button" className="btn btn-sm" onClick={onBookAppointment}>
+            + Book appointment
+          </button>
         </div>
       )}
 
-      {!loading && visibleAppointments.length > 0 && (
+      {!loading && dateScopedAppointments.length > 0 && filteredAppointments.length === 0 && (
+        <div className="state-block empty">
+          <span className="state-icon" aria-hidden="true">
+            <FunnelSimple size={28} weight="light" />
+          </span>
+          {detailFiltersActive ? (
+            <>
+              <strong>No appointments match your filters</strong>
+              <p className="muted">Try changing your filters or search criteria.</p>
+              <button type="button" className="btn-secondary btn btn-sm" onClick={clearFilters}>
+                Clear filters
+              </button>
+            </>
+          ) : (
+            <strong>No {activeTabLabel.toLowerCase()} appointments {range ? `for ${range.label}` : ''}</strong>
+          )}
+        </div>
+      )}
+
+      {!loading && pagedAppointments.length > 0 && (
         <>
           <div className="data-table-wrap">
             <table className="data-table">
@@ -464,16 +655,17 @@ export default function AppointmentsPanel({
                 <tr>
                   <th>Patient</th>
                   <th>Doctor</th>
-                  <th>Type</th>
-                  <th>When</th>
+                  <th>Date &amp; Time</th>
+                  <th>Appointment Type</th>
                   <th>Status</th>
-                  <th />
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody ref={tbodyRef}>
-                {visibleAppointments.map((a) => {
+                {pagedAppointments.map((a) => {
                   const actions = buildAppointmentActions(a, actionHandlers, isAdmin)
                   const busy = lifecycleBusyId === a.id
+                  const specialization = doctorSpecialization(a.doctor_id)
                   return (
                     <Fragment key={a.id}>
                       <tr className="appointment-row" onClick={() => setDetailsTarget(a)}>
@@ -481,23 +673,29 @@ export default function AppointmentsPanel({
                           <strong>{a.patient_name}</strong>
                           <div className="muted">{a.whatsapp_number}</div>
                         </td>
-                        <td>{a.doctor_name}</td>
-                        <td>{a.appointment_type_name}</td>
+                        <td>
+                          <strong>{a.doctor_name}</strong>
+                          {specialization && <div className="muted">{specialization}</div>}
+                        </td>
                         <td>
                           <div className="appointment-when">
-                            <span className="appointment-when-date">{formatDate(a.start_at)}</span>
+                            <span className="appointment-when-date">
+                              <CalendarBlank size={13} weight="bold" aria-hidden="true" /> {formatDate(a.start_at)}
+                            </span>
                             <span className="muted appointment-when-time">
-                              {formatTime(a.start_at)} – {formatTime(a.end_at)}
+                              <Clock size={13} weight="bold" aria-hidden="true" /> {formatTime(a.start_at)} –{' '}
+                              {formatTime(a.end_at)}
                             </span>
                           </div>
                         </td>
+                        <td>{a.appointment_type_name}</td>
                         <td>
                           <span className={`pill status-${a.status.toLowerCase()}`}>{a.status.replace(/_/g, ' ')}</span>
                           {paymentPill(a)}
                           {a.token_number !== null && <span className="pill token-pill">Token #{a.token_number}</span>}
                         </td>
                         <td onClick={(e) => e.stopPropagation()}>
-                          <AppointmentActionButtons actions={actions} busy={busy} />
+                          <AppointmentActionButtons actions={actions} busy={busy} compact />
                         </td>
                       </tr>
                       {reschedulingId === a.id && (
@@ -513,9 +711,10 @@ export default function AppointmentsPanel({
           </div>
 
           <ul className="appointment-mobile-list">
-            {visibleAppointments.map((a) => {
+            {pagedAppointments.map((a) => {
               const actions = buildAppointmentActions(a, actionHandlers, isAdmin)
               const busy = lifecycleBusyId === a.id
+              const specialization = doctorSpecialization(a.doctor_id)
               return (
                 <li key={a.id} className="appointment-mobile-card" onClick={() => setDetailsTarget(a)}>
                   <div className="appointment-mobile-card-top">
@@ -526,22 +725,55 @@ export default function AppointmentsPanel({
                   <strong>{a.patient_name}</strong>
                   <div className="muted">{a.whatsapp_number}</div>
                   <div className="appointment-mobile-card-doctor">
-                    {a.doctor_name} · {a.appointment_type_name}
+                    {a.doctor_name}
+                    {specialization ? ` · ${specialization}` : ''} · {a.appointment_type_name}
                   </div>
                   <div className="appointment-when">
-                    <span className="appointment-when-date">{formatDate(a.start_at)}</span>
+                    <span className="appointment-when-date">
+                      <CalendarBlank size={13} weight="bold" aria-hidden="true" /> {formatDate(a.start_at)}
+                    </span>
                     <span className="muted appointment-when-time">
-                      {formatTime(a.start_at)} – {formatTime(a.end_at)}
+                      <Clock size={13} weight="bold" aria-hidden="true" /> {formatTime(a.start_at)} – {formatTime(a.end_at)}
                     </span>
                   </div>
                   <div onClick={(e) => e.stopPropagation()}>
-                    <AppointmentActionButtons actions={actions} busy={busy} />
+                    <AppointmentActionButtons actions={actions} busy={busy} compact />
                     {reschedulingId === a.id && reschedulePanel(a)}
                   </div>
                 </li>
               )
             })}
           </ul>
+
+          <div className="appointments-pagination">
+            <span className="muted">
+              Showing {(currentPage - 1) * PAGE_SIZE + 1} to{' '}
+              {Math.min(currentPage * PAGE_SIZE, filteredAppointments.length)} of {filteredAppointments.length} appointments
+            </span>
+            <span className="appointments-pagination-controls">
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label="Previous page"
+                disabled={currentPage <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                <CaretLeft size={16} />
+              </button>
+              <span className="appointments-pagination-current" aria-current="page">
+                {currentPage}
+              </span>
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label="Next page"
+                disabled={currentPage >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                <CaretRight size={16} />
+              </button>
+            </span>
+          </div>
         </>
       )}
 
@@ -550,8 +782,7 @@ export default function AppointmentsPanel({
           <AlertDialogHeader>
             <AlertDialogTitle>Cancel appointment?</AlertDialogTitle>
             <AlertDialogDescription>
-              {cancelTarget &&
-                `Cancel ${cancelTarget.patient_name}'s appointment with ${cancelTarget.doctor_name}?`}
+              {cancelTarget && `Cancel ${cancelTarget.patient_name}'s appointment with ${cancelTarget.doctor_name}?`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

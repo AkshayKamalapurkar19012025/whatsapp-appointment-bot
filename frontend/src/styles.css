@@ -3693,11 +3693,154 @@ a.link.danger {
   white-space: nowrap;
 }
 
-.appointments-context-line {
-  margin: var(--space-2) 0 0;
+/* ===========================================================
+   Appointments admin page (AppointmentsPanel.tsx)
+   =========================================================== */
+
+.appointments-date-scope-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: var(--space-2) 0 var(--space-4);
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--color-text-secondary);
+}
+
+.appointments-summary-grid {
+  grid-template-columns: repeat(4, 1fr);
+  margin-bottom: var(--space-5);
+}
+
+.appointments-tabs {
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  scrollbar-width: thin;
+}
+
+.appointments-tabs .tab {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.date-scope-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.date-scope-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.date-scope-pill:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.date-scope-pill.active {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.date-scope-custom-inputs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.date-scope-custom-inputs .inline-label {
+  min-width: 0;
+}
+
+.appointments-filter-bar .filter-bar-fields {
+  align-items: flex-end;
+}
+
+.filter-bar-search-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+}
+
+.filter-bar-search-input input {
+  border: none;
+  margin: 0;
+  padding: 7px 0;
+  background: none;
+}
+
+.filter-bar-search-input:focus-within {
+  border-color: var(--color-primary);
+}
+
+.filter-bar-toolbar-actions {
+  display: flex;
+  align-self: flex-end;
+}
+
+.appointments-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.appointments-pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.appointments-pagination-current {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 860px) {
+  .appointments-summary-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .appointments-summary-grid {
+    grid-template-columns: 1fr;
+  }
+  .date-scope-custom-inputs {
+    flex-wrap: wrap;
+  }
 }
 
 .admin-topbar {
