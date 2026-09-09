@@ -214,6 +214,14 @@ def get_available_slots(
         # Fallback to Asia/Kolkata
         doctor_tz = "Asia/Kolkata"
 
+    # Gap left after each generated slot (migrations/0022_doctor_slot_settings.sql,
+    # Schedule tab's "Slot settings" panel). Defaults to 0 for any doctor
+    # who hasn't set one, which is exactly the pre-0022 behavior (slots
+    # immediately adjacent).
+    cur.execute("SELECT buffer_minutes FROM doctors WHERE id = %s", (doctor_id,))
+    buffer_row = cur.fetchone()
+    buffer_minutes = buffer_row[0] if buffer_row else 0
+
     # ---------------------------------------------------------
     # "Now", in the doctor's own timezone -- a slot can only be scheduled
     # if it hasn't started yet. Compared against this doctor-local
@@ -454,7 +462,7 @@ def get_available_slots(
                     }
                 )
 
-            current_start = current_end
+            current_start = current_end + timedelta(minutes=buffer_minutes)
 
     return (slots, total_count) if count_total else slots
 

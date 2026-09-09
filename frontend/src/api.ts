@@ -10,6 +10,7 @@ import type {
   Department,
   Doctor,
   DoctorBlockEntry,
+  DoctorDepartmentAssignment,
   DoctorEducationEntry,
   DoctorProfile,
   DoctorQueue,
@@ -408,7 +409,26 @@ export function getDoctorProfile(doctorId: number): Promise<DoctorProfile> {
   return request(`/doctors/${doctorId}`)
 }
 
-export function getDoctorDepartments(doctorId: number): Promise<Department[]> {
+// Schedule tab's "Slot settings" panel (migrations/0022_doctor_slot_
+// settings.sql) -- its own small PATCH rather than folded into
+// updateDoctor's PUT, which requires resending every scalar field on
+// the doctor.
+export function updateDoctorSlotSettings(
+  doctorId: number,
+  payload: { default_duration_minutes: number; buffer_minutes: number },
+): Promise<{ id: number; default_duration_minutes: number; buffer_minutes: number }> {
+  return request(`/doctors/${doctorId}/slot-settings`, { method: 'PATCH', auth: 'staff', body: payload })
+}
+
+// Doctor workspace header's "..." menu -- deactivate/reactivate. Every
+// other doctor-scoped endpoint already treats active=FALSE as "doesn't
+// exist", so this is what actually removes a doctor from listings,
+// booking, and availability without deleting their history.
+export function setDoctorActive(doctorId: number, active: boolean): Promise<{ id: number; active: boolean }> {
+  return request(`/doctors/${doctorId}/active`, { method: 'PATCH', auth: 'staff', body: { active } })
+}
+
+export function getDoctorDepartments(doctorId: number): Promise<DoctorDepartmentAssignment[]> {
   return request(`/doctors/${doctorId}/departments`)
 }
 
@@ -568,6 +588,23 @@ export function assignAppointmentTypeToDoctor(
 ): Promise<AppointmentType & { appointment_type_name: string }> {
   return request(`/doctors/${doctorId}/appointment-types/${appointmentTypeId}`, {
     method: 'POST',
+    auth: 'staff',
+    body: { duration_minutes: durationMinutes, consultation_fee: consultationFee },
+  })
+}
+
+// Change duration/fee for an already-assigned appointment type -- the
+// backend has always had this PUT (app/api/doctor_appointment_types.py's
+// update_appointment_type_duration), the frontend just never called it;
+// assignAppointmentTypeToDoctor's POST 409s on an active assignment.
+export function updateDoctorAppointmentType(
+  doctorId: number,
+  appointmentTypeId: number,
+  durationMinutes: number,
+  consultationFee: number,
+): Promise<AppointmentType & { appointment_type_name: string }> {
+  return request(`/doctors/${doctorId}/appointment-types/${appointmentTypeId}`, {
+    method: 'PUT',
     auth: 'staff',
     body: { duration_minutes: durationMinutes, consultation_fee: consultationFee },
   })

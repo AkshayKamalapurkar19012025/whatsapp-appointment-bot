@@ -14,6 +14,15 @@ export interface Department {
   active: boolean
 }
 
+// GET /doctors/{id}/departments -- a department already assigned to
+// this doctor, with when it was assigned (doctor_departments.created_at,
+// always present; see migrations/0001_baseline_schema.sql). Used to
+// treat the earliest-assigned department as "primary" for display
+// without a new is_primary column.
+export interface DoctorDepartmentAssignment extends Department {
+  assigned_at: string
+}
+
 // The compact profile fields every doctor-listing endpoint now carries
 // (app/services/availability_engine.py's build_doctor_summary) --
 // specialization/years_of_experience/qualifications/photo_url plus a
@@ -36,6 +45,14 @@ export interface Doctor extends DoctorProfileSummary {
   active: boolean
   created_at: string
   created_by: string | null
+  // Schedule tab's "Slot settings" panel (migrations/0022_doctor_slot_
+  // settings.sql). default_duration_minutes only sizes the doctor-wide
+  // slot preview and pre-fills a new appointment-type assignment's
+  // duration -- real booking slot width still comes from the per-type
+  // assignment. buffer_minutes is wired into actual slot generation
+  // (app/services/availability_engine.get_available_slots).
+  default_duration_minutes: number
+  buffer_minutes: number
 }
 
 export interface DoctorEducationEntry {
@@ -59,6 +76,8 @@ export interface DoctorProfile extends DoctorProfileSummary {
   active: boolean
   created_at: string
   sub_specialization: string | null
+  default_duration_minutes: number
+  buffer_minutes: number
   education: DoctorEducationEntry[]
 }
 
@@ -193,6 +212,7 @@ export interface DoctorBlockEntry {
   end_at: string
   reason: string
   active: boolean
+  created_at: string
 }
 
 // app/api/appointments.py's admin listing (WEB P9) -- start_at/end_at
