@@ -752,7 +752,12 @@ function previewSlots(startTime: string, endTime: string, durationMinutes: numbe
 function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean }) {
   const [entries, setEntries] = useState<DoctorScheduleEntry[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
-  const [dayOfWeek, setDayOfWeek] = useState('1')
+  // Multiple days at once (e.g. Mon-Fri) rather than one day per submit
+  // -- each still becomes its own doctor_schedule row server-side (see
+  // handleCreate below), the backend has no multi-day concept, this
+  // form just saves the admin from resubmitting the same hours/date
+  // range/department N times for N days.
+  const [selectedDays, setSelectedDays] = useState<number[]>([1])
   const [startTime, setStartTime] = useState('09:00')
   const [endTime, setEndTime] = useState('17:00')
   const [startDate, setStartDate] = useState('')
@@ -784,6 +789,12 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
   function departmentName(id: number | null): string {
     if (id === null) return 'All departments'
     return departments.find((d) => d.id === id)?.name ?? 'All departments'
+  }
+
+  function toggleDay(day: number) {
+    setSelectedDays((prev) =>
+      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort((a, b) => a - b),
+    )
   }
 
   function addBreak() {
@@ -843,7 +854,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
   // button next to "Save" discards whatever the admin was mid-typing
   // instead of submitting it, without touching anything already saved.
   function resetForm() {
-    setDayOfWeek('1')
+    setSelectedDays([1])
     setStartTime('09:00')
     setEndTime('17:00')
     setStartDate('')
@@ -854,7 +865,8 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
   }
 
   const formIsDirty =
-    dayOfWeek !== '1' ||
+    selectedDays.length !== 1 ||
+    selectedDays[0] !== 1 ||
     startTime !== '09:00' ||
     endTime !== '17:00' ||
     startDate !== '' ||
@@ -866,13 +878,22 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
     e.preventDefault()
     setError(null)
 
-    if (startDate && endDate && !dayOfWeekOccursInRange(Number(dayOfWeek), startDate, endDate)) {
-      setError(
-        `${DAY_NAMES[Number(dayOfWeek)]} doesn't fall between ${formatDate(startDate)} and ${formatDate(endDate)}, ` +
-          'so this schedule would never actually apply. Pick a date range that includes at least one ' +
-          `${DAY_NAMES[Number(dayOfWeek)]}, or choose a different day of week.`,
-      )
+    if (selectedDays.length === 0) {
+      setError('Pick at least one day of the week.')
       return
+    }
+
+    if (startDate && endDate) {
+      const daysNeverInRange = selectedDays.filter((d) => !dayOfWeekOccursInRange(d, startDate, endDate))
+      if (daysNeverInRange.length > 0) {
+        const names = daysNeverInRange.map((d) => DAY_NAMES[d]).join(', ')
+        setError(
+          `${names} ${daysNeverInRange.length === 1 ? "doesn't" : "don't"} fall between ${formatDate(startDate)} and ` +
+            `${formatDate(endDate)}, so ${daysNeverInRange.length === 1 ? 'that schedule' : 'those schedules'} would ` +
+            'never actually apply. Pick a date range that includes at least one of each selected day, or deselect it.',
+        )
+        return
+      }
     }
 
     const breaksError = validateBreaks()
@@ -882,6 +903,12 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
     }
 
     const segments = scheduleSegments()
+    // One doctor_schedule row per (selected day x break segment) --
+    // e.g. Mon-Fri with a lunch break creates 10 rows in one submit
+    // instead of the admin doing 5 separate "Add working hours"
+    // round trips, one per day, each already needing 2 segments for
+    // the break split segments() above already handles.
+    const jobs = selectedDays.flatMap((day) => segments.map((seg) => ({ day, seg })))
     setBusy(true)
     try {
       // Submitted as N separate rows, not one transaction -- if a later
@@ -889,12 +916,13 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
       // success didn't), say so plainly with how far it got and reload
       // so the list shows what's actually there, rather than silently
       // leaving a half-added schedule the admin doesn't know about.
-      for (let i = 0; i < segments.length; i++) {
+      for (let i = 0; i < jobs.length; i++) {
+        const { day, seg } = jobs[i]
         try {
           await createDoctorSchedule(doctor.id, {
-            day_of_week: Number(dayOfWeek),
-            start_time: segments[i].start,
-            end_time: segments[i].end,
+            day_of_week: day,
+            start_time: seg.start,
+            end_time: seg.end,
             start_date: startDate || null,
             end_date: endDate || null,
             department_id: departmentId ? Number(departmentId) : null,
@@ -902,8 +930,8 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
         } catch (err) {
           if (i > 0) {
             setError(
-              `Added ${i} of ${segments.length} segments, but could not add the segment starting at ` +
-                `${formatTimeOfDay(segments[i].start)}: ${err instanceof ApiError ? err.message : 'unknown error'}`,
+              `Added ${i} of ${jobs.length} schedule rows, but could not add ${DAY_NAMES[day]} starting at ` +
+                `${formatTimeOfDay(seg.start)}: ${err instanceof ApiError ? err.message : 'unknown error'}`,
             )
             load()
             return
@@ -1004,23 +1032,47 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
 
       {isAdmin && (
         <form className="inline-form wrap" onSubmit={handleCreate}>
-          <select value={dayOfWeek} onChange={(e) => setDayOfWeek(e.target.value)}>
-            {DAY_NAMES.slice(1).map((name, i) => (
-              <option key={i + 1} value={i + 1}>
-                {name}
-              </option>
-            ))}
-          </select>
+          <div style={{ width: '100%' }}>
+            <span className="field-label">Days</span>
+            <div className="day-multiselect" role="group" aria-label="Days of week">
+              {DAY_NAMES.slice(1).map((name, i) => {
+                const day = i + 1
+                return (
+                  <button
+                    key={day}
+                    type="button"
+                    className={selectedDays.includes(day) ? 'selected' : ''}
+                    aria-pressed={selectedDays.includes(day)}
+                    onClick={() => toggleDay(day)}
+                  >
+                    {name.slice(0, 3)}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
           <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required />
           <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required />
-          <label className="inline-label">
+          {/* A plain div, not <label> -- AdminDatePicker is a compound
+              widget with its own toggle button AND a calendar full of
+              day buttons, not a single native form control. A <label>
+              wrapping it delegates a click anywhere inside (including a
+              day cell deep in the calendar) to its first focusable
+              descendant, re-firing a *second*, browser-native click on
+              the toggle button right after a day pick's own setOpen
+              (false) -- reopening the panel it had just correctly
+              closed. Confirmed via a real (non-synthetic, isTrusted)
+              click event landing on the toggle button immediately after
+              picking a date; BlocksSection's own AdminDatePicker (never
+              wrapped in a <label>) never had this problem. */}
+          <div className="inline-label">
             From (optional)
             <AdminDatePicker value={startDate} onChange={setStartDate} label="Pick start date" />
-          </label>
-          <label className="inline-label">
+          </div>
+          <div className="inline-label">
             Until (optional)
             <AdminDatePicker value={endDate} onChange={setEndDate} label="Pick end date" />
-          </label>
+          </div>
           <label className="inline-label">
             Department (optional)
             <select
@@ -1039,7 +1091,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
               <span className="muted">Assign a department (Departments tab) to set department-specific hours.</span>
             )}
           </label>
-          <button type="submit" disabled={busy}>
+          <button type="submit" disabled={busy || selectedDays.length === 0}>
             {busy ? 'Saving…' : '+ Add working hours'}
           </button>
           {formIsDirty && (
