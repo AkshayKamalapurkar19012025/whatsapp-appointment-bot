@@ -11,7 +11,7 @@ import {
   listPatients,
 } from '../api'
 import type { ArrivalActionResult, AppointmentType, BookingSource, Doctor, Patient, Slot } from '../types'
-import { formatAvailability, formatDate, formatTime } from '../format'
+import { formatAvailability, formatDate, formatPatientId, formatTime } from '../format'
 import { isoDateToday } from './doctorSchedule'
 import AvailabilityBadge from '../AvailabilityBadge'
 import SlotGrid from '../SlotGrid'
@@ -51,6 +51,10 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
   const [patientSearch, setPatientSearch] = useState('')
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
   const [showRegisterModal, setShowRegisterModal] = useState(false)
+  // Opens PatientFormModal in edit mode for the already-selected patient
+  // -- "verify/update details, then continue" without losing the
+  // selection (unlike "Change", which clears it back to search).
+  const [showEditModal, setShowEditModal] = useState(false)
 
   const [doctorId, setDoctorId] = useState('')
   const [appointmentTypeId, setAppointmentTypeId] = useState('')
@@ -174,6 +178,15 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
     setPatients((prev) => [...prev, p])
     selectPatient(p)
   }
+
+  // Updates the selected patient in place -- the appointment-in-
+  // progress (doctor/type/date/slot already chosen) is untouched.
+  function handlePatientEdited(p: Patient) {
+    setPatients((prev) => prev.map((existing) => (existing.id === p.id ? p : existing)))
+    setSelectedPatient(p)
+  }
+
+  const isWalkIn = bookingSource === 'WALK_IN'
 
   // What's still missing before this can be submitted, in the order the
   // page's own steps are numbered -- null once everything required
@@ -362,8 +375,12 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
                 1
               </span>
               <div>
-                <h3>Patient</h3>
-                <p className="muted">Search for an existing patient or register a new one.</p>
+                <h3>{isWalkIn ? 'Walk-in patient' : 'Patient'}</h3>
+                <p className="muted">
+                  {isWalkIn
+                    ? 'Search for the patient who has arrived, or register them now.'
+                    : 'Search for an existing patient or register a new one.'}
+                </p>
               </div>
             </div>
             <div className="book-step1-body">
@@ -398,7 +415,7 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
                             <span className="book-patient-result-info">
                               <strong>{p.name}</strong>
                               <span className="muted">
-                                Patient ID: {p.id} · {p.whatsapp_number}
+                                {formatPatientId(p.id)} · {p.whatsapp_number}
                               </span>
                             </span>
                             <span className="book-patient-result-hint" aria-hidden="true">
@@ -426,9 +443,14 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
                     <span>
                       <CheckCircle size={14} weight="bold" aria-hidden="true" /> Patient selected
                     </span>
-                    <button type="button" className="link" onClick={() => setSelectedPatient(null)}>
-                      Change
-                    </button>
+                    <span className="book-selected-patient-actions">
+                      <button type="button" className="link" onClick={() => setShowEditModal(true)}>
+                        Edit
+                      </button>
+                      <button type="button" className="link" onClick={() => setSelectedPatient(null)}>
+                        Change
+                      </button>
+                    </span>
                   </div>
                   <div className="book-selected-patient-body">
                     <span className="book-patient-avatar" aria-hidden="true">
@@ -436,7 +458,7 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
                     </span>
                     <div>
                       <strong>{selectedPatient.name}</strong>
-                      <div className="muted">Patient ID: {selectedPatient.id}</div>
+                      <div className="muted">{formatPatientId(selectedPatient.id)}</div>
                       <div className="muted">{selectedPatient.whatsapp_number}</div>
                     </div>
                   </div>
@@ -609,7 +631,7 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
                     <>
                       <strong>{selectedPatient.name}</strong>
                       <span className="muted">
-                        Patient ID: {selectedPatient.id} · {selectedPatient.whatsapp_number}
+                        {formatPatientId(selectedPatient.id)} · {selectedPatient.whatsapp_number}
                       </span>
                     </>
                   ) : (
@@ -689,6 +711,16 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
           title="Register new patient"
           onClose={() => setShowRegisterModal(false)}
           onSaved={handlePatientRegistered}
+        />
+      )}
+
+      {showEditModal && selectedPatient && (
+        <PatientFormModal
+          mode="edit"
+          patient={selectedPatient}
+          title="Verify / edit patient details"
+          onClose={() => setShowEditModal(false)}
+          onSaved={handlePatientEdited}
         />
       )}
     </section>

@@ -1,38 +1,36 @@
 import { useEffect, useState } from 'react'
-import { UsersThree } from '@phosphor-icons/react'
+import { MagnifyingGlass, UsersThree } from '@phosphor-icons/react'
 import { ApiError, listPatients } from '../api'
 import type { Patient } from '../types'
-import { formatDate } from '../format'
+import { formatDateTime, formatPatientId } from '../format'
 import { useStaggerReveal } from '../useStaggerReveal'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import PatientFormModal from './PatientFormModal'
 
-type PatientTypeFilter = 'all' | 'first-time' | 'recurring'
-
+// The patient MASTER REGISTRY -- "who is this person", not a booking
+// workflow. Deliberately no permanent first-time/recurring status or
+// filter here any more: a patient isn't permanently "first-time", so
+// visit history is shown as a fact (Last Visit / Visits), not a
+// stored/filterable attribute. Search is the only filter -- if real
+// usage later shows a lighter visit-based filter is actually needed,
+// add it then rather than keeping the old framing around "just in case".
 export default function PatientsPanel() {
   const [patients, setPatients] = useState<Patient[]>([])
   const [searchText, setSearchText] = useState('')
-  const [typeFilter, setTypeFilter] = useState<PatientTypeFilter>('all')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   // 'add' opens PatientFormModal in create mode; a Patient opens it in
-  // edit mode for that row (PATCH /patients/{id}, migrations/0023 --
-  // wired to the UI here for the first time). Both share the exact
+  // edit mode for that row (PATCH /patients/{id}). Both share the exact
   // same modal/component -- there is no second patient form anywhere.
   const [formTarget, setFormTarget] = useState<'add' | Patient | null>(null)
 
-  // Both the free-text search and the first-time/recurring filter are
-  // applied client-side over the already-loaded list, same pattern as
-  // AppointmentsPanel's patient search -- the whole list is small enough
-  // that a round trip per keystroke/toggle would be pure overhead.
   const searchNeedle = searchText.trim().toLowerCase()
   const visiblePatients = patients.filter((p) => {
-    if (typeFilter !== 'all' && (p.patient_type ?? 'first-time') !== typeFilter) return false
     if (!searchNeedle) return true
     return (
       p.name.toLowerCase().includes(searchNeedle) ||
       p.whatsapp_number.toLowerCase().includes(searchNeedle) ||
-      String(p.id).includes(searchNeedle)
+      String(p.id).includes(searchNeedle) ||
+      formatPatientId(p.id).toLowerCase().includes(searchNeedle)
     )
   })
   const tbodyRef = useStaggerReveal<HTMLTableSectionElement>([patients])
@@ -57,53 +55,28 @@ export default function PatientsPanel() {
 
   return (
     <section>
-      <h2>Patients</h2>
-      <p className="muted">
-        The permanent patient directory -- the same record WhatsApp, the patient web login, and every
-        appointment (whatever its booking source) all read and write.
-      </p>
+      <div className="admin-content-header">
+        <div>
+          <h2>Patients</h2>
+          <p className="muted">Manage patient records and demographics.</p>
+        </div>
+        <button type="button" className="btn btn-sm" onClick={() => setFormTarget('add')}>
+          + Register Patient
+        </button>
+      </div>
+
       {error && <p className="error">{error}</p>}
 
-      <button type="button" className="btn btn-sm" onClick={() => setFormTarget('add')}>
-        + Add patient
-      </button>
-
-      <div className="filter-bar">
-        <label className="inline-label">
-          Search
-          <input
-            type="search"
-            placeholder="Name, phone number, or patient ID"
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-          />
-        </label>
-        <label className="inline-label">
-          Type
-          <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v as PatientTypeFilter)}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All</SelectItem>
-              <SelectItem value="first-time">First-time</SelectItem>
-              <SelectItem value="recurring">Recurring</SelectItem>
-            </SelectContent>
-          </Select>
-        </label>
-        {(searchText || typeFilter !== 'all') && (
-          <button
-            type="button"
-            className="btn-secondary btn btn-sm"
-            onClick={() => {
-              setSearchText('')
-              setTypeFilter('all')
-            }}
-          >
-            Clear filters
-          </button>
-        )}
-      </div>
+      <label className="filter-bar-search-input patients-search-input">
+        <MagnifyingGlass size={16} aria-hidden="true" />
+        <input
+          type="search"
+          placeholder="Search by name, mobile number or patient ID…"
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+          aria-label="Search by name, mobile number or patient ID"
+        />
+      </label>
 
       {loading && (
         <div className="state-block">
@@ -125,33 +98,30 @@ export default function PatientsPanel() {
           <thead>
             <tr>
               <th>Patient</th>
-              <th>Contact number</th>
-              <th>Date of birth</th>
-              <th>Gender</th>
-              <th>Type</th>
-              <th>Action</th>
+              <th>Patient ID</th>
+              <th>Mobile</th>
+              <th>Last visit</th>
+              <th>Visits</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody ref={tbodyRef}>
             {visiblePatients.map((p) => {
-              const patientType = p.patient_type ?? 'first-time'
+              const visits = p.appointment_count ?? 0
               return (
                 <tr key={p.id}>
                   <td>
                     <strong>{p.name}</strong>
-                    <div className="muted">Patient ID: {p.id}</div>
                   </td>
+                  <td className="muted">{formatPatientId(p.id)}</td>
                   <td>{p.whatsapp_number}</td>
-                  <td>{p.date_of_birth ? formatDate(p.date_of_birth) : <span className="muted">—</span>}</td>
-                  <td>{p.gender ?? <span className="muted">—</span>}</td>
+                  <td>{p.last_visit_at ? formatDateTime(p.last_visit_at) : <span className="muted">—</span>}</td>
                   <td>
-                    <span className={`pill patient-${patientType}`}>
-                      {patientType === 'recurring' ? 'Recurring' : 'First-time'}
-                    </span>
+                    {visits} visit{visits === 1 ? '' : 's'}
                   </td>
                   <td>
                     <button type="button" className="btn-secondary btn btn-sm" onClick={() => setFormTarget(p)}>
-                      Edit
+                      View / Edit
                     </button>
                   </td>
                 </tr>
@@ -165,7 +135,7 @@ export default function PatientsPanel() {
         <PatientFormModal
           mode={formTarget === 'add' ? 'create' : 'edit'}
           patient={formTarget === 'add' ? null : formTarget}
-          title={formTarget === 'add' ? 'Add patient' : 'Edit patient'}
+          title={formTarget === 'add' ? 'Register patient' : 'Edit patient'}
           onClose={() => setFormTarget(null)}
           onSaved={handleSaved}
         />

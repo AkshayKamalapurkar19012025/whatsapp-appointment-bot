@@ -46,6 +46,17 @@ export function isoDateOnly(year: number, month: number, day: number): string {
   return `${year}-${pad(month)}-${pad(day)}`
 }
 
+// "PT-00124" -- a display-only formatting of the real patients.id
+// (OPD Patients-page redesign). Not a new identifier: there is no
+// separate UHID column in the database, so this never appears in an
+// API request/response, only rendered client-side over the id every
+// other patient/appointment record already carries. Zero-padded to 5
+// digits purely for a consistent look at low ids; ids beyond that
+// width are shown in full rather than truncated.
+export function formatPatientId(id: number): string {
+  return `PT-${String(id).padStart(5, '0')}`
+}
+
 // Unlike formatDate/formatTime above, this is for audit-log-style
 // timestamps (e.g. "doctor added on") that are NOT a clinic wall-clock
 // time -- there's no doctor-local zone to preserve here, just "when did

@@ -4011,6 +4011,22 @@ a.link.danger {
   width: 100%;
 }
 
+/* Patients page (PatientsPanel.tsx) -- the master registry's own
+   search-only header, same input treatment as Book Appointment's
+   patient search (same shared .filter-bar-search-input base, same
+   fix for the double-border bug -- see that class's own comment). */
+.patients-search-input {
+  width: 100%;
+  max-width: 420px;
+  padding: 0 var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.patients-search-input input {
+  padding: 9px 0;
+  width: 100%;
+}
+
 .book-patient-results {
   position: absolute;
   z-index: 5;
@@ -4123,6 +4139,16 @@ a.link.danger {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+}
+
+.book-selected-patient-actions {
+  gap: var(--space-3) !important;
+  text-transform: none;
+}
+
+.book-selected-patient-actions button.link {
+  margin: 0;
+  font-weight: 700;
 }
 
 .book-selected-patient-body {

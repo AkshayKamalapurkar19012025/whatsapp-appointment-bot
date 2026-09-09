@@ -7,7 +7,15 @@ export interface Patient {
   // Absent on the plain create-patient response (a brand new patient has
   // no appointments yet) -- only the list endpoint computes these.
   appointment_count?: number
+  // Kept for any existing reader, but the OPD Patients page no longer
+  // treats this as the patient's primary/permanent attribute -- a
+  // patient isn't permanently "first-time". Prefer appointment_count/
+  // last_visit_at, which the page actually displays.
   patient_type?: 'first-time' | 'recurring'
+  // Most recent non-cancelled/rejected appointment's start_at, or null
+  // if the patient has none yet. Same list-endpoint-only availability
+  // as appointment_count above.
+  last_visit_at?: string | null
   // Both optional everywhere -- registration never requires either
   // (migrations/0023). null on every patient created before this
   // existed, or who simply hasn't had them added yet.

@@ -139,7 +139,18 @@ def get_patients(staff: dict = Depends(get_current_staff)):
                     -- appointments.status on some databases).
                     COUNT(a.id) FILTER (WHERE NOT (a.status::text = ANY(ARRAY['CANCELLED', 'REJECTED']))),
                     p.date_of_birth,
-                    p.gender
+                    p.gender,
+                    -- Most recent real appointment (same exclusion as
+                    -- appointment_count above), an audit-log-style "when
+                    -- did this happen" fact -- see the OPD Patients-page
+                    -- redesign report for why this is deliberately NOT
+                    -- converted to any one doctor's local time the way an
+                    -- appointment slot time is (a patient's history can
+                    -- span doctors in different timezones; format.ts's
+                    -- formatDateTime renders this in the viewer's own
+                    -- local time instead, the same convention already
+                    -- used for created_at elsewhere in this app).
+                    MAX(a.start_at) FILTER (WHERE NOT (a.status::text = ANY(ARRAY['CANCELLED', 'REJECTED'])))
                 FROM patients p
                 LEFT JOIN appointments a ON a.patient_id = p.id
                 GROUP BY p.id, p.name, p.whatsapp_number, p.date_of_birth, p.gender
@@ -155,7 +166,10 @@ def get_patients(staff: dict = Depends(get_current_staff)):
     # "first-time" -- every other status (PENDING/CONFIRMED/CHECKED_IN/
     # COMPLETED/NO_SHOW, see migrations/0011_appointment_lifecycle_
     # statuses.sql and migrations/0015)
-    # counts, including one already in the past.
+    # counts, including one already in the past. Kept for any existing
+    # caller, but the OPD Patients page no longer treats this as the
+    # patient's primary/permanent attribute -- see last_visit_at/
+    # appointment_count instead, which the redesigned page actually shows.
     return [
         {
             "id": row[0],
@@ -165,6 +179,7 @@ def get_patients(staff: dict = Depends(get_current_staff)):
             "patient_type": "recurring" if row[3] > 1 else "first-time",
             "date_of_birth": row[4].isoformat() if row[4] else None,
             "gender": row[5],
+            "last_visit_at": row[6].isoformat() if row[6] else None,
         }
         for row in rows
     ]
