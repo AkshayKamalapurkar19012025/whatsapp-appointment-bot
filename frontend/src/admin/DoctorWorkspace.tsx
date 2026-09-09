@@ -1111,15 +1111,15 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
               picking a date; BlocksSection's own AdminDatePicker (never
               wrapped in a <label>) never had this problem. */}
           <div className="inline-label">
-            From (optional)
+            From
             <AdminDatePicker value={startDate} onChange={setStartDate} label="Pick start date" />
           </div>
           <div className="inline-label">
-            Until (optional)
+            Until
             <AdminDatePicker value={endDate} onChange={setEndDate} label="Pick end date" />
           </div>
           <label className="inline-label">
-            Department (optional)
+            Department
             <select
               value={departmentId}
               onChange={(e) => setDepartmentId(e.target.value)}

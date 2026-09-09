@@ -312,11 +312,11 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
       ) : (
         <form className="doctor-form-grid" onSubmit={handleSaveProfile}>
           <label className="inline-label doctor-form-full">
-            Name
+            Name<span className="required-mark">*</span>
             <input value={name} onChange={(e) => setName(e.target.value)} required />
           </label>
           <label className="inline-label">
-            Specialization
+            Specialization<span className="required-mark">*</span>
             <input
               list={specializationListId}
               value={specialization}
@@ -330,11 +330,11 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
             </datalist>
           </label>
           <label className="inline-label">
-            Sub-specialization <span className="muted">(optional)</span>
+            Sub-specialization
             <input value={subSpecialization} onChange={(e) => setSubSpecialization(e.target.value)} />
           </label>
           <label className="inline-label">
-            Years of experience <span className="muted">(optional)</span>
+            Years of experience
             <input
               type="number"
               min={0}
