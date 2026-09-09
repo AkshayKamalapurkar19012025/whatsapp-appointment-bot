@@ -14,7 +14,7 @@ TRUNCATE TABLE
     mock_sms_outbox,
     patient_otp_codes,
     patient_sessions,
-    booking_sessions,
+    scheduling_sessions,
     appointments,
     doctor_blocks,
     doctor_schedule,
