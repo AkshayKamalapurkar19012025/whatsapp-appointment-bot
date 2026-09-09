@@ -18,6 +18,7 @@ import {
   listAppointmentTypeCatalog,
   listAppointmentTypesForDoctor,
   listDepartments,
+  markArrivedAdmin,
   noShowAdminAppointment,
   rejectAdminAppointment,
   removeAppointmentTypeFromDoctor,
@@ -39,7 +40,7 @@ import type {
   DoctorScheduleEntry,
   Slot,
 } from '../types'
-import { formatDate, formatTime, formatTimeOfDay, doctorSummaryLine } from '../format'
+import { describeArrival, formatDate, formatTime, formatTimeOfDay, doctorSummaryLine } from '../format'
 import DoctorAvatar from '../DoctorAvatar'
 import DepartmentChip from '../DepartmentChip'
 import { departmentIcon } from '../departmentIcon'
@@ -578,6 +579,7 @@ function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: b
     onConfirm: (a) => runLifecycleAction(a.id, confirmAdminAppointment, 'Could not confirm the appointment'),
     onReject: (a) => runLifecycleAction(a.id, rejectAdminAppointment, 'Could not reject the appointment'),
     onCheckIn: (a) => runLifecycleAction(a.id, visitAdminAppointment, 'Could not check in the appointment'),
+    onMarkArrived: (a) => runLifecycleAction(a.id, markArrivedAdmin, 'Could not record the arrival'),
     onNoShow: (a) => runLifecycleAction(a.id, noShowAdminAppointment, 'Could not mark the appointment as a no-show'),
     onComplete: (a) => runLifecycleAction(a.id, completeAdminAppointment, 'Could not mark the appointment completed'),
     onReschedule: startReschedule,
@@ -718,7 +720,16 @@ function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: b
                   </td>
                   <td>{a.token_number !== null ? `#${a.token_number}` : <span className="muted">—</span>}</td>
                   <td>
-                    <span className={`pill status-${a.status.toLowerCase()}`}>{a.status.replace(/_/g, ' ')}</span>
+                    {(() => {
+                      const arrival = describeArrival(a)
+                      return arrival ? (
+                        <span className={arrival.className} title={arrival.sub}>
+                          {arrival.label}
+                        </span>
+                      ) : (
+                        <span className={`pill status-${a.status.toLowerCase()}`}>{a.status.replace(/_/g, ' ')}</span>
+                      )
+                    })()}
                   </td>
                   <td>
                     <AppointmentActionButtons

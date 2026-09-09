@@ -46,6 +46,17 @@ export function isoDateOnly(year: number, month: number, day: number): string {
   return `${year}-${pad(month)}-${pad(day)}`
 }
 
+// "PT-00124" -- a display-only formatting of the real patients.id
+// (OPD Patients-page redesign). Not a new identifier: there is no
+// separate UHID column in the database, so this never appears in an
+// API request/response, only rendered client-side over the id every
+// other patient/appointment record already carries. Zero-padded to 5
+// digits purely for a consistent look at low ids; ids beyond that
+// width are shown in full rather than truncated.
+export function formatPatientId(id: number): string {
+  return `PT-${String(id).padStart(5, '0')}`
+}
+
 // Unlike formatDate/formatTime above, this is for audit-log-style
 // timestamps (e.g. "doctor added on") that are NOT a clinic wall-clock
 // time -- there's no doctor-local zone to preserve here, just "when did
@@ -91,6 +102,75 @@ export function hasStarted(isoString: string): boolean {
   const start = new Date(isoString)
   if (Number.isNaN(start.getTime())) return false
   return start.getTime() <= Date.now()
+}
+
+export interface ArrivalDisplay {
+  label: string
+  sub?: string
+  className: string
+}
+
+// One shared derivation of "what should this appointment row's status
+// pill say" for the arrival-workflow states that plain a.status can't
+// express on its own -- used by AppointmentsPanel's table/mobile card,
+// DoctorWorkspace, and QueueSection alike, so the label logic never
+// drifts into three near-identical copies.
+//
+// Deliberately reads nothing that isn't already on the appointment:
+// arrived_at/start_at/status (migrations/0023's arrived_at, distinct
+// from visited_at -- see mark_arrived_service) and payment_status/
+// token_number (already existed). Returns null when the plain status
+// pill is exactly right as-is (every status except CONFIRMED-with-
+// arrived_at and CHECKED_IN, where payment/queue state adds real
+// information the bare word "Checked in" doesn't carry).
+//
+// Never claims a CHECKED_IN appointment without a token is "waiting on
+// payment" -- that specific wording is used ONLY when payment_status
+// is actually UNPAID; a FAILED attempt says so explicitly instead, and
+// a PAID/WAIVED appointment always has a token by the time this is
+// read (both record_payment_service and waive_consultation_fee_service
+// generate it atomically in the same transaction as the payment_status
+// write), so token_number is checked first, before payment_status.
+export function describeArrival(
+  a: {
+    status: string
+    arrived_at?: string | null
+    start_at: string
+    payment_status?: string | null
+    token_number?: number | null
+  },
+): ArrivalDisplay | null {
+  if (a.status === 'CONFIRMED' && a.arrived_at) {
+    if (!hasStarted(a.start_at)) {
+      return {
+        label: 'Arrived early',
+        sub: `Appointment at ${formatTime(a.start_at)}`,
+        className: 'pill status-arrived-early',
+      }
+    }
+    return {
+      label: 'Arrived',
+      sub: 'Ready to check in',
+      className: 'pill status-arrived',
+    }
+  }
+
+  if (a.status === 'CHECKED_IN') {
+    if (a.token_number != null) {
+      return {
+        label: `Queue Token #${a.token_number}`,
+        className: 'pill status-queued',
+      }
+    }
+    if (a.payment_status === 'FAILED') {
+      return { label: 'Checked in', sub: 'Payment failed', className: 'pill status-checked_in' }
+    }
+    if (a.payment_status === 'UNPAID') {
+      return { label: 'Checked in', sub: 'Awaiting payment', className: 'pill status-checked_in' }
+    }
+  }
+
+  return null
 }
 
 // "N years experience · MBBS, MD (Cardiology)" -- the one-line summary

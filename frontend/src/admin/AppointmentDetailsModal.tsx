@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { X } from '@phosphor-icons/react'
 import type { AdminAppointment } from '../types'
 import { ApiError, recordAppointmentPayment, waiveAppointmentPayment } from '../api'
-import { formatDate, formatDateTime, formatTime } from '../format'
+import { describeArrival, formatDate, formatDateTime, formatTime } from '../format'
 import { AppointmentActionButtons, buildAppointmentActions, type AppointmentActionHandlers } from './AppointmentActions'
 
 const PAYMENT_METHODS = ['CASH', 'UPI', 'CARD', 'OTHER'] as const
@@ -273,9 +273,19 @@ export default function AppointmentDetailsModal({
         </div>
 
         <div className="appointment-details-block appointment-details-status">
-          <span className={`pill status-${appointment.status.toLowerCase()}`}>
-            {appointment.status.replace(/_/g, ' ')}
-          </span>
+          {(() => {
+            const arrival = describeArrival(appointment)
+            return arrival ? (
+              <span className={arrival.className}>
+                {arrival.label}
+                {arrival.sub && <span className="muted"> · {arrival.sub}</span>}
+              </span>
+            ) : (
+              <span className={`pill status-${appointment.status.toLowerCase()}`}>
+                {appointment.status.replace(/_/g, ' ')}
+              </span>
+            )
+          })()}
           {appointment.token_number !== null && <span className="pill token-pill">Token #{appointment.token_number}</span>}
         </div>
 

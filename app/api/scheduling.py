@@ -4113,7 +4113,8 @@ def scheduling(request: SchedulingRequest):
                             appointment_type_id,
                             start_at,
                             end_at,
-                            status
+                            status,
+                            booking_source
                         )
                         VALUES (
                             %s,
@@ -4121,7 +4122,16 @@ def scheduling(request: SchedulingRequest):
                             %s,
                             %s,
                             %s,
-                            'PENDING'
+                            'PENDING',
+                            -- Patient self-service through the WhatsApp
+                            -- bot -- same bucket as the web app's own
+                            -- self-service booking (app/api/
+                            -- patient_scheduling.py passes 'ONLINE' for
+                            -- the identical reason). Not refactored to
+                            -- go through create_appointment_service in
+                            -- this phase -- see migrations/0023's
+                            -- report for why this INSERT stays inline.
+                            'ONLINE'
                         )
                         RETURNING
                             id,

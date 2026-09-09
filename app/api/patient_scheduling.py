@@ -282,6 +282,10 @@ def create_web_appointment(
                     appointment_type_id=body.appointment_type_id,
                     start_at=body.start_at,
                     enforce_scheduling_window=True,
+                    # Patient logged into the web app booking for
+                    # themselves -- self-service, same bucket as
+                    # WhatsApp booking (see app/api/scheduling.py).
+                    booking_source="ONLINE",
                 )
             except svc_exc.DoctorNotFound:
                 raise HTTPException(status_code=404, detail="Doctor not found")

@@ -1,3 +1,5 @@
+export type PatientGender = 'MALE' | 'FEMALE' | 'OTHER'
+
 export interface Patient {
   id: number
   name: string
@@ -5,8 +7,31 @@ export interface Patient {
   // Absent on the plain create-patient response (a brand new patient has
   // no appointments yet) -- only the list endpoint computes these.
   appointment_count?: number
+  // Kept for any existing reader, but the OPD Patients page no longer
+  // treats this as the patient's primary/permanent attribute -- a
+  // patient isn't permanently "first-time". Prefer appointment_count/
+  // last_visit_at, which the page actually displays.
   patient_type?: 'first-time' | 'recurring'
+  // Most recent non-cancelled/rejected appointment's start_at, or null
+  // if the patient has none yet. Same list-endpoint-only availability
+  // as appointment_count above.
+  last_visit_at?: string | null
+  // Both optional everywhere -- registration never requires either
+  // (migrations/0023). null on every patient created before this
+  // existed, or who simply hasn't had them added yet.
+  date_of_birth: string | null
+  gender: PatientGender | null
 }
+
+// ONLINE covers both the patient web app and WhatsApp self-service
+// booking (both are the patient booking for themselves through a
+// channel, not a staff/front-desk action) -- see migrations/0023 and
+// app/api/patient_scheduling.py / app/api/scheduling.py's own
+// booking_source reasoning. PHONE and STAFF_ASSISTED only make sense
+// as a staff member's manual choice on the admin Book Appointment
+// page; WALK_IN is that same choice, plus the trigger for the
+// "Confirm & Check In" combined action.
+export type BookingSource = 'ONLINE' | 'PHONE' | 'WALK_IN' | 'STAFF_ASSISTED'
 
 export interface Department {
   id: number
@@ -249,6 +274,14 @@ export interface AdminAppointment {
   payment_amount: number | null
   paid_at: string | null
   waive_reason: string | null
+  // Physical arrival time (migrations/0023), doctor-local like
+  // start_at/end_at -- distinct from visited_at's role (there is no
+  // separate visited_at field here; CHECKED_IN + this being set is
+  // "formally checked in"). Can be set while status is still
+  // CONFIRMED and start_at is still in the future: that's "arrived
+  // early." See format.ts's describeArrival().
+  arrived_at: string | null
+  booking_source: BookingSource | null
 }
 
 export interface AdminAppointmentActionResult {
@@ -261,6 +294,34 @@ export interface AdminAppointmentActionResult {
   status: string
   duration_minutes: number
   appointment_type_name: string
+  booking_source?: BookingSource | null
+}
+
+// POST /appointments/{id}/arrive -- mark_arrived_service's own shape,
+// distinct from ArrivalActionResult below (no arrival_kind here: this
+// endpoint only ever records a physical arrival, it never itself
+// reaches CHECKED_IN).
+export interface MarkArrivedResult {
+  id: number
+  status: string
+  arrived_at: string
+  start_at: string
+  // False on an idempotent replay (arrived_at was already set) --
+  // matches generate_queue_token_service's own newly_generated flag.
+  newly_recorded: boolean
+}
+
+// POST /appointments/{id}/confirm-and-checkin's shape -- arrival_kind
+// says which of the two actually happened (mark_visited_service's
+// guard may have made it fall back to "arrived_early" instead of a
+// real check-in; see confirm_and_check_in_service's docstring).
+export interface ArrivalActionResult {
+  id: number
+  status: string
+  arrival_kind: 'checked_in' | 'arrived_early'
+  visited_at: string | null
+  arrived_at: string | null
+  start_at?: string
 }
 
 // POST /appointments/{id}/payment and /waive-payment (patient arrival

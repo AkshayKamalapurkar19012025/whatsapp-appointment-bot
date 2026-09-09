@@ -93,6 +93,7 @@ def create_appointment_service(
     appointment_type_id: int,
     start_at,
     enforce_scheduling_window: bool = False,
+    booking_source: str | None = None,
 ):
     # Normalize seconds/microseconds.
     start_at = start_at.replace(
@@ -340,7 +341,8 @@ def create_appointment_service(
                 appointment_type_id,
                 start_at,
                 end_at,
-                status
+                status,
+                booking_source
             )
             VALUES (
                 %s,
@@ -348,7 +350,8 @@ def create_appointment_service(
                 %s,
                 %s,
                 %s,
-                'PENDING'
+                'PENDING',
+                %s
             )
             RETURNING
                 id,
@@ -357,7 +360,8 @@ def create_appointment_service(
                 appointment_type_id,
                 start_at,
                 end_at,
-                status
+                status,
+                booking_source
             """,
             (
                 doctor_id,
@@ -365,6 +369,7 @@ def create_appointment_service(
                 appointment_type_id,
                 start_at,
                 end_at,
+                booking_source,
             ),
         )
     except psycopg.errors.ExclusionViolation:
@@ -385,6 +390,7 @@ def create_appointment_service(
         "start_at": row[4].isoformat(),
         "end_at": row[5].isoformat(),
         "status": row[6],
+        "booking_source": row[7],
         "duration_minutes": duration_minutes,
         "appointment_type_name": appointment_type[1],
     }
@@ -1048,6 +1054,144 @@ def mark_visited_service(cur, appointment_id: int):
         "doctor_id": result_row[3],
         "patient_id": result_row[4],
     }
+
+
+def mark_arrived_service(cur, appointment_id: int):
+    """
+    Staff records that a Confirmed patient has physically arrived at the
+    front desk -- independent of whether their scheduled start_at has
+    passed yet. Deliberately NOT mark_visited_service: that function
+    (unchanged by this addition, guard included) still requires
+    start_at <= now before it will set status='CHECKED_IN', and still
+    means "formally checked in, at the front of the payment/queue
+    gate." arrived_at here means only "physically present" -- an early
+    arrival stays CONFIRMED with arrived_at set and visited_at still
+    NULL, so it can never generate a queue token
+    (generate_queue_token_service is only ever reached from
+    record_payment_service/waive_consultation_fee_service, both of
+    which require status='CHECKED_IN' -- see
+    _lock_appointment_for_payment) and never jumps ahead of patients
+    whose appointment time has actually arrived.
+
+    Idempotent: replaying this for an appointment that already has
+    arrived_at set returns the existing value unchanged rather than
+    overwriting it with a later timestamp (same idempotency shape as
+    generate_queue_token_service above) -- a double-click at the front
+    desk must not silently move a patient's recorded arrival time.
+    """
+    cur.execute(
+        """
+        SELECT status, arrived_at, start_at
+        FROM appointments
+        WHERE id = %s
+        FOR UPDATE
+        """,
+        (appointment_id,),
+    )
+
+    row = cur.fetchone()
+
+    if row is None:
+        raise AppointmentNotFound()
+
+    status, arrived_at, start_at = row
+
+    if status != "CONFIRMED":
+        raise InvalidStatusTransition()
+
+    if arrived_at is not None:
+        return {
+            "id": appointment_id,
+            "status": status,
+            "arrived_at": arrived_at.isoformat(),
+            "start_at": start_at.isoformat(),
+            "newly_recorded": False,
+        }
+
+    cur.execute(
+        """
+        UPDATE appointments
+        SET arrived_at = NOW(),
+            updated_at = NOW()
+        WHERE id = %s
+        RETURNING id, status, arrived_at, start_at
+        """,
+        (appointment_id,),
+    )
+
+    result_row = cur.fetchone()
+
+    return {
+        "id": result_row[0],
+        "status": result_row[1],
+        "arrived_at": result_row[2].isoformat(),
+        "start_at": result_row[3].isoformat(),
+        "newly_recorded": True,
+    }
+
+
+def confirm_and_check_in_service(cur, appointment_id: int):
+    """
+    The walk-in "Confirm & Check In" action: composes confirm_
+    appointment_service, mark_visited_service, and mark_arrived_service
+    above -- none of their bodies duplicated or modified -- into the
+    one action reception wants for a walk-in, without ever weakening
+    mark_visited_service's start_at <= now guard.
+
+    Only reachable from PENDING or CONFIRMED.
+
+    If the appointment's start_at has already arrived, this reaches all
+    the way to CHECKED_IN, same as clicking Confirm then Check In
+    separately. If start_at is still in the future (e.g. a walk-in
+    booked for the earliest open slot, which may be a few minutes from
+    now rather than exactly now), mark_visited_service raises
+    AppointmentNotStarted -- rather than surfacing that as an error,
+    this falls back to mark_arrived_service instead: the appointment
+    ends up CONFIRMED with arrived_at set, exactly the "arrived early"
+    state, and staff check them in for real (the ordinary Check-In
+    action) once their time comes. Never generates a queue token
+    itself either way -- that still only happens via payment/waiver,
+    same as every other path.
+    """
+    cur.execute(
+        "SELECT status FROM appointments WHERE id = %s FOR UPDATE",
+        (appointment_id,),
+    )
+
+    row = cur.fetchone()
+
+    if row is None:
+        raise AppointmentNotFound()
+
+    status = row[0]
+
+    if status not in ("PENDING", "CONFIRMED"):
+        raise InvalidStatusTransition()
+
+    if status == "PENDING":
+        confirm_appointment_service(cur, appointment_id)
+
+    try:
+        visit_result = mark_visited_service(cur, appointment_id)
+        return {
+            "id": visit_result["id"],
+            "status": visit_result["status"],
+            "arrival_kind": "checked_in",
+            "visited_at": visit_result["visited_at"],
+            "arrived_at": None,
+            "doctor_id": visit_result["doctor_id"],
+            "patient_id": visit_result["patient_id"],
+        }
+    except AppointmentNotStarted:
+        arrive_result = mark_arrived_service(cur, appointment_id)
+        return {
+            "id": arrive_result["id"],
+            "status": arrive_result["status"],
+            "arrival_kind": "arrived_early",
+            "visited_at": None,
+            "arrived_at": arrive_result["arrived_at"],
+            "start_at": arrive_result["start_at"],
+        }
 
 
 def mark_completed_service(cur, appointment_id: int):

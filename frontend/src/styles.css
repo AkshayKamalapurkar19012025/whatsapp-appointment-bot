@@ -674,6 +674,14 @@ a.link:hover {
   text-decoration: underline;
 }
 
+/* PatientFormModal's optional-fields disclosure -- smaller and
+   uppercase-free, unlike the rest of .link, since it's a toggle, not a
+   navigational/action link. */
+.patient-form-more-toggle {
+  font-size: 0.82rem;
+  margin: var(--space-1) 0 var(--space-3);
+}
+
 /* Destructive text-link actions (e.g. cancelling an appointment) get
    the same danger color the app already uses elsewhere for destructive
    actions (the confirm-cancel dialog button, the patient-side "Cancel"
@@ -3469,6 +3477,28 @@ a.link.danger {
   color: var(--color-primary-hover);
 }
 
+/* Arrival-workflow labels (migrations/0023, format.ts's describeArrival)
+   -- these override the plain status-confirmed/status-checked_in pill
+   only where arrived_at/payment/token state adds real information the
+   bare status word doesn't carry. .status-arrived-early reuses the
+   warning amber (a soft "not yet actionable" cue, same reasoning as
+   .status-pending) rather than the plain .status-confirmed green, so
+   reception can tell "confirmed, nothing to do yet" apart from
+   "confirmed, but physically here and worth noticing" at a glance.
+   .status-arrived and .status-queued both reuse .status-checked_in's
+   primary tone -- still the same underlying CHECKED_IN-adjacent state,
+   just with more specific text. */
+.pill.status-arrived-early {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.pill.status-arrived,
+.pill.status-queued {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-hover);
+}
+
 /* Payment status (patient arrival workflow Phases 3-5) -- only ever
    shown once a patient has been checked in (see AppointmentsPanel.tsx's
    paymentPill), so PENDING/CONFIRMED's implicit UNPAID never renders. */
@@ -3981,6 +4011,22 @@ a.link.danger {
   width: 100%;
 }
 
+/* Patients page (PatientsPanel.tsx) -- the master registry's own
+   search-only header, same input treatment as Book Appointment's
+   patient search (same shared .filter-bar-search-input base, same
+   fix for the double-border bug -- see that class's own comment). */
+.patients-search-input {
+  width: 100%;
+  max-width: 420px;
+  padding: 0 var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.patients-search-input input {
+  padding: 9px 0;
+  width: 100%;
+}
+
 .book-patient-results {
   position: absolute;
   z-index: 5;
@@ -4093,6 +4139,16 @@ a.link.danger {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+}
+
+.book-selected-patient-actions {
+  gap: var(--space-3) !important;
+  text-transform: none;
+}
+
+.book-selected-patient-actions button.link {
+  margin: 0;
+  font-weight: 700;
 }
 
 .book-selected-patient-body {
