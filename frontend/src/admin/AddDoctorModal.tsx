@@ -23,7 +23,6 @@ export default function AddDoctorModal({
   const [name, setName] = useState('')
   const [specialization, setSpecialization] = useState('')
   const [subSpecialization, setSubSpecialization] = useState('')
-  const [qualifications, setQualifications] = useState('')
   const [yearsOfExperience, setYearsOfExperience] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -38,7 +37,12 @@ export default function AddDoctorModal({
         name,
         specialization,
         sub_specialization: subSpecialization || undefined,
-        qualifications: qualifications || undefined,
+        // No qualifications field here -- a brand-new doctor has no
+        // Education & Credentials entries yet, and that's this app's
+        // one source of truth for qualifications (see format.ts's
+        // qualificationsFromEducation, synced from DoctorProfileSection
+        // whenever education changes). Typing it by hand here would
+        // just be a second, driftable copy.
         years_of_experience: yearsOfExperience ? Number(yearsOfExperience) : undefined,
       })
       onCreated(created)
@@ -98,14 +102,6 @@ export default function AddDoctorModal({
               placeholder="Interventional Cardiology"
               value={subSpecialization}
               onChange={(e) => setSubSpecialization(e.target.value)}
-            />
-          </label>
-          <label className="inline-label">
-            Qualifications <span className="muted">(optional)</span>
-            <input
-              placeholder="MBBS, MD (Cardiology)"
-              value={qualifications}
-              onChange={(e) => setQualifications(e.target.value)}
             />
           </label>
           <label className="inline-label">

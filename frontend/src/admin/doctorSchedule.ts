@@ -42,6 +42,32 @@ export function formatWorkingHours(entries: DoctorScheduleEntry[]): string[] {
   return entries.map((e) => `${formatTimeOfDay(e.start_time)} – ${formatTimeOfDay(e.end_time)}`)
 }
 
+// This calendar week's (Monday-Sunday) working hours, one entry per
+// day -- Overview's "This week" summary. Reuses todaysScheduleEntries/
+// formatWorkingHours against each of the week's 7 real dates (so a
+// schedule row's own start_date/end_date bounds are still respected,
+// same as "today"), rather than a separate day-of-week-only pass that
+// would ignore date ranges.
+export function thisWeekSchedule(
+  entries: DoctorScheduleEntry[],
+  reference: Date = new Date(),
+): { dayOfWeek: number; dateStr: string; hours: string[] }[] {
+  const jsDay = reference.getDay()
+  const mondayOffset = jsDay === 0 ? -6 : 1 - jsDay
+  const monday = new Date(reference)
+  monday.setDate(reference.getDate() + mondayOffset)
+
+  const week: { dayOfWeek: number; dateStr: string; hours: string[] }[] = []
+  for (let i = 0; i < 7; i++) {
+    const date = new Date(monday)
+    date.setDate(monday.getDate() + i)
+    const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+    const dayOfWeek = i + 1
+    week.push({ dayOfWeek, dateStr, hours: formatWorkingHours(todaysScheduleEntries(entries, dateStr, dayOfWeek)) })
+  }
+  return week
+}
+
 function toMinutesSinceMidnight(hhmm: string): number {
   const [h, m] = hhmm.split(':').map(Number)
   return h * 60 + m

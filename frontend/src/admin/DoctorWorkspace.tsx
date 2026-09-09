@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from 'react'
-import { ArrowLeft } from '@phosphor-icons/react'
+import { ArrowLeft, Buildings, CaretDown, Tag, UserCircle } from '@phosphor-icons/react'
 import {
   ApiError,
   assignAppointmentTypeToDoctor,
@@ -51,24 +51,37 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../components/ui/alert-dialog'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import DoctorProfileSection from './DoctorProfileSection'
 import AppointmentDetailsModal from './AppointmentDetailsModal'
 import { AppointmentActionButtons, buildAppointmentActions, type AppointmentActionHandlers } from './AppointmentActions'
-import { DAY_NAMES, formatWorkingHours, isoDateToday, todaysScheduleEntries } from './doctorSchedule'
+import { DAY_NAMES, isoDateToday, thisWeekSchedule } from './doctorSchedule'
 
 const ALL_FILTER_VALUE = '__all__'
 
 type WorkspaceTab = 'overview' | 'appointments' | 'schedule' | 'blocks' | 'departments' | 'types' | 'profile'
 
-const WORKSPACE_TABS: { key: WorkspaceTab; label: string }[] = [
+// The four operational tabs stay equally-weighted, top-level buttons --
+// each answers a different day-to-day question ("what's happening
+// today", "who's coming", "when is the doctor available/unavailable").
+// Departments/Appointment types/Profile are configuration, changed
+// rarely, not something that needs to compete for the same visual
+// weight -- grouped under one "More" menu instead of three more equal
+// tabs alongside the four operational ones. Internally these are still
+// the same seven `tab` values/components as before; only how they're
+// reached changed.
+const PRIMARY_TABS: { key: WorkspaceTab; label: string }[] = [
   { key: 'overview', label: 'Overview' },
   { key: 'appointments', label: 'Appointments' },
   { key: 'schedule', label: 'Schedule' },
   { key: 'blocks', label: 'Time off' },
-  { key: 'departments', label: 'Departments' },
-  { key: 'types', label: 'Appointment Types' },
-  { key: 'profile', label: 'Profile' },
+]
+
+const MORE_TABS: { key: WorkspaceTab; label: string; icon: React.ReactNode }[] = [
+  { key: 'departments', label: 'Departments', icon: <Buildings size={15} /> },
+  { key: 'types', label: 'Appointment types', icon: <Tag size={15} /> },
+  { key: 'profile', label: 'Profile', icon: <UserCircle size={15} /> },
 ]
 
 // The doctor workspace -- everything about one doctor, one level below
@@ -102,19 +115,22 @@ export default function DoctorWorkspace({
         <DoctorAvatar photoUrl={doctor.photo_url} name={doctor.name} size={72} />
         <div className="doctor-workspace-header-body">
           <h2>{doctor.name}</h2>
-          <p className="muted">
-            {[doctor.specialization, doctorSummaryLine(doctor), doctor.education_location].filter(Boolean).join(' · ')}
-          </p>
+          {/* Compact by design (spec: don't repeat detail in the
+              header that the body already shows) -- specialization
+              and the doctor's institution/location, not years of
+              experience or qualifications, which live in Overview's
+              Quick information and the Profile page below. */}
+          <p className="muted">{[doctor.specialization, doctor.education_location].filter(Boolean).join(' · ')}</p>
         </div>
         {isAdmin && (
           <button type="button" className="btn-secondary btn btn-sm" onClick={() => setTab('profile')}>
-            Edit Profile
+            Edit profile
           </button>
         )}
       </div>
 
       <div className="tabs doctor-workspace-tabs">
-        {WORKSPACE_TABS.map((t) => (
+        {PRIMARY_TABS.map((t) => (
           <button
             key={t.key}
             type="button"
@@ -124,6 +140,23 @@ export default function DoctorWorkspace({
             {t.label}
           </button>
         ))}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className={MORE_TABS.some((t) => t.key === tab) ? 'tab active doctor-workspace-more' : 'tab doctor-workspace-more'}
+            >
+              More <CaretDown size={13} weight="bold" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            {MORE_TABS.map((t) => (
+              <DropdownMenuItem key={t.key} onSelect={() => setTab(t.key)}>
+                {t.icon} {t.label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {tab === 'overview' && (
@@ -156,6 +189,8 @@ function OverviewSection({
 }) {
   const [appointments, setAppointments] = useState<AdminAppointment[]>([])
   const [schedule, setSchedule] = useState<DoctorScheduleEntry[]>([])
+  const [departments, setDepartments] = useState<Department[]>([])
+  const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -166,10 +201,14 @@ function OverviewSection({
     Promise.all([
       listAdminAppointments({ doctor_id: doctor.id, date_from: today, date_to: today }),
       getDoctorScheduleAdmin(doctor.id),
+      getDoctorDepartments(doctor.id),
+      listAppointmentTypesForDoctor(doctor.id),
     ])
-      .then(([todaysAppointments, scheduleEntries]) => {
+      .then(([todaysAppointments, scheduleEntries, depts, types]) => {
         setAppointments([...todaysAppointments].sort((a, b) => a.start_at.localeCompare(b.start_at)))
         setSchedule(scheduleEntries)
+        setDepartments(depts)
+        setAppointmentTypes(types)
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Could not load today's overview"))
       .finally(() => setLoading(false))
@@ -186,40 +225,32 @@ function OverviewSection({
     )
   }
 
-  const confirmed = appointments.filter((a) => a.status === 'CONFIRMED').length
-  const waiting = appointments.filter((a) => a.status === 'CHECKED_IN' && a.token_number !== null).length
+  const checkedIn = appointments.filter((a) => a.status === 'CHECKED_IN').length
   const completed = appointments.filter((a) => a.status === 'COMPLETED').length
-  const noShow = appointments.filter((a) => a.status === 'NO_SHOW').length
   // eslint-disable-next-line react/purity -- read once per render, same as AppointmentsPanel's own "is this upcoming" check
   const now = Date.now()
   const next = appointments.find(
     (a) => (a.status === 'PENDING' || a.status === 'CONFIRMED') && new Date(a.start_at).getTime() >= now,
   )
-
-  const todaysHours = formatWorkingHours(todaysScheduleEntries(schedule))
+  const summaryLine = doctorSummaryLine(doctor)
+  const week = thisWeekSchedule(schedule)
 
   return (
     <div>
       {error && <p className="error">{error}</p>}
 
-      <h4>Today&apos;s summary</h4>
-      <div className="dashboard-grid" style={{ marginBottom: 'var(--space-4)' }}>
+      <span className="overview-eyebrow">Today</span>
+      <div className="dashboard-grid" style={{ marginBottom: 'var(--space-5)' }}>
         <div className="stat-card">
           <div className="stat-body">
             <span className="stat-value">{appointments.length}</span>
-            <span className="stat-label">Appointments today</span>
+            <span className="stat-label">Appointments</span>
           </div>
         </div>
         <div className="stat-card">
           <div className="stat-body">
-            <span className="stat-value">{confirmed}</span>
-            <span className="stat-label">Confirmed</span>
-          </div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-body">
-            <span className="stat-value">{waiting}</span>
-            <span className="stat-label">Waiting</span>
+            <span className="stat-value">{checkedIn}</span>
+            <span className="stat-label">Checked in</span>
           </div>
         </div>
         <div className="stat-card">
@@ -228,55 +259,69 @@ function OverviewSection({
             <span className="stat-label">Completed</span>
           </div>
         </div>
-        <div className="stat-card">
-          <div className="stat-body">
-            <span className="stat-value">{noShow}</span>
-            <span className="stat-label">No-shows</span>
+      </div>
+
+      <span className="overview-eyebrow">Next appointment</span>
+      {next ? (
+        <div className="next-appointment-card">
+          <div>
+            <strong>{formatTime(next.start_at)}</strong>
+            <span className="next-appointment-patient">{next.patient_name}</span>
+            <span className="muted">{next.appointment_type_name}</span>
+            {next.token_number !== null && <span className="pill token-pill">Token #{next.token_number}</span>}
           </div>
+          <button type="button" className="btn-secondary btn btn-sm" onClick={() => onGoToTab('appointments')}>
+            View appointment
+          </button>
+        </div>
+      ) : (
+        <p className="muted" style={{ marginBottom: 'var(--space-5)' }}>
+          No upcoming appointments today.
+        </p>
+      )}
+
+      <span className="overview-eyebrow">Quick information</span>
+      <div className="quick-info-grid">
+        <div>
+          <span className="quick-info-label">Specialization</span>
+          <span>{doctor.specialization ?? '—'}</span>
+        </div>
+        <div>
+          <span className="quick-info-label">Experience</span>
+          <span>{summaryLine ?? '—'}</span>
+        </div>
+        <div>
+          <span className="quick-info-label">Departments</span>
+          {departments.length > 0 ? (
+            <span className="doctor-department-chips">
+              {departments.map((d) => {
+                const Icon = departmentIcon(d.name)
+                return <DepartmentChip key={d.id} department={d} icon={<Icon size={12} weight="bold" />} />
+              })}
+            </span>
+          ) : (
+            <span className="muted">Not assigned to any department.</span>
+          )}
+        </div>
+        <div>
+          <span className="quick-info-label">Appointment types</span>
+          <span>{appointmentTypes.length > 0 ? appointmentTypes.map((t) => t.name).join(' · ') : '—'}</span>
         </div>
       </div>
 
-      <p className="muted">
-        {todaysHours.length > 0 ? `Working today: ${todaysHours.join(', ')}` : 'Not scheduled to work today.'}
-        {next && (
-          <>
-            {' · '}Next appointment: {formatTime(next.start_at)} with {next.patient_name}
-          </>
-        )}
-      </p>
+      <span className="overview-eyebrow">This week</span>
+      <div className="this-week-list">
+        {week.map((day) => (
+          <div key={day.dateStr} className="this-week-row">
+            <span className="this-week-day">{DAY_NAMES[day.dayOfWeek]}</span>
+            <span className={day.hours.length > 0 ? '' : 'muted'}>
+              {day.hours.length > 0 ? day.hours.join(', ') : 'Not scheduled'}
+            </span>
+          </div>
+        ))}
+      </div>
 
-      <h4>Today&apos;s schedule</h4>
-      {appointments.length === 0 ? (
-        <p className="muted">No appointments scheduled for today.</p>
-      ) : (
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Patient</th>
-              <th>Type</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {appointments.map((a) => (
-              <tr key={a.id}>
-                <td>
-                  {formatTime(a.start_at)} – {formatTime(a.end_at)}
-                </td>
-                <td>{a.patient_name}</td>
-                <td>{a.appointment_type_name}</td>
-                <td>
-                  <span className={`pill status-${a.status.toLowerCase()}`}>{a.status.replace(/_/g, ' ')}</span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      <h4>Quick actions</h4>
-      <div className="doctor-quick-actions">
+      <div className="doctor-quick-actions" style={{ marginTop: 'var(--space-5)' }}>
         <button type="button" className="btn-secondary btn btn-sm" onClick={() => onGoToTab('schedule')}>
           Manage schedule
         </button>
