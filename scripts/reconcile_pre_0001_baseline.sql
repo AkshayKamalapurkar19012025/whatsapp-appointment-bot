@@ -20,27 +20,46 @@
 --   2. All 10 of departments/doctors/doctor_departments/appointment_types/
 --      doctor_appointment_types/doctor_schedule/doctor_blocks/patients/
 --      appointments/booking_sessions already exist with data in them.
---   3. `\d doctor_appointment_types` shows NO `updated_at` column (the
---      one gap this script closes) -- if it already has one, the ADD
+--   3. `\d doctor_appointment_types`/`\d departments`/`\d doctors`/
+--      `\d appointment_types` show NO `updated_at` column (the four gaps
+--      this script closes) -- if any already has one, that table's ADD
 --      COLUMN IF NOT EXISTS below is a safe no-op either way.
 -- If your database doesn't match this shape, do not run this file --
 -- work out the actual gap first (see the migrations/ each table's DDL
 -- and compare against `\d+ <table>` for every table).
 --
 -- What this fixes and why it's required, not optional:
--- doctor_appointment_types.updated_at was missing on the database this
--- was written against, even though app/api/doctor_appointment_types.py's
--- reactivation path (assign_appointment_type_to_doctor, the UPDATE ...
--- SET ... updated_at = NOW() branch that reassigns a previously-removed
--- appointment type) already executes exactly that UPDATE. Without this
--- column, that specific, real, currently-shipped code path fails with
--- UndefinedColumn. This adds it, matching migrations/0001's own
--- definition for a fresh install (TIMESTAMPTZ NOT NULL DEFAULT NOW())
--- exactly, so a reconciled database and a fresh 0001 install end up
--- structurally identical for this column. Existing rows backfill to
--- NOW() -- there is no created_at on this table to backfill from
--- instead (also true on a fresh 0001 install: DEFAULT NOW() only
--- applies going forward from whenever the column starts existing).
+-- doctor_appointment_types.updated_at, departments.updated_at,
+-- doctors.updated_at, and appointment_types.updated_at were all missing
+-- on the database this was written against, even though real,
+-- currently-shipped code writes to every one of them: app/api/
+-- doctor_appointment_types.py's reactivation path (assign_appointment_
+-- type_to_doctor's UPDATE ... SET ... updated_at = NOW() branch that
+-- reassigns a previously-removed appointment type), app/api/
+-- departments.py's update_department/delete_department, app/api/
+-- doctors.py's update path, and app/api/appointment_types.py's
+-- update/delete paths. Without these columns, those specific paths fail
+-- with UndefinedColumn (confirmed in production: a real DELETE/PUT
+-- against departments and appointment_types on a database reconciled by
+-- an earlier version of this script that omitted them). Adds all four,
+-- matching migrations/0001's own definition for a fresh install
+-- (TIMESTAMPTZ NOT NULL DEFAULT NOW()) exactly, so a reconciled database
+-- and a fresh 0001 install end up structurally identical for these
+-- columns. Existing rows backfill to NOW() -- there is no created_at on
+-- doctor_appointment_types to backfill from instead (also true on a
+-- fresh 0001 install: DEFAULT NOW() only applies going forward from
+-- whenever the column starts existing); departments/doctors/
+-- appointment_types do have created_at, but 0001 itself doesn't backfill
+-- updated_at from created_at for a fresh install either, so this script
+-- doesn't invent that guarantee here.
+--
+-- An earlier version of this script asserted (based on a full-repository
+-- search at the time) that no code touched updated_at on departments/
+-- doctors/appointment_types/doctor_departments/doctor_schedule/
+-- doctor_blocks, and left all six without it. That assertion was true
+-- for doctor_departments/doctor_schedule/doctor_blocks, but wrong -- or
+-- became wrong as the code changed -- for the other three, which is
+-- what this revision fixes.
 --
 -- Deliberately NOT changed by this script (verified against the actual
 -- application code in app/api/*.py and app/services/*.py, not assumed):
@@ -64,11 +83,9 @@
 --     actually null in practice; loosening the guarantee doesn't change
 --     app behavior, and tightening it isn't required by anything reading
 --     this column.
---   * missing `created_at`/`updated_at` on doctor_departments/
---     appointment_types/departments/doctors/doctor_schedule/doctor_blocks
---     -- confirmed via a full-repository search that no code reads or
---     writes these columns on these specific tables (unlike
---     doctor_appointment_types.updated_at above, which is required).
+--   * missing `updated_at` on doctor_departments/doctor_schedule/
+--     doctor_blocks -- confirmed via a full-repository search that no
+--     code reads or writes this column on these three specific tables.
 --
 -- After this script runs, `python scripts/migrate.py` applies 0002-0008
 -- through the normal, unmodified runner. Every one of those was
@@ -88,6 +105,15 @@
 BEGIN;
 
 ALTER TABLE doctor_appointment_types
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+ALTER TABLE departments
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+ALTER TABLE doctors
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+ALTER TABLE appointment_types
     ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
