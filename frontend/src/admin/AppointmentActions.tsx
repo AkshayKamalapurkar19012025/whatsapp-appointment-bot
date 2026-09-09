@@ -118,8 +118,25 @@ export function buildAppointmentActions(
   return { primary: null, secondary: null, overflow: [viewDetails], note: null }
 }
 
-export function AppointmentActionButtons({ actions, busy }: { actions: AppointmentActionSet; busy: boolean }) {
-  const { primary, secondary, overflow, note } = actions
+export function AppointmentActionButtons({
+  actions,
+  busy,
+  compact,
+}: {
+  actions: AppointmentActionSet
+  busy: boolean
+  // The appointments table row and mobile card pass this: only ONE
+  // primary action shown inline, everything else (including what would
+  // otherwise be the inline secondary button, e.g. Reject next to
+  // Confirm) folds into the "..." overflow menu instead. Redesign spec:
+  // "Do NOT display many text actions next to each other." The details
+  // modal has room and omits this, so it still shows primary+secondary
+  // side by side there.
+  compact?: boolean
+}) {
+  const { primary, secondary, overflow: rawOverflow, note } = actions
+  const showSecondaryInline = secondary && !compact
+  const overflow = compact && secondary ? [secondary, ...rawOverflow] : rawOverflow
 
   return (
     <div className="appointment-actions-row">
@@ -129,7 +146,7 @@ export function AppointmentActionButtons({ actions, busy }: { actions: Appointme
           {primary.label}
         </button>
       )}
-      {secondary && (
+      {showSecondaryInline && (
         <button
           type="button"
           className={secondary.variant === 'danger' ? 'btn-secondary btn-outline-danger btn btn-sm' : 'btn-secondary btn btn-sm'}
