@@ -112,6 +112,20 @@ export function doctorSummaryLine(doctor: {
   return parts.length > 0 ? parts.join(' · ') : null
 }
 
+// "MBBS · MD · DM" -- the doctor's qualifications, derived from their
+// Education & Credentials entries (DoctorProfileSection.tsx) rather
+// than a second, separately-typed free-text field. doctors.qualifications
+// (DoctorProfileSummary's own field, used by doctorSummaryLine above
+// and every compact card that isn't the full profile page) stays as
+// the one already-existing column/API field this gets *written into*
+// whenever education changes, so those other, unrelated call sites
+// keep reading a real value with no API change -- this function is
+// just "what should that value be", computed from the one real source
+// of truth (education), not a second place to type it by hand.
+export function qualificationsFromEducation(education: { qualification: string }[]): string {
+  return education.map((e) => e.qualification).join(' · ')
+}
+
 // "+91 ******3210" -- masks a "+91XXXXXXXXXX" number (PhoneInput's shape)
 // for display on the OTP screen, leaving only the last 4 digits visible.
 // Falls back to the raw value unmasked for anything that doesn't match

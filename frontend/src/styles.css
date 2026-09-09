@@ -1720,6 +1720,108 @@ a.link.danger {
   width: 100%;
 }
 
+.doctor-workspace-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Overview page (DoctorWorkspace.tsx's OverviewSection) -- small
+   uppercase eyebrow labels ahead of each section (Today/Next
+   appointment/Quick information/This week), the one place this app
+   still uses all-caps, kept small and muted rather than a full-size
+   heading. */
+.overview-eyebrow {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  margin: var(--space-5) 0 var(--space-2);
+}
+
+.overview-eyebrow:first-child {
+  margin-top: 0;
+}
+
+.next-appointment-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  margin-bottom: var(--space-5);
+}
+
+.next-appointment-card > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.next-appointment-patient {
+  font-weight: 600;
+}
+
+.quick-info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.quick-info-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.quick-info-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.this-week-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  margin-bottom: var(--space-2);
+}
+
+.this-week-row {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: 10px var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.this-week-row:last-child {
+  border-bottom: none;
+}
+
+.this-week-day {
+  font-weight: 600;
+  min-width: 90px;
+}
+
+@media (max-width: 560px) {
+  .quick-info-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Professional square/circular photo presentation, and the fallback
    avatar shown in its place -- shared by the admin doctor grid, the
    patient-facing compact booking cards, and the View Profile modal
@@ -1792,28 +1894,28 @@ a.link.danger {
   margin-top: var(--space-1);
 }
 
-/* Admin "Profile" tab (DoctorProfileSection.tsx): photo upload row and
-   the Education & Training list. */
-.doctor-profile-photo-row {
+/* Admin doctor workspace "Profile" page (DoctorProfileSection.tsx):
+   photo block and the Education & Credentials card list. */
+.profile-photo-block {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
-  margin-bottom: var(--space-4);
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
 }
 
-.doctor-profile-photo-actions {
+.profile-photo-actions {
   display: flex;
   align-items: center;
   gap: var(--space-3);
 }
 
-.doctor-photo-upload-label {
+.profile-photo-upload-label {
   display: inline-flex;
   align-items: center;
   cursor: pointer;
 }
 
-.doctor-photo-upload-label input[type='file'] {
+.profile-photo-upload-label input[type='file'] {
   /* Visually hidden but still keyboard/screen-reader operable via the
      wrapping <label>, rather than display:none which some assistive
      tech skips entirely. */
@@ -1824,6 +1926,57 @@ a.link.danger {
   opacity: 0;
 }
 
+.education-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+}
+
+.education-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.education-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.education-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.education-card-body .pill {
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
+.education-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+/* Retained for the patient-facing DoctorProfileModal.tsx, which shows
+   the same education history in a simpler read-only list. */
 .education-list {
   list-style: none;
   padding: 0;

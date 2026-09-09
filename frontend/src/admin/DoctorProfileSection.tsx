@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from 'react'
+import { GraduationCap } from '@phosphor-icons/react'
 import {
   ApiError,
   addDoctorEducation,
@@ -7,23 +8,43 @@ import {
   listDepartments,
   removeDoctorEducation,
   removeDoctorPhoto,
-  unfeatureDoctorEducation,
   updateDoctor,
   uploadDoctorPhoto,
 } from '../api'
 import type { Department, Doctor, DoctorEducationEntry, DoctorProfile } from '../types'
+import { qualificationsFromEducation } from '../format'
 import DoctorAvatar from '../DoctorAvatar'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog'
 
-// The admin-only "Profile" tab of DoctorDetail.tsx: edit the scalar
-// profile fields (specialization/sub-specialization/qualifications/
-// years of experience), upload/replace/remove the profile photo, and
-// manage the multi-entry Education & Training list -- including which
-// single entry (if any) is "featured" onto the patient-facing compact
-// booking card (see migrations/0014_doctor_profile.sql's partial unique
-// index: at most one featured entry per doctor, never auto-chosen).
+// The "Profile" page reached from the doctor workspace's "More" menu
+// (DoctorWorkspace.tsx). Two things, each with one source of truth:
 //
-// Kept in its own file rather than folded into DoctorDetail.tsx, which
-// was already long before this tab existed.
+// 1. Professional information -- read-only by default (name,
+//    specialization, sub-specialization, years of experience,
+//    qualifications), with an explicit Edit/Save/Cancel cycle instead
+//    of always-open inputs. "Qualifications" is never a form field
+//    here -- it's derived from Education & Credentials below (see
+//    format.ts's qualificationsFromEducation) and pushed into the same
+//    doctors.qualifications column/API field every other compact card
+//    (the Doctors directory, its hover popover) already reads, so
+//    those keep working unchanged with no second, driftable place to
+//    type it.
+// 2. Education & Credentials -- add/edit/remove entries, with the
+//    "shown on patient profile" flag set right in the add/edit form
+//    (migrations/0014_doctor_profile.sql's one-featured-entry-per-
+//    doctor rule, unchanged). There's no PUT /education/{id} endpoint
+//    on the backend -- "Edit" is a DELETE of the old row followed by a
+//    POST of the new one (re-featuring afterwards if the edited entry
+//    was the featured one), not a new API.
 export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean }) {
   const [profile, setProfile] = useState<DoctorProfile | null>(null)
   const [departments, setDepartments] = useState<Department[]>([])
@@ -31,47 +52,51 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
   const [loading, setLoading] = useState(true)
   const specializationListId = useId()
 
+  const [editing, setEditing] = useState(false)
   const [name, setName] = useState('')
   const [specialization, setSpecialization] = useState('')
   const [subSpecialization, setSubSpecialization] = useState('')
-  const [qualifications, setQualifications] = useState('')
   const [yearsOfExperience, setYearsOfExperience] = useState('')
   const [savingProfile, setSavingProfile] = useState(false)
 
   const [photoBusy, setPhotoBusy] = useState(false)
 
+  const [showEduForm, setShowEduForm] = useState(false)
+  const [editingEduId, setEditingEduId] = useState<number | null>(null)
   const [eduQualification, setEduQualification] = useState('')
   const [eduInstitution, setEduInstitution] = useState('')
   const [eduCity, setEduCity] = useState('')
   const [eduCountry, setEduCountry] = useState('')
   const [eduYear, setEduYear] = useState('')
+  const [eduFeatured, setEduFeatured] = useState(false)
   const [eduBusy, setEduBusy] = useState(false)
+  const [removeEduTarget, setRemoveEduTarget] = useState<DoctorEducationEntry | null>(null)
 
   function load() {
     setLoading(true)
     setError(null)
     getDoctorProfile(doctor.id)
-      .then((p) => {
-        setProfile(p)
-        setName(p.name)
-        setSpecialization(p.specialization ?? '')
-        setSubSpecialization(p.sub_specialization ?? '')
-        setQualifications(p.qualifications ?? '')
-        setYearsOfExperience(p.years_of_experience !== null ? String(p.years_of_experience) : '')
-      })
+      .then(setProfile)
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load doctor profile'))
       .finally(() => setLoading(false))
   }
 
   useEffect(load, [doctor.id])
 
-  // Same specialization-suggestion source as DoctorsPanel.tsx's create
-  // form -- fetched once here too since this section can be opened
-  // without ever visiting that form first (selecting an existing doctor
-  // straight from the grid).
+  // Specialization-suggestion source for the edit form's datalist.
   useEffect(() => {
     listDepartments().then(setDepartments).catch(() => undefined)
   }, [])
+
+  function startEdit() {
+    if (!profile) return
+    setName(profile.name)
+    setSpecialization(profile.specialization ?? '')
+    setSubSpecialization(profile.sub_specialization ?? '')
+    setYearsOfExperience(profile.years_of_experience !== null ? String(profile.years_of_experience) : '')
+    setError(null)
+    setEditing(true)
+  }
 
   async function handleSaveProfile(e: React.FormEvent) {
     e.preventDefault()
@@ -82,10 +107,11 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
         name,
         specialization,
         sub_specialization: subSpecialization || undefined,
-        qualifications: qualifications || undefined,
+        qualifications: profile ? qualificationsFromEducation(profile.education) : undefined,
         years_of_experience: yearsOfExperience ? Number(yearsOfExperience) : undefined,
       })
       setProfile((prev) => (prev ? { ...prev, ...updated } : prev))
+      setEditing(false)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not save doctor profile')
     } finally {
@@ -122,52 +148,99 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
     }
   }
 
-  async function handleAddEducation(e: React.FormEvent) {
+  // Keeps doctors.qualifications (the compact-card field every other
+  // listing reads) in sync with Education & Credentials -- called
+  // after every add/remove/edit below so it's never a step the admin
+  // has to remember separately. PUT /doctors/{id} overwrites every
+  // scalar column on the row (no partial-update support), so this has
+  // to resend the doctor's other current fields alongside the newly
+  // computed qualifications, not qualifications alone.
+  async function syncQualifications(freshProfile: DoctorProfile) {
+    try {
+      await updateDoctor(doctor.id, {
+        name: freshProfile.name,
+        specialization: freshProfile.specialization ?? '',
+        sub_specialization: freshProfile.sub_specialization ?? undefined,
+        years_of_experience: freshProfile.years_of_experience ?? undefined,
+        qualifications: qualificationsFromEducation(freshProfile.education),
+      })
+    } catch {
+      // Best-effort -- the education change itself already succeeded
+      // and is what the refreshed profile above already shows; a
+      // failure to also refresh the derived summary field elsewhere
+      // isn't worth blocking on.
+    }
+  }
+
+  function resetEduForm() {
+    setShowEduForm(false)
+    setEditingEduId(null)
+    setEduQualification('')
+    setEduInstitution('')
+    setEduCity('')
+    setEduCountry('')
+    setEduYear('')
+    setEduFeatured(false)
+  }
+
+  function startAddEducation() {
+    resetEduForm()
+    setShowEduForm(true)
+  }
+
+  function startEditEducation(entry: DoctorEducationEntry) {
+    setEditingEduId(entry.id)
+    setEduQualification(entry.qualification)
+    setEduInstitution(entry.institution)
+    setEduCity(entry.city)
+    setEduCountry(entry.country)
+    setEduYear(String(entry.completion_year))
+    setEduFeatured(entry.is_primary)
+    setError(null)
+    setShowEduForm(true)
+  }
+
+  async function handleSubmitEducation(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
     setEduBusy(true)
     try {
-      await addDoctorEducation(doctor.id, {
+      if (editingEduId !== null) {
+        await removeDoctorEducation(doctor.id, editingEduId)
+      }
+      const created = await addDoctorEducation(doctor.id, {
         qualification: eduQualification,
         institution: eduInstitution,
         city: eduCity,
         country: eduCountry,
         completion_year: Number(eduYear),
       })
-      setEduQualification('')
-      setEduInstitution('')
-      setEduCity('')
-      setEduCountry('')
-      setEduYear('')
-      load()
+      if (eduFeatured) {
+        await featureDoctorEducation(doctor.id, created.id)
+      }
+      resetEduForm()
+      const refreshed = await getDoctorProfile(doctor.id)
+      setProfile(refreshed)
+      await syncQualifications(refreshed)
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not add education entry')
+      setError(err instanceof ApiError ? err.message : 'Could not save this education entry')
     } finally {
       setEduBusy(false)
     }
   }
 
-  async function handleRemoveEducation(educationId: number) {
+  async function confirmRemoveEducation() {
+    if (!removeEduTarget) return
     setError(null)
     try {
-      await removeDoctorEducation(doctor.id, educationId)
-      load()
+      await removeDoctorEducation(doctor.id, removeEduTarget.id)
+      const refreshed = await getDoctorProfile(doctor.id)
+      setProfile(refreshed)
+      await syncQualifications(refreshed)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not remove education entry')
-    }
-  }
-
-  async function handleToggleFeature(entry: DoctorEducationEntry) {
-    setError(null)
-    try {
-      if (entry.is_primary) {
-        await unfeatureDoctorEducation(doctor.id, entry.id)
-      } else {
-        await featureDoctorEducation(doctor.id, entry.id)
-      }
-      load()
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not update the featured education entry')
+    } finally {
+      setRemoveEduTarget(null)
     }
   }
 
@@ -184,16 +257,18 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
     return error ? <p className="error">{error}</p> : null
   }
 
+  const qualifications = qualificationsFromEducation(profile.education)
+
   return (
     <div>
       {error && <p className="error">{error}</p>}
 
-      <div className="doctor-profile-photo-row">
-        <DoctorAvatar photoUrl={profile.photo_url} name={profile.name} size={96} />
+      <div className="profile-photo-block">
+        <DoctorAvatar photoUrl={profile.photo_url} name={profile.name} size={88} />
         {isAdmin && (
-          <div className="doctor-profile-photo-actions">
-            <label className="btn-secondary btn doctor-photo-upload-label">
-              {photoBusy ? 'Uploading…' : profile.photo_url ? 'Replace photo' : 'Upload photo'}
+          <div className="profile-photo-actions">
+            <label className="btn-secondary btn btn-sm profile-photo-upload-label">
+              {photoBusy ? 'Uploading…' : 'Change photo'}
               <input
                 type="file"
                 accept="image/jpeg,image/png,image/webp"
@@ -203,14 +278,38 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
             </label>
             {profile.photo_url && (
               <button type="button" className="link danger" onClick={handleRemovePhoto} disabled={photoBusy}>
-                Remove photo
+                Remove
               </button>
             )}
           </div>
         )}
       </div>
 
-      {isAdmin ? (
+      <div className="admin-content-header">
+        <div>
+          <h4 style={{ margin: 0 }}>Professional information</h4>
+        </div>
+        {isAdmin && !editing && (
+          <button type="button" className="btn-secondary btn btn-sm" onClick={startEdit}>
+            Edit profile
+          </button>
+        )}
+      </div>
+
+      {!editing ? (
+        <dl className="summary">
+          <dt>Name</dt>
+          <dd>{profile.name}</dd>
+          <dt>Specialization</dt>
+          <dd>{profile.specialization ?? '—'}</dd>
+          <dt>Sub-specialization</dt>
+          <dd>{profile.sub_specialization ?? '—'}</dd>
+          <dt>Years of experience</dt>
+          <dd>{profile.years_of_experience ?? '—'}</dd>
+          <dt>Qualifications</dt>
+          <dd>{qualifications || '—'}</dd>
+        </dl>
+      ) : (
         <form className="doctor-form-grid" onSubmit={handleSaveProfile}>
           <label className="inline-label doctor-form-full">
             Name
@@ -235,10 +334,6 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
             <input value={subSpecialization} onChange={(e) => setSubSpecialization(e.target.value)} />
           </label>
           <label className="inline-label">
-            Qualifications <span className="muted">(optional)</span>
-            <input value={qualifications} onChange={(e) => setQualifications(e.target.value)} />
-          </label>
-          <label className="inline-label">
             Years of experience <span className="muted">(optional)</span>
             <input
               type="number"
@@ -249,51 +344,63 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
             />
           </label>
           <div className="doctor-form-actions">
+            <button type="button" className="btn-secondary btn btn-sm" onClick={() => setEditing(false)}>
+              Cancel
+            </button>
             <button type="submit" className="btn-sm" disabled={savingProfile}>
-              {savingProfile ? 'Saving…' : 'Save profile'}
+              {savingProfile ? 'Saving…' : 'Save changes'}
             </button>
           </div>
         </form>
-      ) : (
-        <dl className="summary">
-          <dt>Specialization</dt>
-          <dd>{profile.specialization ?? '—'}</dd>
-          <dt>Qualifications</dt>
-          <dd>{profile.qualifications ?? '—'}</dd>
-          <dt>Years of experience</dt>
-          <dd>{profile.years_of_experience ?? '—'}</dd>
-        </dl>
       )}
 
-      <h4>Education &amp; Training</h4>
+      <div className="admin-content-header">
+        <div>
+          <h4 style={{ margin: 0 }}>Education &amp; credentials</h4>
+          <p className="muted" style={{ margin: 0 }}>
+            Qualifications shown above are generated automatically from these entries.
+          </p>
+        </div>
+        {isAdmin && (
+          <button type="button" className="btn btn-sm" onClick={startAddEducation}>
+            {showEduForm && editingEduId === null ? 'Cancel' : '+ Add education'}
+          </button>
+        )}
+      </div>
+
       {profile.education.length === 0 ? (
         <p className="muted">No education entries yet.</p>
       ) : (
-        <ul className="education-list">
+        <div className="education-card-list">
           {profile.education.map((entry) => (
-            <li key={entry.id} className={entry.is_primary ? 'education-entry featured' : 'education-entry'}>
-              <div>
-                <strong>{entry.qualification}</strong> — {entry.institution}, {entry.city}, {entry.country} (
-                {entry.completion_year})
-                {entry.is_primary && <span className="pill role-admin">Featured on card</span>}
+            <div key={entry.id} className="education-card">
+              <span className="education-card-icon" aria-hidden="true">
+                <GraduationCap size={18} weight="duotone" />
+              </span>
+              <div className="education-card-body">
+                <strong>{entry.qualification}</strong>
+                <span className="muted">
+                  {entry.institution} · {entry.city}, {entry.country} · {entry.completion_year}
+                </span>
+                {entry.is_primary && <span className="pill status-confirmed">Shown on patient profile</span>}
               </div>
               {isAdmin && (
-                <div className="education-entry-actions">
-                  <button type="button" className="link" onClick={() => handleToggleFeature(entry)}>
-                    {entry.is_primary ? 'Unfeature' : 'Feature on card'}
+                <div className="education-card-actions">
+                  <button type="button" className="link" onClick={() => startEditEducation(entry)}>
+                    Edit
                   </button>
-                  <button type="button" className="link danger" onClick={() => handleRemoveEducation(entry.id)}>
+                  <button type="button" className="link danger" onClick={() => setRemoveEduTarget(entry)}>
                     Remove
                   </button>
                 </div>
               )}
-            </li>
+            </div>
           ))}
-        </ul>
+        </div>
       )}
 
-      {isAdmin && (
-        <form className="doctor-form-grid" onSubmit={handleAddEducation}>
+      {isAdmin && showEduForm && (
+        <form className="doctor-form-grid" onSubmit={handleSubmitEducation} style={{ marginTop: 'var(--space-4)' }}>
           <label className="inline-label">
             Qualification
             <input
@@ -332,13 +439,37 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
               required
             />
           </label>
+          <label className="inline-label doctor-form-full" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <input type="checkbox" checked={eduFeatured} onChange={(e) => setEduFeatured(e.target.checked)} style={{ width: 'auto', margin: 0 }} />
+            Show on patient profile
+          </label>
           <div className="doctor-form-actions">
+            <button type="button" className="btn-secondary btn btn-sm" onClick={resetEduForm}>
+              Cancel
+            </button>
             <button type="submit" className="btn-sm" disabled={eduBusy}>
-              {eduBusy ? 'Adding…' : 'Add entry'}
+              {eduBusy ? 'Saving…' : editingEduId !== null ? 'Save changes' : 'Add entry'}
             </button>
           </div>
         </form>
       )}
+
+      <AlertDialog open={removeEduTarget !== null} onOpenChange={(open) => !open && setRemoveEduTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this education entry?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {removeEduTarget && `Remove ${removeEduTarget.qualification} (${removeEduTarget.institution})?`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it</AlertDialogCancel>
+            <AlertDialogAction variant="danger" onClick={confirmRemoveEducation}>
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
