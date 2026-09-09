@@ -5097,3 +5097,110 @@ a.link.danger {
   letter-spacing: 0.05em;
   color: var(--color-text-muted);
 }
+
+/* ===========================================================
+   Appointment Types admin page (AppointmentTypesPanel.tsx)
+   =========================================================== */
+
+/* Deliberately a bare flex row, not the heavier bordered/tinted
+   .filter-bar card the Appointments page uses -- this page only ever
+   has two compact controls, and a whole card around them would read
+   as the "oversized filter panel" the OPD redesign explicitly avoids. */
+.appointment-types-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.appointment-types-search-input {
+  flex: 1;
+  min-width: 220px;
+  max-width: 360px;
+  padding: 0 var(--space-3);
+}
+
+.appointment-types-search-input input {
+  padding: 9px 0;
+  width: 100%;
+}
+
+.appointment-types-status-trigger {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 140px;
+  max-width: 160px;
+}
+
+.appointment-type-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.appointment-type-form-note {
+  font-size: 0.82rem;
+  margin: var(--space-2) 0 0;
+}
+
+/* Right-side detail drawer (the "View" action) -- same overlay
+   backdrop as .modal-overlay, but anchored to the right edge and full
+   height instead of centered, so it reads as a slide-in panel rather
+   than a dialog. Kept as its own pair of classes rather than
+   generalizing .modal-panel, since nothing else in the app needs this
+   shape yet. */
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 20, 0.55);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 1000;
+}
+
+.drawer-panel {
+  position: relative;
+  background: var(--color-surface);
+  width: 440px;
+  max-width: 92vw;
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--space-5);
+  box-shadow: var(--shadow-md, -8px 0 24px rgba(0, 0, 0, 0.12));
+  animation: drawer-slide-in 0.16s ease-out;
+}
+
+@keyframes drawer-slide-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.appointment-type-drawer-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-1);
+  padding-right: var(--space-5);
+}
+
+.appointment-type-drawer-heading h3 {
+  margin: 0;
+}
+
+.appointment-type-drawer-subheading {
+  margin: var(--space-5) 0 var(--space-3);
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+}
+
+@media (max-width: 720px) {
+  .drawer-panel {
+    width: 100%;
+  }
+}
