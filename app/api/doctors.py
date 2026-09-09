@@ -119,6 +119,7 @@ def get_doctors():
             cur.execute(
                 f"""
                 SELECT d.id, d.name, d.active, d.created_at, s.username,
+                       d.default_duration_minutes, d.buffer_minutes,
                        {DOCTOR_SUMMARY_SELECT_SQL}
                 FROM doctors d
                 LEFT JOIN staff s ON s.id = d.created_by
@@ -136,7 +137,9 @@ def get_doctors():
             "active": row[2],
             "created_at": row[3].isoformat(),
             "created_by": row[4],
-            **{k: v for k, v in build_doctor_summary(row[0], row[1], row[5:]).items() if k not in ("id", "name")},
+            "default_duration_minutes": row[5],
+            "buffer_minutes": row[6],
+            **{k: v for k, v in build_doctor_summary(row[0], row[1], row[7:]).items() if k not in ("id", "name")},
         }
         for row in rows
     ]
@@ -158,7 +161,8 @@ def create_doctor(
                     )
                     VALUES (%s, %s, %s, %s, %s, %s)
                     RETURNING id, name, active, created_at, specialization,
-                              sub_specialization, qualifications, years_of_experience, photo_url
+                              sub_specialization, qualifications, years_of_experience, photo_url,
+                              default_duration_minutes, buffer_minutes
                     """,
                     (
                         doctor.name,
@@ -182,6 +186,8 @@ def create_doctor(
             "qualifications": row[6],
             "years_of_experience": row[7],
             "photo_url": row[8],
+            "default_duration_minutes": row[9],
+            "buffer_minutes": row[10],
             # A brand-new doctor cannot have a featured doctor_education
             # entry yet (there's nowhere it could have come from) --
             # explicit rather than omitted, so this response matches the
@@ -218,7 +224,8 @@ def update_doctor(
                     WHERE id = %s
                       AND active = TRUE
                     RETURNING id, name, active, created_at, specialization,
-                              sub_specialization, qualifications, years_of_experience, photo_url
+                              sub_specialization, qualifications, years_of_experience, photo_url,
+                              default_duration_minutes, buffer_minutes
                     """,
                     (
                         doctor.name,
@@ -244,6 +251,8 @@ def update_doctor(
             "qualifications": row[6],
             "years_of_experience": row[7],
             "photo_url": row[8],
+            "default_duration_minutes": row[9],
+            "buffer_minutes": row[10],
         }
 
     except psycopg.errors.UniqueViolation:
@@ -251,6 +260,98 @@ def update_doctor(
             status_code=409,
             detail="Doctor already exists",
         )
+
+
+class DoctorSlotSettingsUpdate(BaseModel):
+    """
+    Body for PATCH /{doctor_id}/slot-settings -- deliberately its own
+    small endpoint rather than folded into PUT /{doctor_id}, which
+    requires resending every scalar field on the doctor (name,
+    specialization, ...) since it has no partial-update support. These
+    two fields are edited from a completely different part of the UI
+    (Schedule tab's "Slot settings" panel, not the Profile form) and
+    have nothing to do with identity/specialization, so a dedicated
+    partial-update endpoint avoids that coupling entirely.
+    """
+
+    default_duration_minutes: int = Field(ge=5, le=240)
+    buffer_minutes: int = Field(ge=0, le=120)
+
+
+@router.patch("/{doctor_id}/slot-settings")
+def update_doctor_slot_settings(
+    doctor_id: int,
+    settings: DoctorSlotSettingsUpdate,
+    admin: dict = Depends(require_role("ADMIN")),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE doctors
+                SET default_duration_minutes = %s,
+                    buffer_minutes = %s,
+                    updated_at = NOW()
+                WHERE id = %s
+                  AND active = TRUE
+                RETURNING id, default_duration_minutes, buffer_minutes
+                """,
+                (settings.default_duration_minutes, settings.buffer_minutes, doctor_id),
+            )
+            row = cur.fetchone()
+
+            if row is None:
+                raise HTTPException(status_code=404, detail="Doctor not found")
+
+    return {
+        "id": row[0],
+        "default_duration_minutes": row[1],
+        "buffer_minutes": row[2],
+    }
+
+
+class DoctorActiveUpdate(BaseModel):
+    active: bool
+
+
+@router.patch("/{doctor_id}/active")
+def update_doctor_active(
+    doctor_id: int,
+    body: DoctorActiveUpdate,
+    admin: dict = Depends(require_role("ADMIN")),
+):
+    """
+    Deactivate/reactivate a doctor (the workspace header's "..." menu).
+    There was previously no way to do this at all through the web
+    admin -- every other doctor-scoped endpoint already treats
+    `active = FALSE` as "doesn't exist" (see get_doctors,
+    get_doctor_profile_and_education, etc. above), so flipping this
+    column is what actually removes a doctor from every listing,
+    booking flow, and availability calculation without deleting any
+    of their history (schedule, appointments, education all stay put).
+    Deliberately allowed to reactivate too (active: true), for
+    reversing an accidental deactivation -- this is the one doctor-
+    scoped update endpoint that has to work even when the doctor is
+    currently inactive, so it has no `AND active = TRUE` guard.
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE doctors
+                SET active = %s,
+                    updated_at = NOW()
+                WHERE id = %s
+                RETURNING id, active
+                """,
+                (body.active, doctor_id),
+            )
+            row = cur.fetchone()
+
+            if row is None:
+                raise HTTPException(status_code=404, detail="Doctor not found")
+
+    return {"id": row[0], "active": row[1]}
 
 
 def get_doctor_profile_and_education(cur, doctor_id: int) -> dict | None:
@@ -270,7 +371,8 @@ def get_doctor_profile_and_education(cur, doctor_id: int) -> dict | None:
     cur.execute(
         """
         SELECT id, name, active, created_at, specialization,
-               sub_specialization, qualifications, years_of_experience, photo_url
+               sub_specialization, qualifications, years_of_experience, photo_url,
+               default_duration_minutes, buffer_minutes
         FROM doctors
         WHERE id = %s
           AND active = TRUE
@@ -303,6 +405,8 @@ def get_doctor_profile_and_education(cur, doctor_id: int) -> dict | None:
         "qualifications": row[6],
         "years_of_experience": row[7],
         "photo_url": row[8],
+        "default_duration_minutes": row[9],
+        "buffer_minutes": row[10],
         "education": [_education_entry_dict(e, doctor_id) for e in education_rows],
     }
 
@@ -458,7 +562,7 @@ def get_doctor_departments(doctor_id: int):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT d.id, d.name, d.active
+                SELECT d.id, d.name, d.active, dd.created_at
                 FROM doctor_departments dd
                 JOIN departments d
                     ON d.id = dd.department_id
@@ -475,6 +579,12 @@ def get_doctor_departments(doctor_id: int):
             "id": row[0],
             "name": row[1],
             "active": row[2],
+            # When this department was assigned to this doctor -- not
+            # shown directly, but lets the frontend treat the
+            # earliest-assigned department as "primary" without a new
+            # is_primary column (doctor_departments has always had
+            # created_at; nothing here was previously exposed).
+            "assigned_at": row[3].isoformat(),
         }
         for row in rows
     ]

@@ -68,7 +68,8 @@ def get_doctor_blocks(doctor_id: int):
                     start_at,
                     end_at,
                     reason,
-                    active
+                    active,
+                    created_at
                 FROM doctor_blocks
                 WHERE doctor_id = %s
                   AND active = TRUE
@@ -86,6 +87,7 @@ def get_doctor_blocks(doctor_id: int):
             "end_at": row[2].isoformat(),
             "reason": row[3],
             "active": row[4],
+            "created_at": row[5].isoformat(),
         }
         for row in rows
     ]
@@ -132,7 +134,8 @@ def create_doctor_block(
                     start_at,
                     end_at,
                     reason,
-                    active
+                    active,
+                    created_at
                 """,
                 (
                     doctor_id,
@@ -151,6 +154,7 @@ def create_doctor_block(
         "end_at": row[2].isoformat(),
         "reason": row[3],
         "active": row[4],
+        "created_at": row[5].isoformat(),
     }
 
 

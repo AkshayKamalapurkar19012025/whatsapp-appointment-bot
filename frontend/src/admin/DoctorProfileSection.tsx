@@ -52,6 +52,7 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
   const [loading, setLoading] = useState(true)
   const specializationListId = useId()
 
+  const [subTab, setSubTab] = useState<'profile' | 'education'>('profile')
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState('')
   const [specialization, setSpecialization] = useState('')
@@ -260,9 +261,29 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
   const qualifications = qualificationsFromEducation(profile.education)
 
   return (
-    <div>
-      {error && <p className="error">{error}</p>}
+    <div className="profile-tab-layout">
+      <nav className="profile-subnav" aria-label="Profile sections">
+        <button
+          type="button"
+          className={subTab === 'profile' ? 'active' : ''}
+          onClick={() => setSubTab('profile')}
+        >
+          Profile
+        </button>
+        <button
+          type="button"
+          className={subTab === 'education' ? 'active' : ''}
+          onClick={() => setSubTab('education')}
+        >
+          Education &amp; Credentials
+        </button>
+      </nav>
 
+      <div className="profile-subnav-content">
+        {error && <p className="error">{error}</p>}
+
+        {subTab === 'profile' && (
+          <>
       <div className="profile-photo-block">
         <DoctorAvatar photoUrl={profile.photo_url} name={profile.name} size={88} />
         {isAdmin && (
@@ -353,12 +374,16 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
           </div>
         </form>
       )}
+          </>
+        )}
 
+        {subTab === 'education' && (
+          <>
       <div className="admin-content-header">
         <div>
           <h4 style={{ margin: 0 }}>Education &amp; credentials</h4>
           <p className="muted" style={{ margin: 0 }}>
-            Qualifications shown above are generated automatically from these entries.
+            Qualifications shown on the Profile section are generated automatically from these entries.
           </p>
         </div>
         {isAdmin && (
@@ -470,6 +495,9 @@ export default function DoctorProfileSection({ doctor, isAdmin }: { doctor: Doct
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+          </>
+        )}
+      </div>
     </div>
   )
 }

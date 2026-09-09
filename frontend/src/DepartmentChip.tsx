@@ -24,11 +24,16 @@ export default function DepartmentChip({
   department,
   icon,
   onRemove,
+  primary,
 }: {
   department: Department
   icon: React.ReactNode
   // Only DepartmentAssignment's editable tag list passes this.
   onRemove?: () => void
+  // DepartmentAssignment's own earliest-assigned department (see
+  // DoctorDepartmentAssignment.assigned_at) -- a display-only badge,
+  // not a stored is_primary column.
+  primary?: boolean
 }) {
   return (
     <span className={`department-chip ${accentClassFor(department.name)}`}>
@@ -36,6 +41,7 @@ export default function DepartmentChip({
         {icon}
       </span>
       {department.name}
+      {primary && <span className="pill department-chip-primary">Primary</span>}
       {onRemove && (
         <button type="button" className="link" onClick={onRemove}>
           remove

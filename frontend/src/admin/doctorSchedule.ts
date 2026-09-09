@@ -20,6 +20,14 @@ export function currentDayOfWeek(): number {
   return jsDay === 0 ? 7 : jsDay
 }
 
+// Same 1=Monday..7=Sunday convention as currentDayOfWeek, for an
+// arbitrary "YYYY-MM-DD" date rather than always today -- the Schedule
+// tab's "Generated slots preview" date picker.
+export function dateToDayOfWeek(dateStr: string): number {
+  const jsDay = new Date(`${dateStr}T00:00:00`).getDay()
+  return jsDay === 0 ? 7 : jsDay
+}
+
 function dateInRange(dateStr: string, startDate: string | null, endDate: string | null): boolean {
   if (startDate && dateStr < startDate) return false
   if (endDate && dateStr > endDate) return false
@@ -42,30 +50,42 @@ export function formatWorkingHours(entries: DoctorScheduleEntry[]): string[] {
   return entries.map((e) => `${formatTimeOfDay(e.start_time)} – ${formatTimeOfDay(e.end_time)}`)
 }
 
-// This calendar week's (Monday-Sunday) working hours, one entry per
-// day -- Overview's "This week" summary. Reuses todaysScheduleEntries/
-// formatWorkingHours against each of the week's 7 real dates (so a
-// schedule row's own start_date/end_date bounds are still respected,
-// same as "today"), rather than a separate day-of-week-only pass that
-// would ignore date ranges.
-export function thisWeekSchedule(
+// A generic, capacity-only slot preview for a given date (Schedule tab's
+// "Generated slots preview" panel) -- divides each of that date's
+// working-hour windows into `durationMinutes` chunks separated by
+// `bufferMinutes`, using the doctor's own default_duration_minutes/
+// buffer_minutes (migrations/0022_doctor_slot_settings.sql) unless the
+// caller overrides them. Deliberately NOT the same thing as real
+// booking availability (app/services/availability_engine.get_available_
+// slots, which is per appointment-type and excludes blocks/existing
+// appointments) -- this is a quick "how many slots would this shape of
+// day produce" preview, not tied to any one appointment type, so it
+// doesn't need a network round trip. Real per-type availability is
+// still what BookAppointmentPanel's AdminSlotPicker shows.
+export function generateDaySlots(
   entries: DoctorScheduleEntry[],
-  reference: Date = new Date(),
-): { dayOfWeek: number; dateStr: string; hours: string[] }[] {
-  const jsDay = reference.getDay()
-  const mondayOffset = jsDay === 0 ? -6 : 1 - jsDay
-  const monday = new Date(reference)
-  monday.setDate(reference.getDate() + mondayOffset)
-
-  const week: { dayOfWeek: number; dateStr: string; hours: string[] }[] = []
-  for (let i = 0; i < 7; i++) {
-    const date = new Date(monday)
-    date.setDate(monday.getDate() + i)
-    const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-    const dayOfWeek = i + 1
-    week.push({ dayOfWeek, dateStr, hours: formatWorkingHours(todaysScheduleEntries(entries, dateStr, dayOfWeek)) })
+  dateStr: string,
+  dayOfWeek: number,
+  durationMinutes: number,
+  bufferMinutes: number,
+): string[] {
+  const todays = todaysScheduleEntries(entries, dateStr, dayOfWeek)
+  const slots: string[] = []
+  for (const entry of todays) {
+    let current = toMinutesSinceMidnight(entry.start_time)
+    const end = toMinutesSinceMidnight(entry.end_time)
+    while (current + durationMinutes <= end) {
+      slots.push(minutesToTimeOfDay(current))
+      current += durationMinutes + bufferMinutes
+    }
   }
-  return week
+  return slots
+}
+
+function minutesToTimeOfDay(totalMinutes: number): string {
+  const h = Math.floor(totalMinutes / 60)
+  const m = totalMinutes % 60
+  return formatTimeOfDay(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`)
 }
 
 function toMinutesSinceMidnight(hhmm: string): number {

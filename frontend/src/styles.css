@@ -1705,6 +1705,17 @@ a.link.danger {
   margin: 2px 0 0;
 }
 
+.doctor-workspace-header-body .pill {
+  margin-top: var(--space-2);
+}
+
+.doctor-workspace-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
 .doctor-workspace-tabs {
   overflow-x: auto;
   flex-wrap: nowrap;
@@ -1795,7 +1806,18 @@ a.link.danger {
   color: var(--color-text-muted);
 }
 
-.this-week-list {
+.overview-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-5);
+  margin-bottom: var(--space-5);
+}
+
+.overview-columns .overview-eyebrow:first-child {
+  margin-top: 0;
+}
+
+.today-schedule-list {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--color-border);
@@ -1804,26 +1826,34 @@ a.link.danger {
   margin-bottom: var(--space-2);
 }
 
-.this-week-row {
+.today-schedule-row {
   display: flex;
-  justify-content: space-between;
+  align-items: baseline;
   flex-wrap: wrap;
-  gap: var(--space-3);
+  gap: var(--space-2);
   padding: 10px var(--space-4);
   border-bottom: 1px solid var(--color-border);
 }
 
-.this-week-row:last-child {
+.today-schedule-row:last-child {
   border-bottom: none;
 }
 
-.this-week-day {
+.today-schedule-time {
   font-weight: 600;
-  min-width: 90px;
+  min-width: 68px;
+}
+
+.today-schedule-patient {
+  font-weight: 600;
 }
 
 @media (max-width: 560px) {
   .quick-info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .overview-columns {
     grid-template-columns: 1fr;
   }
 }
@@ -1901,7 +1931,56 @@ a.link.danger {
 }
 
 /* Admin doctor workspace "Profile" page (DoctorProfileSection.tsx):
-   photo block and the Education & Credentials card list. */
+   a left sub-nav (Profile / Education & Credentials) next to the
+   section content -- stacks above the content below 720px. */
+.profile-tab-layout {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.profile-subnav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.profile-subnav button {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.profile-subnav button:hover {
+  background: var(--color-surface-hover);
+}
+
+.profile-subnav button.active {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.profile-subnav-content {
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .profile-tab-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-subnav {
+    flex-direction: row;
+    overflow-x: auto;
+  }
+}
+
 .profile-photo-block {
   display: flex;
   align-items: center;
@@ -2365,6 +2444,14 @@ a.link.danger {
   gap: var(--space-3);
 }
 
+/* Doctor workspace Overview/Appointments stat rows -- 5 equal cards
+   instead of the main Dashboard's 4. Same .dashboard-grid collapse
+   breakpoints below (2 columns, then 1) apply unchanged since these
+   elements carry both classes. */
+.dashboard-grid-5 {
+  grid-template-columns: repeat(5, 1fr);
+}
+
 .dashboard-section-heading {
   grid-column: 1 / -1;
   margin: var(--space-2) 0 0;
@@ -2594,6 +2681,43 @@ a.link.danger {
   font-weight: 600;
   color: var(--color-primary-hover);
   font-variant-numeric: tabular-nums;
+}
+
+/* Schedule tab's two-column layout (working hours + copy/add form on
+   the left, Slot settings + Generated slots preview on the right) --
+   stacks to one column below 960px, same breakpoint the rest of this
+   file uses for admin two-column layouts. */
+.schedule-tab-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.schedule-tab-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.schedule-sidebar-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.schedule-sidebar-note {
+  font-size: 0.76rem;
+}
+
+@media (max-width: 960px) {
+  .schedule-tab-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ===========================================================
@@ -3277,6 +3401,25 @@ a.link.danger {
   color: var(--color-danger);
 }
 
+/* Doctor workspace header's own Active/Inactive badge (doctor.active). */
+.pill.status-active {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.pill.status-inactive {
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
+}
+
+/* Departments tab's earliest-assigned-department badge -- see
+   DepartmentChip's `primary` prop docstring. */
+.pill.department-chip-primary {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  margin-left: 6px;
+}
+
 /* Appointment lifecycle statuses (migrations/0011_appointment_
    lifecycle_statuses.sql, extended by migrations/0015): PENDING ->
    CONFIRMED -> CHECKED_IN -> COMPLETED, with PENDING -> REJECTED,
@@ -3728,6 +3871,17 @@ a.link.danger {
    =========================================================== */
 
 .data-table-wrap {
+  overflow-x: auto;
+}
+
+/* Same horizontal-scroll containment as .data-table-wrap, but without
+   its own max-width:860px "hide the table, show mobile cards instead"
+   rule -- the doctor workspace's Working-hours and Appointments tables
+   (DoctorWorkspace.tsx) don't have a mobile-card equivalent, so hiding
+   the table there would leave nothing to look at. This keeps the table
+   itself scrollable in place on narrow screens instead of letting it
+   force the whole page to overflow horizontally. */
+.admin-table-scroll {
   overflow-x: auto;
 }
 

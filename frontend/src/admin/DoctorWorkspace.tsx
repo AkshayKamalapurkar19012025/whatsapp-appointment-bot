@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from 'react'
-import { ArrowLeft, Buildings, CaretDown, Tag, UserCircle } from '@phosphor-icons/react'
+import { ArrowLeft, Buildings, CaretDown, DotsThree, Tag, UserCircle } from '@phosphor-icons/react'
 import {
   ApiError,
   assignAppointmentTypeToDoctor,
@@ -23,6 +23,9 @@ import {
   removeAppointmentTypeFromDoctor,
   removeDoctorFromDepartment,
   rescheduleAdminAppointment,
+  setDoctorActive,
+  updateDoctorAppointmentType,
+  updateDoctorSlotSettings,
   visitAdminAppointment,
 } from '../api'
 import type {
@@ -32,6 +35,7 @@ import type {
   Department,
   Doctor,
   DoctorBlockEntry,
+  DoctorDepartmentAssignment,
   DoctorScheduleEntry,
   Slot,
 } from '../types'
@@ -56,7 +60,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import DoctorProfileSection from './DoctorProfileSection'
 import AppointmentDetailsModal from './AppointmentDetailsModal'
 import { AppointmentActionButtons, buildAppointmentActions, type AppointmentActionHandlers } from './AppointmentActions'
-import { DAY_NAMES, isoDateToday, thisWeekSchedule } from './doctorSchedule'
+import { DAY_NAMES, dateToDayOfWeek, generateDaySlots, isoDateToday } from './doctorSchedule'
 
 const ALL_FILTER_VALUE = '__all__'
 
@@ -104,6 +108,28 @@ export default function DoctorWorkspace({
   onGoToQueue?: (doctorId: number) => void
 }) {
   const [tab, setTab] = useState<WorkspaceTab>('overview')
+  const [deactivateOpen, setDeactivateOpen] = useState(false)
+  const [deactivating, setDeactivating] = useState(false)
+  const [deactivateError, setDeactivateError] = useState<string | null>(null)
+
+  async function confirmDeactivate() {
+    setDeactivating(true)
+    setDeactivateError(null)
+    try {
+      await setDoctorActive(doctor.id, false)
+      setDeactivateOpen(false)
+      // A deactivated doctor drops out of every listing (see
+      // update_doctor_active's docstring in app/api/doctors.py) --
+      // nothing left in this workspace to show, so go back to the
+      // directory rather than leaving the admin on a page for a
+      // doctor that no longer appears anywhere.
+      onBack()
+    } catch (err) {
+      setDeactivateError(err instanceof ApiError ? err.message : 'Could not deactivate doctor')
+    } finally {
+      setDeactivating(false)
+    }
+  }
 
   return (
     <div>
@@ -121,13 +147,50 @@ export default function DoctorWorkspace({
               experience or qualifications, which live in Overview's
               Quick information and the Profile page below. */}
           <p className="muted">{[doctor.specialization, doctor.education_location].filter(Boolean).join(' · ')}</p>
+          <span className={doctor.active ? 'pill status-active' : 'pill status-inactive'}>
+            {doctor.active ? 'Active' : 'Inactive'}
+          </span>
         </div>
         {isAdmin && (
-          <button type="button" className="btn-secondary btn btn-sm" onClick={() => setTab('profile')}>
-            Edit profile
-          </button>
+          <div className="doctor-workspace-header-actions">
+            <button type="button" className="btn-secondary btn btn-sm" onClick={() => setTab('profile')}>
+              Edit profile
+            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button type="button" className="icon-btn" aria-label="More doctor actions">
+                  <DotsThree size={20} weight="bold" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem className="danger" onSelect={() => setDeactivateOpen(true)}>
+                  Deactivate doctor
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         )}
       </div>
+
+      <AlertDialog open={deactivateOpen} onOpenChange={(open) => !open && setDeactivateOpen(false)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deactivate {doctor.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes them from the Doctors directory, booking, and availability. Their schedule,
+              appointments, and education history are kept and nothing is deleted, but there's currently
+              no way to reactivate a doctor from this screen.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {deactivateError && <p className="error">{deactivateError}</p>}
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep active</AlertDialogCancel>
+            <AlertDialogAction variant="danger" onClick={confirmDeactivate} disabled={deactivating}>
+              {deactivating ? 'Deactivating…' : 'Deactivate'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <div className="tabs doctor-workspace-tabs">
         {PRIMARY_TABS.map((t) => (
@@ -188,7 +251,6 @@ function OverviewSection({
   onGoToQueue?: () => void
 }) {
   const [appointments, setAppointments] = useState<AdminAppointment[]>([])
-  const [schedule, setSchedule] = useState<DoctorScheduleEntry[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
   const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -200,13 +262,11 @@ function OverviewSection({
     const today = isoDateToday()
     Promise.all([
       listAdminAppointments({ doctor_id: doctor.id, date_from: today, date_to: today }),
-      getDoctorScheduleAdmin(doctor.id),
       getDoctorDepartments(doctor.id),
       listAppointmentTypesForDoctor(doctor.id),
     ])
-      .then(([todaysAppointments, scheduleEntries, depts, types]) => {
+      .then(([todaysAppointments, depts, types]) => {
         setAppointments([...todaysAppointments].sort((a, b) => a.start_at.localeCompare(b.start_at)))
-        setSchedule(scheduleEntries)
         setDepartments(depts)
         setAppointmentTypes(types)
       })
@@ -225,26 +285,32 @@ function OverviewSection({
     )
   }
 
+  // A non-overlapping partition of every status an appointment can be
+  // in (see app/services/appointment_services.py's status list), so
+  // these four cards always sum to `appointments.length` -- unlike the
+  // reference mockup's stat row, whose numbers didn't actually add up.
   const checkedIn = appointments.filter((a) => a.status === 'CHECKED_IN').length
   const completed = appointments.filter((a) => a.status === 'COMPLETED').length
+  const cancelled = appointments.filter((a) => ['CANCELLED', 'REJECTED', 'NO_SHOW'].includes(a.status)).length
+  const upcoming = appointments.filter((a) => a.status === 'PENDING' || a.status === 'CONFIRMED').length
   // eslint-disable-next-line react/purity -- read once per render, same as AppointmentsPanel's own "is this upcoming" check
   const now = Date.now()
   const next = appointments.find(
     (a) => (a.status === 'PENDING' || a.status === 'CONFIRMED') && new Date(a.start_at).getTime() >= now,
   )
   const summaryLine = doctorSummaryLine(doctor)
-  const week = thisWeekSchedule(schedule)
+  const todaysSchedule = appointments.slice(0, 5)
 
   return (
     <div>
       {error && <p className="error">{error}</p>}
 
       <span className="overview-eyebrow">Today</span>
-      <div className="dashboard-grid" style={{ marginBottom: 'var(--space-5)' }}>
+      <div className="dashboard-grid dashboard-grid-5" style={{ marginBottom: 'var(--space-5)' }}>
         <div className="stat-card">
           <div className="stat-body">
             <span className="stat-value">{appointments.length}</span>
-            <span className="stat-label">Appointments</span>
+            <span className="stat-label">Total appointments</span>
           </div>
         </div>
         <div className="stat-card">
@@ -259,26 +325,61 @@ function OverviewSection({
             <span className="stat-label">Completed</span>
           </div>
         </div>
+        <div className="stat-card">
+          <div className="stat-body">
+            <span className="stat-value">{upcoming}</span>
+            <span className="stat-label">Upcoming</span>
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-body">
+            <span className="stat-value">{cancelled}</span>
+            <span className="stat-label">Cancelled</span>
+          </div>
+        </div>
       </div>
 
-      <span className="overview-eyebrow">Next appointment</span>
-      {next ? (
-        <div className="next-appointment-card">
-          <div>
-            <strong>{formatTime(next.start_at)}</strong>
-            <span className="next-appointment-patient">{next.patient_name}</span>
-            <span className="muted">{next.appointment_type_name}</span>
-            {next.token_number !== null && <span className="pill token-pill">Token #{next.token_number}</span>}
-          </div>
-          <button type="button" className="btn-secondary btn btn-sm" onClick={() => onGoToTab('appointments')}>
-            View appointment
+      <div className="overview-columns">
+        <div>
+          <span className="overview-eyebrow">Next appointment</span>
+          {next ? (
+            <div className="next-appointment-card">
+              <div>
+                <strong>{formatTime(next.start_at)}</strong>
+                <span className="next-appointment-patient">{next.patient_name}</span>
+                <span className="muted">{next.appointment_type_name}</span>
+                {next.token_number !== null && <span className="pill token-pill">Token #{next.token_number}</span>}
+              </div>
+              <button type="button" className="btn-secondary btn btn-sm" onClick={() => onGoToTab('appointments')}>
+                View appointment
+              </button>
+            </div>
+          ) : (
+            <p className="muted">No upcoming appointments today.</p>
+          )}
+        </div>
+
+        <div>
+          <span className="overview-eyebrow">Today's schedule</span>
+          {todaysSchedule.length > 0 ? (
+            <div className="today-schedule-list">
+              {todaysSchedule.map((a) => (
+                <div key={a.id} className="today-schedule-row">
+                  <span className="today-schedule-time">{formatTime(a.start_at)}</span>
+                  <span className="today-schedule-patient">{a.patient_name}</span>
+                  <span className="muted">{a.appointment_type_name}</span>
+                  <span className={`pill status-${a.status.toLowerCase()}`}>{a.status}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="muted">No appointments scheduled today.</p>
+          )}
+          <button type="button" className="link" onClick={() => onGoToTab('appointments')}>
+            View full schedule →
           </button>
         </div>
-      ) : (
-        <p className="muted" style={{ marginBottom: 'var(--space-5)' }}>
-          No upcoming appointments today.
-        </p>
-      )}
+      </div>
 
       <span className="overview-eyebrow">Quick information</span>
       <div className="quick-info-grid">
@@ -307,18 +408,6 @@ function OverviewSection({
           <span className="quick-info-label">Appointment types</span>
           <span>{appointmentTypes.length > 0 ? appointmentTypes.map((t) => t.name).join(' · ') : '—'}</span>
         </div>
-      </div>
-
-      <span className="overview-eyebrow">This week</span>
-      <div className="this-week-list">
-        {week.map((day) => (
-          <div key={day.dateStr} className="this-week-row">
-            <span className="this-week-day">{DAY_NAMES[day.dayOfWeek]}</span>
-            <span className={day.hours.length > 0 ? '' : 'muted'}>
-              {day.hours.length > 0 ? day.hours.join(', ') : 'Not scheduled'}
-            </span>
-          </div>
-        ))}
       </div>
 
       <div className="doctor-quick-actions" style={{ marginTop: 'var(--space-5)' }}>
@@ -350,6 +439,11 @@ function OverviewSection({
 
 function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean }) {
   const [appointments, setAppointments] = useState<AdminAppointment[]>([])
+  // Today's snapshot for the stat row, independent of the table's own
+  // when/status filters below -- so "8 total / 3 checked-in / ..." keeps
+  // meaning "today" even while the admin is looking at, say, all-time
+  // CANCELLED appointments in the table itself.
+  const [todaysAppointments, setTodaysAppointments] = useState<AdminAppointment[]>([])
   const [when, setWhen] = useState<'today' | 'upcoming' | 'all'>('upcoming')
   const [statusFilter, setStatusFilter] = useState('')
   const [searchText, setSearchText] = useState('')
@@ -377,6 +471,43 @@ function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: b
   }
 
   useEffect(load, [doctor.id, when, statusFilter])
+
+  useEffect(() => {
+    const today = isoDateToday()
+    listAdminAppointments({ doctor_id: doctor.id, date_from: today, date_to: today })
+      .then(setTodaysAppointments)
+      .catch(() => undefined)
+  }, [doctor.id])
+
+  // Same non-overlapping status partition as Overview's stat row (see
+  // that section's comment) -- always sums to todaysAppointments.length.
+  const todayCheckedIn = todaysAppointments.filter((a) => a.status === 'CHECKED_IN').length
+  const todayCompleted = todaysAppointments.filter((a) => a.status === 'COMPLETED').length
+  const todayCancelled = todaysAppointments.filter((a) => ['CANCELLED', 'REJECTED', 'NO_SHOW'].includes(a.status)).length
+  const todayUpcoming = todaysAppointments.filter((a) => a.status === 'PENDING' || a.status === 'CONFIRMED').length
+
+  function exportCsv() {
+    const header = ['Patient', 'Phone', 'Appointment type', 'Date', 'Time', 'Token', 'Status']
+    const rows = visible.map((a) => [
+      a.patient_name,
+      a.whatsapp_number,
+      a.appointment_type_name,
+      formatDate(a.start_at),
+      `${formatTime(a.start_at)} – ${formatTime(a.end_at)}`,
+      a.token_number !== null ? String(a.token_number) : '',
+      a.status,
+    ])
+    const csv = [header, ...rows]
+      .map((row) => row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(','))
+      .join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${doctor.name.replace(/\s+/g, '_')}_appointments_${isoDateToday()}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
 
   const searchNeedle = searchText.trim().toLowerCase()
   // eslint-disable-next-line react/purity -- read once per render, same convention as AppointmentsPanel.tsx
@@ -463,6 +594,39 @@ function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: b
     <div>
       {error && <p className="error">{error}</p>}
 
+      <div className="dashboard-grid dashboard-grid-5" style={{ marginBottom: 'var(--space-5)' }}>
+        <div className="stat-card">
+          <div className="stat-body">
+            <span className="stat-value">{todaysAppointments.length}</span>
+            <span className="stat-label">Total today</span>
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-body">
+            <span className="stat-value">{todayCheckedIn}</span>
+            <span className="stat-label">Checked in</span>
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-body">
+            <span className="stat-value">{todayCompleted}</span>
+            <span className="stat-label">Completed</span>
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-body">
+            <span className="stat-value">{todayUpcoming}</span>
+            <span className="stat-label">Upcoming</span>
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-body">
+            <span className="stat-value">{todayCancelled}</span>
+            <span className="stat-label">Cancelled</span>
+          </div>
+        </div>
+      </div>
+
       <div className="filter-bar">
         <div className="filter-bar-search-row">
           <div className="department-admin-search filter-bar-search">
@@ -473,6 +637,9 @@ function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: b
               onChange={(e) => setSearchText(e.target.value)}
             />
           </div>
+          <button type="button" className="btn-secondary btn btn-sm" onClick={exportCsv} disabled={visible.length === 0}>
+            Export
+          </button>
           <div className="filter-bar-fields">
             <label className="inline-label">
               When
@@ -523,6 +690,7 @@ function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: b
       )}
 
       {!loading && visible.length > 0 && (
+        <div className="admin-table-scroll">
         <table className="data-table">
           <thead>
             <tr>
@@ -530,6 +698,7 @@ function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: b
               <th>Type</th>
               <th>Date</th>
               <th>Time</th>
+              <th>Queue / Token</th>
               <th>Status</th>
               <th>Action</th>
             </tr>
@@ -547,6 +716,7 @@ function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: b
                   <td>
                     {formatTime(a.start_at)} – {formatTime(a.end_at)}
                   </td>
+                  <td>{a.token_number !== null ? `#${a.token_number}` : <span className="muted">—</span>}</td>
                   <td>
                     <span className={`pill status-${a.status.toLowerCase()}`}>{a.status.replace(/_/g, ' ')}</span>
                   </td>
@@ -559,7 +729,7 @@ function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: b
                 </tr>
                 {reschedulingId === a.id && reschedulingAppointment && (
                   <tr>
-                    <td colSpan={6}>
+                    <td colSpan={7}>
                       <div className="detail-section appointment-reschedule-panel">
                         <h4>Reschedule {reschedulingAppointment.patient_name}</h4>
                         <p className="muted">
@@ -598,6 +768,7 @@ function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: b
             ))}
           </tbody>
         </table>
+        </div>
       )}
 
       {detailsTarget && (
@@ -634,7 +805,7 @@ function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: b
 // -- Department assignment (ADMIN only) ---------------------------------
 
 function DepartmentAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean }) {
-  const [assigned, setAssigned] = useState<Department[]>([])
+  const [assigned, setAssigned] = useState<DoctorDepartmentAssignment[]>([])
   const [allDepartments, setAllDepartments] = useState<Department[]>([])
   const [selected, setSelected] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -652,6 +823,11 @@ function DepartmentAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmin: bo
   useEffect(load, [doctor.id])
 
   const unassigned = allDepartments.filter((d) => !assigned.some((a) => a.id === d.id))
+  // The earliest-assigned department is shown as "Primary" -- see
+  // DepartmentChip's own `primary` prop docstring for why this is
+  // derived rather than a stored flag.
+  const earliestAssignedAt =
+    assigned.length > 0 ? assigned.reduce((min, d) => (d.assigned_at < min ? d.assigned_at : min), assigned[0].assigned_at) : null
 
   async function handleAssign(e: React.FormEvent) {
     e.preventDefault()
@@ -691,12 +867,14 @@ function DepartmentAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmin: bo
         <span className="doctor-department-chips">
           {assigned.map((d) => {
             const Icon = departmentIcon(d.name)
+            const isPrimary = d.assigned_at === earliestAssignedAt
             return (
               <DepartmentChip
                 key={d.id}
                 department={d}
                 icon={<Icon size={12} weight="bold" />}
                 onRemove={isAdmin ? () => setRemoveTarget(d) : undefined}
+                primary={isPrimary}
               />
             )
           })}
@@ -814,6 +992,28 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [removeTarget, setRemoveTarget] = useState<DoctorScheduleEntry | null>(null)
+
+  // "Copy from another week" (spec decision: this schedule is a
+  // recurring day-of-week pattern, not per-calendar-week, so "copy"
+  // means copying one day's working hours onto other days).
+  const [showCopyForm, setShowCopyForm] = useState(false)
+  const [copySourceDay, setCopySourceDay] = useState('')
+  const [copyTargetDays, setCopyTargetDays] = useState<number[]>([])
+  const [copyBusy, setCopyBusy] = useState(false)
+  const [copyError, setCopyError] = useState<string | null>(null)
+
+  // Slot settings panel (migrations/0022_doctor_slot_settings.sql).
+  const [defaultDuration, setDefaultDuration] = useState(doctor.default_duration_minutes)
+  const [bufferMinutes, setBufferMinutes] = useState(doctor.buffer_minutes)
+  const [slotSettingsBusy, setSlotSettingsBusy] = useState(false)
+  const [slotSettingsSaved, setSlotSettingsSaved] = useState(false)
+  const [slotSettingsError, setSlotSettingsError] = useState<string | null>(null)
+
+  // Generated slots preview panel -- a generic, capacity-only preview
+  // for a chosen date (see generateDaySlots's own docstring for why
+  // this isn't the same thing as real per-appointment-type booking
+  // availability).
+  const [previewDate, setPreviewDate] = useState(isoDateToday())
 
   function load() {
     // The doctor's own assigned departments (not every department in the
@@ -1009,12 +1209,137 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
     }
   }
 
+  const daysWithEntries = [...new Set(entries.map((e) => e.day_of_week))].sort((a, b) => a - b)
+
+  function toggleCopyTargetDay(day: number) {
+    setCopyTargetDays((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort((a, b) => a - b)))
+  }
+
+  async function handleCopyHours(e: React.FormEvent) {
+    e.preventDefault()
+    setCopyError(null)
+    if (!copySourceDay) {
+      setCopyError('Pick a day to copy hours from.')
+      return
+    }
+    const sourceDay = Number(copySourceDay)
+    const sourceRows = entries.filter((entry) => entry.day_of_week === sourceDay)
+    if (sourceRows.length === 0 || copyTargetDays.length === 0) {
+      setCopyError('Pick a source day with hours and at least one target day.')
+      return
+    }
+    setCopyBusy(true)
+    let copied = 0
+    try {
+      for (const targetDay of copyTargetDays) {
+        for (const row of sourceRows) {
+          try {
+            await createDoctorSchedule(doctor.id, {
+              day_of_week: targetDay,
+              start_time: row.start_time,
+              end_time: row.end_time,
+              start_date: row.start_date,
+              end_date: row.end_date,
+              department_id: row.department_id,
+            })
+            copied++
+          } catch {
+            // Most likely an overlap with hours the target day already
+            // has -- skip it and keep going with the rest rather than
+            // aborting the whole copy over one conflicting day.
+          }
+        }
+      }
+      setShowCopyForm(false)
+      setCopySourceDay('')
+      setCopyTargetDays([])
+      load()
+      if (copied === 0) {
+        setCopyError('Nothing was copied -- the target days already have overlapping hours.')
+      }
+    } finally {
+      setCopyBusy(false)
+    }
+  }
+
+  async function handleSaveSlotSettings() {
+    setSlotSettingsBusy(true)
+    setSlotSettingsError(null)
+    setSlotSettingsSaved(false)
+    try {
+      await updateDoctorSlotSettings(doctor.id, {
+        default_duration_minutes: defaultDuration,
+        buffer_minutes: bufferMinutes,
+      })
+      setSlotSettingsSaved(true)
+    } catch (err) {
+      setSlotSettingsError(err instanceof ApiError ? err.message : 'Could not save slot settings')
+    } finally {
+      setSlotSettingsBusy(false)
+    }
+  }
+
+  const previewDayOfWeek = dateToDayOfWeek(previewDate)
+  const previewSlotsForDate = generateDaySlots(entries, previewDate, previewDayOfWeek, defaultDuration, bufferMinutes)
+
   return (
-    <div>
-      <h4>Working hours</h4>
-      <p className="muted">These hours are used to generate available appointment slots.</p>
+    <div className="schedule-tab-layout">
+      <div className="schedule-tab-main">
+      <div className="admin-content-header">
+        <div>
+          <h4 style={{ margin: 0 }}>Working hours</h4>
+          <p className="muted" style={{ margin: 0 }}>These hours are used to generate available appointment slots.</p>
+        </div>
+        {isAdmin && daysWithEntries.length > 0 && (
+          <button type="button" className="btn-secondary btn btn-sm" onClick={() => setShowCopyForm((v) => !v)}>
+            {showCopyForm ? 'Cancel' : 'Copy hours across days'}
+          </button>
+        )}
+      </div>
       {error && <p className="error">{error}</p>}
 
+      {showCopyForm && (
+        <form className="inline-form wrap" onSubmit={handleCopyHours}>
+          <label className="inline-label">
+            Copy hours from
+            <select value={copySourceDay} onChange={(e) => setCopySourceDay(e.target.value)} required>
+              <option value="">Choose a day…</option>
+              {daysWithEntries.map((d) => (
+                <option key={d} value={d}>
+                  {DAY_NAMES[d]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div style={{ width: '100%' }}>
+            <span className="field-label">To</span>
+            <div className="day-multiselect" role="group" aria-label="Target days">
+              {DAY_NAMES.slice(1).map((name, i) => {
+                const day = i + 1
+                const isSource = copySourceDay !== '' && Number(copySourceDay) === day
+                return (
+                  <button
+                    key={day}
+                    type="button"
+                    className={copyTargetDays.includes(day) ? 'selected' : ''}
+                    aria-pressed={copyTargetDays.includes(day)}
+                    disabled={isSource}
+                    onClick={() => toggleCopyTargetDay(day)}
+                  >
+                    {name.slice(0, 3)}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          {copyError && <p className="error">{copyError}</p>}
+          <button type="submit" disabled={copyBusy}>
+            {copyBusy ? 'Copying…' : 'Copy hours'}
+          </button>
+        </form>
+      )}
+
+      <div className="admin-table-scroll">
       <table className="data-table">
         <thead>
           <tr>
@@ -1056,6 +1381,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
           )}
         </tbody>
       </table>
+      </div>
 
       <AlertDialog open={removeTarget !== null} onOpenChange={(open) => !open && setRemoveTarget(null)}>
         <AlertDialogContent>
@@ -1209,6 +1535,61 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
           )}
         </form>
       )}
+      </div>
+
+      <div className="schedule-tab-sidebar">
+        {isAdmin && (
+          <div className="schedule-sidebar-panel">
+            <h4 style={{ margin: 0 }}>Slot settings</h4>
+            <label className="inline-label">
+              Default appointment duration
+              <select value={defaultDuration} onChange={(e) => { setDefaultDuration(Number(e.target.value)); setSlotSettingsSaved(false) }}>
+                {[15, 20, 30, 45, 60, 90].map((d) => (
+                  <option key={d} value={d}>
+                    {d} minutes
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="inline-label">
+              Buffer time between appointments
+              <select value={bufferMinutes} onChange={(e) => { setBufferMinutes(Number(e.target.value)); setSlotSettingsSaved(false) }}>
+                {[0, 5, 10, 15, 20, 30].map((b) => (
+                  <option key={b} value={b}>
+                    {b === 0 ? 'No buffer' : `${b} minutes`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {slotSettingsError && <p className="error">{slotSettingsError}</p>}
+            <button type="button" className="btn btn-sm" onClick={handleSaveSlotSettings} disabled={slotSettingsBusy}>
+              {slotSettingsBusy ? 'Saving…' : slotSettingsSaved ? 'Saved' : 'Save settings'}
+            </button>
+          </div>
+        )}
+
+        <div className="schedule-sidebar-panel">
+          <h4 style={{ margin: 0 }}>Generated slots preview</h4>
+          <p className="muted" style={{ margin: 0 }}>Preview available slots for a selected date.</p>
+          <AdminDatePicker value={previewDate} onChange={setPreviewDate} label="Pick a date" />
+          <p className="muted" style={{ margin: 0 }}>Available slots ({previewSlotsForDate.length})</p>
+          {previewSlotsForDate.length > 0 ? (
+            <div className="schedule-preview-slots">
+              {previewSlotsForDate.map((s, i) => (
+                <span key={i} className="slot-chip-static">
+                  {s}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="muted">No working hours set for this day.</p>
+          )}
+          <p className="muted schedule-sidebar-note">
+            Slots are generated from working hours, appointment duration, and buffer time -- not a guarantee of real
+            booking availability (existing appointments and time off aren't excluded here).
+          </p>
+        </div>
+      </div>
     </div>
   )
 }
@@ -1301,6 +1682,7 @@ function BlocksSection({ doctor }: { doctor: Doctor }) {
         {blocks.map((b) => (
           <li key={b.id}>
             {formatDate(b.start_at)} {formatTime(b.start_at)} – {formatTime(b.end_at)}: {b.reason}
+            <span className="muted"> · Added {formatDate(b.created_at)}</span>
             <button type="button" className="link" onClick={() => setRemoveTarget(b)}>
               remove
             </button>
@@ -1360,6 +1742,10 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
   const [error, setError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [removeTarget, setRemoveTarget] = useState<AppointmentType | null>(null)
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editDuration, setEditDuration] = useState(30)
+  const [editFee, setEditFee] = useState('')
+  const [editBusy, setEditBusy] = useState(false)
 
   function load() {
     Promise.all([listAppointmentTypesForDoctor(doctor.id), listAppointmentTypeCatalog()])
@@ -1407,6 +1793,29 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
     }
   }
 
+  function startEdit(a: AppointmentType) {
+    setEditingId(a.id)
+    setEditDuration(a.duration_minutes)
+    setEditFee(String(a.consultation_fee))
+    setError(null)
+  }
+
+  async function saveEdit(e: React.FormEvent) {
+    e.preventDefault()
+    if (editingId === null) return
+    setError(null)
+    setEditBusy(true)
+    try {
+      await updateDoctorAppointmentType(doctor.id, editingId, editDuration, Number(editFee) || 0)
+      setEditingId(null)
+      load()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not save this appointment type')
+    } finally {
+      setEditBusy(false)
+    }
+  }
+
   return (
     <div>
       <div className="admin-content-header">
@@ -1425,16 +1834,54 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
       {error && <p className="error">{error}</p>}
 
       <ul className="tag-list">
-        {assigned.map((a) => (
-          <li key={a.id}>
-            {a.name} ({a.duration_minutes} min · ₹{a.consultation_fee})
-            {isAdmin && (
-              <button type="button" className="link" onClick={() => setRemoveTarget(a)}>
-                remove
-              </button>
-            )}
-          </li>
-        ))}
+        {assigned.map((a) =>
+          editingId === a.id ? (
+            <li key={a.id}>
+              <form className="inline-form" onSubmit={saveEdit} style={{ display: 'inline-flex', gap: 8 }}>
+                <span>{a.name}</span>
+                <input
+                  type="number"
+                  min={5}
+                  max={240}
+                  value={editDuration}
+                  onChange={(e) => setEditDuration(Number(e.target.value))}
+                  style={{ width: 70 }}
+                  aria-label="Duration (minutes)"
+                  required
+                />
+                <span className="muted">min · ₹</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={editFee}
+                  onChange={(e) => setEditFee(e.target.value)}
+                  style={{ width: 80 }}
+                  aria-label="Consultation fee"
+                />
+                <button type="submit" className="link" disabled={editBusy}>
+                  {editBusy ? 'Saving…' : 'Save'}
+                </button>
+                <button type="button" className="link" onClick={() => setEditingId(null)}>
+                  Cancel
+                </button>
+              </form>
+            </li>
+          ) : (
+            <li key={a.id}>
+              {a.name} ({a.duration_minutes} min · ₹{a.consultation_fee})
+              {isAdmin && (
+                <>
+                  <button type="button" className="link" onClick={() => startEdit(a)}>
+                    Edit
+                  </button>
+                  <button type="button" className="link" onClick={() => setRemoveTarget(a)}>
+                    remove
+                  </button>
+                </>
+              )}
+            </li>
+          ),
+        )}
         {assigned.length === 0 && <li className="muted">No appointment types assigned.</li>}
       </ul>
 
