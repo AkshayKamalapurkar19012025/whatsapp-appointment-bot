@@ -983,6 +983,57 @@ function previewSlots(startTime: string, endTime: string, durationMinutes: numbe
   return slots
 }
 
+function minutesToHHMM(totalMinutes: number): string {
+  const h = Math.floor(totalMinutes / 60)
+  const m = totalMinutes % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
+// The "From"/"Until"/break time pickers on the Schedule tab must offer
+// options at the doctor's own configured appointment-duration grid (the
+// same "Slot settings" default_duration_minutes shown right next to this
+// form -- see ScheduleSection's defaultDuration state), not a fixed
+// increment -- a 45-minute doctor should see 9:00, 9:45, 10:30, not
+// 9:00, 9:15, 9:30. A previously-saved value that doesn't fall on the
+// current grid (e.g. duration changed after the schedule was set) is
+// injected as its own option rather than dropped, so the field still
+// shows and keeps the real stored value instead of silently snapping it
+// to the nearest grid point.
+function timeOfDayOptions(durationMinutes: number, currentValue: string): string[] {
+  const step = durationMinutes > 0 ? durationMinutes : 30
+  const values: string[] = []
+  for (let minutes = 0; minutes < 24 * 60; minutes += step) {
+    values.push(minutesToHHMM(minutes))
+  }
+  if (!values.includes(currentValue)) {
+    values.push(currentValue)
+    values.sort()
+  }
+  return values
+}
+
+function TimeOfDaySelect({
+  value,
+  onChange,
+  durationMinutes,
+  ariaLabel,
+}: {
+  value: string
+  onChange: (value: string) => void
+  durationMinutes: number
+  ariaLabel: string
+}) {
+  return (
+    <select aria-label={ariaLabel} value={value} onChange={(e) => onChange(e.target.value)} required>
+      {timeOfDayOptions(durationMinutes, value).map((v) => (
+        <option key={v} value={v}>
+          {formatTimeOfDay(v)}
+        </option>
+      ))}
+    </select>
+  )
+}
+
 function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean }) {
   const [entries, setEntries] = useState<DoctorScheduleEntry[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
@@ -1433,8 +1484,8 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
               })}
             </div>
           </div>
-          <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required />
-          <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required />
+          <TimeOfDaySelect value={startTime} onChange={setStartTime} durationMinutes={defaultDuration} ariaLabel="Start time" />
+          <TimeOfDaySelect value={endTime} onChange={setEndTime} durationMinutes={defaultDuration} ariaLabel="End time" />
           {/* A plain div, not <label> -- AdminDatePicker is a compound
               widget with its own toggle button AND a calendar full of
               day buttons, not a single native form control. A <label>
@@ -1487,11 +1538,21 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
               <div key={i} className="inline-form wrap" style={{ marginTop: 0 }}>
                 <label className="inline-label">
                   Break {i + 1} start
-                  <input type="time" value={b.start} onChange={(e) => updateBreak(i, 'start', e.target.value)} required />
+                  <TimeOfDaySelect
+                    value={b.start}
+                    onChange={(v) => updateBreak(i, 'start', v)}
+                    durationMinutes={defaultDuration}
+                    ariaLabel={`Break ${i + 1} start`}
+                  />
                 </label>
                 <label className="inline-label">
                   Break {i + 1} end
-                  <input type="time" value={b.end} onChange={(e) => updateBreak(i, 'end', e.target.value)} required />
+                  <TimeOfDaySelect
+                    value={b.end}
+                    onChange={(v) => updateBreak(i, 'end', v)}
+                    durationMinutes={defaultDuration}
+                    ariaLabel={`Break ${i + 1} end`}
+                  />
                 </label>
                 <button type="button" className="link danger" onClick={() => removeBreak(i)}>
                   Remove break
