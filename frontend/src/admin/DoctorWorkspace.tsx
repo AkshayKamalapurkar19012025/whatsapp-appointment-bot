@@ -58,6 +58,7 @@ import {
 } from '../components/ui/alert-dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
+import { TimeCombobox } from '../components/ui/time-combobox'
 import DoctorProfileSection from './DoctorProfileSection'
 import AppointmentDetailsModal from './AppointmentDetailsModal'
 import { AppointmentActionButtons, buildAppointmentActions, type AppointmentActionHandlers } from './AppointmentActions'
@@ -112,6 +113,29 @@ export default function DoctorWorkspace({
   const [deactivateOpen, setDeactivateOpen] = useState(false)
   const [deactivating, setDeactivating] = useState(false)
   const [deactivateError, setDeactivateError] = useState<string | null>(null)
+  // Set by ScheduleSection's own onDirtyChange while its working-hours
+  // form has in-progress, not-yet-saved changes -- guards the two
+  // navigation actions this component itself controls (switching tabs,
+  // going back to the Doctors directory) so neither silently discards
+  // them. Switching to a *different* doctor happens one level up (the
+  // Doctors directory list), outside what this component can guard.
+  const [scheduleFormDirty, setScheduleFormDirty] = useState(false)
+
+  function confirmDiscardIfDirty(): boolean {
+    if (!scheduleFormDirty) return true
+    return window.confirm('You have unsaved working hours — discard changes?')
+  }
+
+  function guardedSetTab(next: WorkspaceTab) {
+    if (next === tab) return
+    if (tab === 'schedule' && !confirmDiscardIfDirty()) return
+    setTab(next)
+  }
+
+  function guardedOnBack() {
+    if (tab === 'schedule' && !confirmDiscardIfDirty()) return
+    onBack()
+  }
 
   async function confirmDeactivate() {
     setDeactivating(true)
@@ -134,7 +158,7 @@ export default function DoctorWorkspace({
 
   return (
     <div>
-      <button type="button" className="link doctor-workspace-back" onClick={onBack}>
+      <button type="button" className="link doctor-workspace-back" onClick={guardedOnBack}>
         <ArrowLeft size={15} weight="bold" /> Doctors
       </button>
 
@@ -154,7 +178,7 @@ export default function DoctorWorkspace({
         </div>
         {isAdmin && (
           <div className="doctor-workspace-header-actions">
-            <button type="button" className="btn-secondary btn btn-sm" onClick={() => setTab('profile')}>
+            <button type="button" className="btn-secondary btn btn-sm" onClick={() => guardedSetTab('profile')}>
               Edit profile
             </button>
             <DropdownMenu>
@@ -199,7 +223,7 @@ export default function DoctorWorkspace({
             key={t.key}
             type="button"
             className={t.key === tab ? 'tab active' : 'tab'}
-            onClick={() => setTab(t.key)}
+            onClick={() => guardedSetTab(t.key)}
           >
             {t.label}
           </button>
@@ -215,7 +239,7 @@ export default function DoctorWorkspace({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
             {MORE_TABS.map((t) => (
-              <DropdownMenuItem key={t.key} onSelect={() => setTab(t.key)}>
+              <DropdownMenuItem key={t.key} onSelect={() => guardedSetTab(t.key)}>
                 {t.icon} {t.label}
               </DropdownMenuItem>
             ))}
@@ -226,12 +250,14 @@ export default function DoctorWorkspace({
       {tab === 'overview' && (
         <OverviewSection
           doctor={doctor}
-          onGoToTab={setTab}
+          onGoToTab={guardedSetTab}
           onGoToQueue={onGoToQueue ? () => onGoToQueue(doctor.id) : undefined}
         />
       )}
       {tab === 'appointments' && <DoctorAppointmentsTab doctor={doctor} isAdmin={isAdmin} />}
-      {tab === 'schedule' && <ScheduleSection doctor={doctor} isAdmin={isAdmin} />}
+      {tab === 'schedule' && (
+        <ScheduleSection doctor={doctor} isAdmin={isAdmin} onDirtyChange={setScheduleFormDirty} />
+      )}
       {tab === 'blocks' && <BlocksSection doctor={doctor} />}
       {tab === 'departments' && <DepartmentAssignment doctor={doctor} isAdmin={isAdmin} />}
       {tab === 'types' && <AppointmentTypeAssignment doctor={doctor} isAdmin={isAdmin} />}
@@ -983,58 +1009,23 @@ function previewSlots(startTime: string, endTime: string, durationMinutes: numbe
   return slots
 }
 
-function minutesToHHMM(totalMinutes: number): string {
-  const h = Math.floor(totalMinutes / 60)
-  const m = totalMinutes % 60
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
-}
+// Every "appointment duration"-shaped <select> on this tab (the Slot
+// Settings sidebar's real default AND the Generated Slots Preview's
+// local override) must offer the exact same choices -- otherwise a
+// duration synced in from the sidebar (see previewDurationOverride
+// below) could land on a value the preview <select> has no matching
+// <option> for.
+const DURATION_OPTIONS = [15, 20, 30, 45, 60, 90]
 
-// The "From"/"Until"/break time pickers on the Schedule tab must offer
-// options at the doctor's own configured appointment-duration grid (the
-// same "Slot settings" default_duration_minutes shown right next to this
-// form -- see ScheduleSection's defaultDuration state), not a fixed
-// increment -- a 45-minute doctor should see 9:00, 9:45, 10:30, not
-// 9:00, 9:15, 9:30. A previously-saved value that doesn't fall on the
-// current grid (e.g. duration changed after the schedule was set) is
-// injected as its own option rather than dropped, so the field still
-// shows and keeps the real stored value instead of silently snapping it
-// to the nearest grid point.
-function timeOfDayOptions(durationMinutes: number, currentValue: string): string[] {
-  const step = durationMinutes > 0 ? durationMinutes : 30
-  const values: string[] = []
-  for (let minutes = 0; minutes < 24 * 60; minutes += step) {
-    values.push(minutesToHHMM(minutes))
-  }
-  if (!values.includes(currentValue)) {
-    values.push(currentValue)
-    values.sort()
-  }
-  return values
-}
-
-function TimeOfDaySelect({
-  value,
-  onChange,
-  durationMinutes,
-  ariaLabel,
+function ScheduleSection({
+  doctor,
+  isAdmin,
+  onDirtyChange,
 }: {
-  value: string
-  onChange: (value: string) => void
-  durationMinutes: number
-  ariaLabel: string
+  doctor: Doctor
+  isAdmin: boolean
+  onDirtyChange?: (dirty: boolean) => void
 }) {
-  return (
-    <select aria-label={ariaLabel} value={value} onChange={(e) => onChange(e.target.value)} required>
-      {timeOfDayOptions(durationMinutes, value).map((v) => (
-        <option key={v} value={v}>
-          {formatTimeOfDay(v)}
-        </option>
-      ))}
-    </select>
-  )
-}
-
-function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean }) {
   const [entries, setEntries] = useState<DoctorScheduleEntry[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
   // Multiple days at once (e.g. Mon-Fri) rather than one day per submit
@@ -1049,10 +1040,16 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
   const [endDate, setEndDate] = useState('')
   const [departmentId, setDepartmentId] = useState('')
   const [breaks, setBreaks] = useState<{ start: string; end: string }[]>([])
-  const [previewDuration, setPreviewDuration] = useState(30)
+  // The Generated Slots Preview's own duration <select> stays in sync
+  // with "Default appointment duration" (defaultDuration below) unless
+  // the admin explicitly overrides it here, purely to preview a
+  // different length without touching the saved default -- see the
+  // "Preview duration (overrides default)" label/reset-link this drives.
+  const [previewDurationOverride, setPreviewDurationOverride] = useState<number | null>(null)
   const [showPreview, setShowPreview] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [savedFlash, setSavedFlash] = useState(false)
   const [removeTarget, setRemoveTarget] = useState<DoctorScheduleEntry | null>(null)
 
   // "Copy from another week" (spec decision: this schedule is a
@@ -1169,6 +1166,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
     setDepartmentId('')
     setBreaks([])
     setShowPreview(false)
+    setPreviewDurationOverride(null)
   }
 
   const formIsDirty =
@@ -1180,6 +1178,22 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
     endDate !== '' ||
     departmentId !== '' ||
     breaks.length > 0
+
+  // Surfaced to the parent DoctorWorkspace so switching tabs or going
+  // back to the Doctors directory can warn before discarding an
+  // in-progress (not yet saved) working-hours edit -- see
+  // DoctorWorkspace's own guardedSetTab/guardedOnBack.
+  useEffect(() => {
+    onDirtyChange?.(formIsDirty)
+    return () => onDirtyChange?.(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formIsDirty])
+
+  // At least one day, and a real (non-empty) start-before-end range --
+  // Department is deliberately NOT required here: "All departments" is
+  // itself a valid, common choice (see the field's own helper text),
+  // not an incomplete one.
+  const canSubmit = selectedDays.length > 0 && startTime < endTime
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
@@ -1249,6 +1263,13 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
       setStartDate('')
       setEndDate('')
       load()
+      // Distinct from the Slot Settings sidebar's own "Saved" button
+      // (handleSaveSlotSettings/slotSettingsSaved below) -- that one
+      // stays visible until the admin changes a value again; this is a
+      // brief, self-clearing confirmation for this different save
+      // action, so the two are never confused for each other.
+      setSavedFlash(true)
+      setTimeout(() => setSavedFlash(false), 2500)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not add schedule')
     } finally {
@@ -1256,6 +1277,9 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
     }
   }
 
+  // Synced to "Default appointment duration" (defaultDuration) unless
+  // explicitly overridden -- see previewDurationOverride's own comment.
+  const previewDuration = previewDurationOverride ?? defaultDuration
   const previewSlotsList = scheduleSegments().flatMap((seg) => previewSlots(seg.start, seg.end, previewDuration))
 
   async function confirmRemove() {
@@ -1464,7 +1488,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
       </AlertDialog>
 
       {isAdmin && (
-        <form className="inline-form wrap" onSubmit={handleCreate}>
+        <form className={formIsDirty ? 'inline-form wrap schedule-form is-dirty' : 'inline-form wrap schedule-form'} onSubmit={handleCreate}>
           <div style={{ width: '100%' }}>
             <span className="field-label">Days</span>
             <div className="day-multiselect" role="group" aria-label="Days of week">
@@ -1484,8 +1508,8 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
               })}
             </div>
           </div>
-          <TimeOfDaySelect value={startTime} onChange={setStartTime} durationMinutes={defaultDuration} ariaLabel="Start time" />
-          <TimeOfDaySelect value={endTime} onChange={setEndTime} durationMinutes={defaultDuration} ariaLabel="End time" />
+          <TimeCombobox value={startTime} onChange={setStartTime} durationMinutes={defaultDuration} ariaLabel="Start time" />
+          <TimeCombobox value={endTime} onChange={setEndTime} durationMinutes={defaultDuration} ariaLabel="End time" />
           {/* A plain div, not <label> -- AdminDatePicker is a compound
               widget with its own toggle button AND a calendar full of
               day buttons, not a single native form control. A <label>
@@ -1524,7 +1548,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
               <span className="muted">Assign a department (Departments tab) to set department-specific hours.</span>
             )}
           </label>
-          <button type="submit" disabled={busy || selectedDays.length === 0}>
+          <button type="submit" disabled={busy || !canSubmit}>
             {busy ? 'Saving…' : '+ Add working hours'}
           </button>
           {formIsDirty && (
@@ -1532,13 +1556,15 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
               Cancel
             </button>
           )}
+          {formIsDirty && <span className="unsaved-badge">Unsaved changes</span>}
+          {savedFlash && <span className="save-success-flash">✓ Working hours saved</span>}
 
           <div style={{ width: '100%' }}>
             {breaks.map((b, i) => (
               <div key={i} className="inline-form wrap" style={{ marginTop: 0 }}>
                 <label className="inline-label">
                   Break {i + 1} start
-                  <TimeOfDaySelect
+                  <TimeCombobox
                     value={b.start}
                     onChange={(v) => updateBreak(i, 'start', v)}
                     durationMinutes={defaultDuration}
@@ -1547,7 +1573,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
                 </label>
                 <label className="inline-label">
                   Break {i + 1} end
-                  <TimeOfDaySelect
+                  <TimeCombobox
                     value={b.end}
                     onChange={(v) => updateBreak(i, 'end', v)}
                     durationMinutes={defaultDuration}
@@ -1568,6 +1594,13 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
             <button type="button" className="link" onClick={() => setShowPreview((v) => !v)}>
               {showPreview ? 'Hide' : 'Show'} generated-slot preview
             </button>
+            {/* This preview is always computed from the form fields
+                above, not from anything saved yet (see previewSlots'
+                own docstring) -- unlike the sidebar's "Generated slots
+                preview" panel, which reads the actually-saved schedule.
+                Labeling it plainly here is what keeps the two from
+                reading as contradictory for the same date. */}
+            {showPreview && <span className="draft-badge">Draft — not yet saved</span>}
           </div>
 
           {showPreview && (
@@ -1581,18 +1614,26 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
                 </span>
               )}
               <span className="arrow">÷</span>
-              <select
-                aria-label="Preview appointment length"
-                value={previewDuration}
-                onChange={(e) => setPreviewDuration(Number(e.target.value))}
-                style={{ width: 'auto', marginBottom: 0 }}
-              >
-                {[15, 20, 30, 45, 60].map((d) => (
-                  <option key={d} value={d}>
-                    {d} min appt
-                  </option>
-                ))}
-              </select>
+              <label className="inline-label" style={{ marginBottom: 0 }}>
+                {previewDurationOverride !== null ? 'Preview duration (overrides default)' : 'Preview duration'}
+                <select
+                  aria-label="Preview appointment length"
+                  value={previewDuration}
+                  onChange={(e) => setPreviewDurationOverride(Number(e.target.value))}
+                  style={{ width: 'auto', marginBottom: 0 }}
+                >
+                  {DURATION_OPTIONS.map((d) => (
+                    <option key={d} value={d}>
+                      {d} min appt
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {previewDurationOverride !== null && (
+                <button type="button" className="link" onClick={() => setPreviewDurationOverride(null)}>
+                  Reset to default
+                </button>
+              )}
               <div className="schedule-preview-slots">
                 {previewSlotsList.map((s) => (
                   <span key={s} className="slot-chip-static">
@@ -1616,7 +1657,7 @@ function ScheduleSection({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean
             <label className="inline-label">
               Default appointment duration
               <select value={defaultDuration} onChange={(e) => { setDefaultDuration(Number(e.target.value)); setSlotSettingsSaved(false) }}>
-                {[15, 20, 30, 45, 60, 90].map((d) => (
+                {DURATION_OPTIONS.map((d) => (
                   <option key={d} value={d}>
                     {d} minutes
                   </option>
