@@ -1741,10 +1741,6 @@ a.link.danger {
   margin-bottom: var(--space-4);
 }
 
-.schedule-preview-toggle {
-  width: 100%;
-}
-
 .doctor-workspace-more {
   display: inline-flex;
   align-items: center;
@@ -2655,20 +2651,7 @@ a.link.danger {
   min-width: 260px;
 }
 
-.schedule-preview {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-  padding: var(--space-3);
-  background: var(--color-primary-soft);
-  border: 1px solid var(--color-primary-soft-strong);
-  border-radius: var(--radius-md);
-  margin: var(--space-3) 0;
-  font-size: 0.85rem;
-}
-
-.schedule-preview .arrow {
+.arrow {
   color: var(--color-text-muted);
 }
 
@@ -2722,22 +2705,21 @@ a.link.danger {
   font-size: 0.76rem;
 }
 
-/* Working-hours form's dirty/draft/saved indicators (DoctorWorkspace.tsx's
-   ScheduleSection) -- a subtle left-border tint while there are
-   unsaved changes, plus small pill labels distinguishing "this is an
-   unsaved draft" from "this just saved" so neither reads as the other. */
-.schedule-form.is-dirty {
+.schedule-preview-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* The one dirty-state indicator for the whole card (working-hours
+   draft fields AND Slot Settings, see ScheduleSection's overallDirty)
+   -- a subtle left-border tint spanning both columns, so "there's an
+   unsaved change somewhere in here" reads as one area, not two. */
+.schedule-tab-layout.is-dirty {
   border-left: 3px solid var(--color-primary);
   padding-left: var(--space-3);
   margin-left: calc(-1 * var(--space-3) - 3px);
-}
-
-.unsaved-badge {
-  display: inline-flex;
-  align-items: center;
-  font-size: 0.76rem;
-  font-weight: 600;
-  color: var(--color-text-muted);
 }
 
 .draft-badge {
@@ -2751,14 +2733,79 @@ a.link.danger {
   border-radius: var(--radius-sm);
   background: var(--color-warning-soft);
   color: var(--color-warning);
-  margin-left: var(--space-2);
 }
 
-.save-success-flash {
+/* Field-group grid used throughout the Working Hours form (Hours'
+   From/Until, Date range's Start/End date) -- every label sits
+   directly above the one field it belongs to (a <span class="field-
+   label"> immediately followed by its control inside one
+   .schedule-field-group), and both fields in a row share this same
+   grid so their heights/edges/gaps line up. Collapses to one column
+   on narrow screens instead of squeezing two fields into a cramped row. */
+.schedule-field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3) var(--space-4);
+  margin: var(--space-2) 0;
+}
+
+@media (max-width: 560px) {
+  .schedule-field-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.schedule-field-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin: var(--space-3) 0;
+}
+
+.schedule-breaks {
+  gap: var(--space-2);
+}
+
+.schedule-break-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* The single Save/Cancel action bar for the whole card (working-hours
+   draft + Slot Settings) -- see ScheduleSection's handleSaveAll/
+   handleCancelAll. Not viewport-sticky (deliberately -- a fixed
+   footer here would need its own z-index/stacking-context
+   coordination against existing modals this app already has, for no
+   requirement that specifically asked for that); it sits at the
+   bottom of this card instead, always visible on scroll to it. */
+.schedule-save-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.schedule-save-bar-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.schedule-save-status {
   display: inline-flex;
   align-items: center;
   font-size: 0.85rem;
   font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.schedule-save-status.success {
   color: var(--color-success);
 }
 

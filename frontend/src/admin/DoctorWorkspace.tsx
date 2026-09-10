@@ -981,41 +981,41 @@ function dayOfWeekOccursInRange(dayOfWeek: number, startDate: string, endDate: s
   return false
 }
 
-function toMinutesSinceMidnight(hhmm: string): number {
-  const [h, m] = hhmm.split(':').map(Number)
-  return h * 60 + m
-}
-
-function toHHMM(minutes: number): string {
-  const h = Math.floor(minutes / 60)
-  const m = minutes % 60
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
-}
-
-// Illustrative only -- a straight stride from start to end at the given
-// duration, with no doctor-block/existing-appointment exclusion (that's
-// what the real /api/availability engine does once a patient/staff
-// member is booking against a specific date). This exists purely so
-// Start -> End -> Duration -> Generated Slots is visible while setting
-// up the recurring schedule, before any date-specific booking exists.
-function previewSlots(startTime: string, endTime: string, durationMinutes: number): string[] {
-  const start = toMinutesSinceMidnight(startTime)
-  const end = toMinutesSinceMidnight(endTime)
-  if (!(end > start) || durationMinutes <= 0) return []
-  const slots: string[] = []
-  for (let t = start; t + durationMinutes <= end; t += durationMinutes) {
-    slots.push(`${formatTimeOfDay(toHHMM(t))} – ${formatTimeOfDay(toHHMM(t + durationMinutes))}`)
-  }
-  return slots
-}
-
-// Every "appointment duration"-shaped <select> on this tab (the Slot
-// Settings sidebar's real default AND the Generated Slots Preview's
-// local override) must offer the exact same choices -- otherwise a
-// duration synced in from the sidebar (see previewDurationOverride
-// below) could land on a value the preview <select> has no matching
-// <option> for.
+// Every "appointment duration"-shaped <select> on this tab must offer
+// the exact same choices, since defaultDuration is shared as a single
+// piece of draft state across both the Slot Settings card and the
+// preview generation below.
 const DURATION_OPTIONS = [15, 20, 30, 45, 60, 90]
+
+// One synthetic doctor_schedule-shaped row per (day x break segment) of
+// the working-hours form currently being composed -- fake, negative
+// ids so they can never collide with a real persisted entry's id. Used
+// only to feed the *same* generateDaySlots() the sidebar preview always
+// used, alongside the real persisted `entries`, so the preview can show
+// "what this day will look like after Save" without a second
+// slot-generation implementation (see ScheduleSection's own preview
+// wiring below for why this union, not a replacement, is the point).
+function draftEntriesFor(
+  selectedDays: number[],
+  segments: { start: string; end: string }[],
+  startDate: string,
+  endDate: string,
+  departmentId: string,
+): DoctorScheduleEntry[] {
+  let fakeId = -1
+  return selectedDays.flatMap((day) =>
+    segments.map((seg) => ({
+      id: fakeId--,
+      day_of_week: day,
+      start_time: seg.start,
+      end_time: seg.end,
+      active: true,
+      start_date: startDate || null,
+      end_date: endDate || null,
+      department_id: departmentId ? Number(departmentId) : null,
+    })),
+  )
+}
 
 function ScheduleSection({
   doctor,
@@ -1030,7 +1030,7 @@ function ScheduleSection({
   const [departments, setDepartments] = useState<Department[]>([])
   // Multiple days at once (e.g. Mon-Fri) rather than one day per submit
   // -- each still becomes its own doctor_schedule row server-side (see
-  // handleCreate below), the backend has no multi-day concept, this
+  // saveScheduleRows below), the backend has no multi-day concept, this
   // form just saves the admin from resubmitting the same hours/date
   // range/department N times for N days.
   const [selectedDays, setSelectedDays] = useState<number[]>([1])
@@ -1040,13 +1040,6 @@ function ScheduleSection({
   const [endDate, setEndDate] = useState('')
   const [departmentId, setDepartmentId] = useState('')
   const [breaks, setBreaks] = useState<{ start: string; end: string }[]>([])
-  // The Generated Slots Preview's own duration <select> stays in sync
-  // with "Default appointment duration" (defaultDuration below) unless
-  // the admin explicitly overrides it here, purely to preview a
-  // different length without touching the saved default -- see the
-  // "Preview duration (overrides default)" label/reset-link this drives.
-  const [previewDurationOverride, setPreviewDurationOverride] = useState<number | null>(null)
-  const [showPreview, setShowPreview] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [savedFlash, setSavedFlash] = useState(false)
@@ -1061,17 +1054,27 @@ function ScheduleSection({
   const [copyBusy, setCopyBusy] = useState(false)
   const [copyError, setCopyError] = useState<string | null>(null)
 
-  // Slot settings panel (migrations/0022_doctor_slot_settings.sql).
+  // Slot settings (migrations/0022_doctor_slot_settings.sql) --
+  // defaultDuration/bufferMinutes are DRAFT values now, part of the one
+  // Working Hours form's save/cancel lifecycle (no independent "Save
+  // settings" button -- see the single footer below). savedDuration/
+  // savedBuffer track what's actually persisted, so slotSettingsDirty
+  // and Cancel's revert both have a real "last saved" baseline to
+  // compare/reset against, one that updates after a real successful
+  // save even if it happens as part of a partially-failed combined
+  // save (see handleSaveAll).
   const [defaultDuration, setDefaultDuration] = useState(doctor.default_duration_minutes)
   const [bufferMinutes, setBufferMinutes] = useState(doctor.buffer_minutes)
-  const [slotSettingsBusy, setSlotSettingsBusy] = useState(false)
-  const [slotSettingsSaved, setSlotSettingsSaved] = useState(false)
-  const [slotSettingsError, setSlotSettingsError] = useState<string | null>(null)
+  const [savedDuration, setSavedDuration] = useState(doctor.default_duration_minutes)
+  const [savedBuffer, setSavedBuffer] = useState(doctor.buffer_minutes)
+  const slotSettingsDirty = defaultDuration !== savedDuration || bufferMinutes !== savedBuffer
 
   // Generated slots preview panel -- a generic, capacity-only preview
   // for a chosen date (see generateDaySlots's own docstring for why
   // this isn't the same thing as real per-appointment-type booking
-  // availability).
+  // availability). Always visible now (no show/hide toggle) -- it's
+  // the single preview for both the in-progress draft and the
+  // last-saved schedule, see the combinedEntries wiring below.
   const [previewDate, setPreviewDate] = useState(isoDateToday())
 
   function load() {
@@ -1154,9 +1157,9 @@ function ScheduleSection({
     return segments
   }
 
-  // Resets the add-schedule form back to its defaults -- the "Cancel"
-  // button next to "Save" discards whatever the admin was mid-typing
-  // instead of submitting it, without touching anything already saved.
+  // Resets the working-hours draft fields back to their defaults --
+  // handleCancelAll (the one footer's "Cancel") also resets Slot
+  // Settings, since both are part of the same save/cancel lifecycle now.
   function resetForm() {
     setSelectedDays([1])
     setStartTime('09:00')
@@ -1165,8 +1168,6 @@ function ScheduleSection({
     setEndDate('')
     setDepartmentId('')
     setBreaks([])
-    setShowPreview(false)
-    setPreviewDurationOverride(null)
   }
 
   const formIsDirty =
@@ -1179,31 +1180,40 @@ function ScheduleSection({
     departmentId !== '' ||
     breaks.length > 0
 
+  // The one dirty flag for the whole card -- Working Hours draft fields
+  // OR Slot Settings values that differ from what's actually persisted.
+  const overallDirty = formIsDirty || slotSettingsDirty
+
   // Surfaced to the parent DoctorWorkspace so switching tabs or going
   // back to the Doctors directory can warn before discarding an
-  // in-progress (not yet saved) working-hours edit -- see
-  // DoctorWorkspace's own guardedSetTab/guardedOnBack.
+  // in-progress (not yet saved) edit -- see DoctorWorkspace's own
+  // guardedSetTab/guardedOnBack.
   useEffect(() => {
-    onDirtyChange?.(formIsDirty)
+    onDirtyChange?.(overallDirty)
     return () => onDirtyChange?.(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formIsDirty])
+  }, [overallDirty])
 
   // At least one day, and a real (non-empty) start-before-end range --
   // Department is deliberately NOT required here: "All departments" is
   // itself a valid, common choice (see the field's own helper text),
   // not an incomplete one.
-  const canSubmit = selectedDays.length > 0 && startTime < endTime
+  const scheduleValid = selectedDays.length > 0 && startTime < endTime
+  const saveDisabled = busy || !overallDirty || (formIsDirty && !scheduleValid)
+  const cancelDisabled = busy || !overallDirty
 
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault()
-    setError(null)
-
-    if (selectedDays.length === 0) {
-      setError('Pick at least one day of the week.')
-      return
-    }
-
+  // Submits the working-hours draft as N separate doctor_schedule rows
+  // (one per selected-day x break-segment) -- there is no batch/
+  // transaction endpoint (see app/api/doctor_schedule.py), so this
+  // stays N sequential calls exactly as before, just no longer its own
+  // independently-clickable action (see handleSaveAll below). On a
+  // partial failure, narrows selectedDays down to only the day(s) not
+  // yet confirmed saved (successful days are dropped from the draft --
+  // they're already reflected in `entries` after load()) rather than
+  // clearing or leaving the whole original selection dirty, so
+  // "Unsaved changes" continues to describe exactly what's left to
+  // retry, not what already succeeded.
+  async function saveScheduleRows(): Promise<boolean> {
     if (startDate && endDate) {
       const daysNeverInRange = selectedDays.filter((d) => !dayOfWeekOccursInRange(d, startDate, endDate))
       if (daysNeverInRange.length > 0) {
@@ -1213,33 +1223,21 @@ function ScheduleSection({
             `${formatDate(endDate)}, so ${daysNeverInRange.length === 1 ? 'that schedule' : 'those schedules'} would ` +
             'never actually apply. Pick a date range that includes at least one of each selected day, or deselect it.',
         )
-        return
+        return false
       }
     }
 
     const breaksError = validateBreaks()
     if (breaksError) {
       setError(breaksError)
-      return
+      return false
     }
 
     const segments = scheduleSegments()
-    // One doctor_schedule row per (selected day x break segment) --
-    // e.g. Mon-Fri with a lunch break creates 10 rows in one submit
-    // instead of the admin doing 5 separate "Add working hours"
-    // round trips, one per day, each already needing 2 segments for
-    // the break split segments() above already handles.
-    const jobs = selectedDays.flatMap((day) => segments.map((seg) => ({ day, seg })))
-    setBusy(true)
-    try {
-      // Submitted as N separate rows, not one transaction -- if a later
-      // call fails (e.g. it overlaps something an earlier call's
-      // success didn't), say so plainly with how far it got and reload
-      // so the list shows what's actually there, rather than silently
-      // leaving a half-added schedule the admin doesn't know about.
-      for (let i = 0; i < jobs.length; i++) {
-        const { day, seg } = jobs[i]
-        try {
+    const succeededDays: number[] = []
+    for (const day of selectedDays) {
+      try {
+        for (const seg of segments) {
           await createDoctorSchedule(doctor.id, {
             day_of_week: day,
             start_time: seg.start,
@@ -1248,39 +1246,63 @@ function ScheduleSection({
             end_date: endDate || null,
             department_id: departmentId ? Number(departmentId) : null,
           })
+        }
+        succeededDays.push(day)
+      } catch (err) {
+        setSelectedDays(selectedDays.filter((d) => !succeededDays.includes(d)))
+        setError(
+          `Saved working hours for ${succeededDays.length} of ${selectedDays.length} day(s), but could not save ` +
+            `${DAY_NAMES[day]}: ${err instanceof ApiError ? err.message : 'unknown error'}`,
+        )
+        return false
+      }
+    }
+    setStartDate('')
+    setEndDate('')
+    return true
+  }
+
+  // The one Save action for the whole card: Slot Settings (if changed)
+  // first, then the working-hours draft (if any) -- see the PLAN's own
+  // reasoning for that order (settings is a single atomic PATCH; if it
+  // fails, stop before attempting the schedule rows at all, rather than
+  // leaving the two saved states out of sync in a confusing order).
+  async function handleSaveAll(e: React.FormEvent) {
+    e.preventDefault()
+    setError(null)
+    setBusy(true)
+    try {
+      if (slotSettingsDirty) {
+        try {
+          await updateDoctorSlotSettings(doctor.id, {
+            default_duration_minutes: defaultDuration,
+            buffer_minutes: bufferMinutes,
+          })
+          setSavedDuration(defaultDuration)
+          setSavedBuffer(bufferMinutes)
         } catch (err) {
-          if (i > 0) {
-            setError(
-              `Added ${i} of ${jobs.length} schedule rows, but could not add ${DAY_NAMES[day]} starting at ` +
-                `${formatTimeOfDay(seg.start)}: ${err instanceof ApiError ? err.message : 'unknown error'}`,
-            )
-            load()
-            return
-          }
-          throw err
+          setError(err instanceof ApiError ? err.message : 'Could not save slot settings')
+          return
         }
       }
-      setStartDate('')
-      setEndDate('')
+      if (formIsDirty) {
+        const scheduleSaved = await saveScheduleRows()
+        if (!scheduleSaved) return
+      }
       load()
-      // Distinct from the Slot Settings sidebar's own "Saved" button
-      // (handleSaveSlotSettings/slotSettingsSaved below) -- that one
-      // stays visible until the admin changes a value again; this is a
-      // brief, self-clearing confirmation for this different save
-      // action, so the two are never confused for each other.
       setSavedFlash(true)
       setTimeout(() => setSavedFlash(false), 2500)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not add schedule')
     } finally {
       setBusy(false)
     }
   }
 
-  // Synced to "Default appointment duration" (defaultDuration) unless
-  // explicitly overridden -- see previewDurationOverride's own comment.
-  const previewDuration = previewDurationOverride ?? defaultDuration
-  const previewSlotsList = scheduleSegments().flatMap((seg) => previewSlots(seg.start, seg.end, previewDuration))
+  function handleCancelAll() {
+    resetForm()
+    setDefaultDuration(savedDuration)
+    setBufferMinutes(savedBuffer)
+    setError(null)
+  }
 
   async function confirmRemove() {
     if (!removeTarget) return
@@ -1348,33 +1370,28 @@ function ScheduleSection({
     }
   }
 
-  async function handleSaveSlotSettings() {
-    setSlotSettingsBusy(true)
-    setSlotSettingsError(null)
-    setSlotSettingsSaved(false)
-    try {
-      await updateDoctorSlotSettings(doctor.id, {
-        default_duration_minutes: defaultDuration,
-        buffer_minutes: bufferMinutes,
-      })
-      setSlotSettingsSaved(true)
-    } catch (err) {
-      setSlotSettingsError(err instanceof ApiError ? err.message : 'Could not save slot settings')
-    } finally {
-      setSlotSettingsBusy(false)
-    }
-  }
-
+  // The single preview: while the working-hours draft is dirty, union
+  // the real persisted `entries` with a synthetic entry for the day(s)
+  // currently being composed, so the preview shows what the day will
+  // actually look like after Save -- not just the new block in
+  // isolation (which would just reintroduce "preview doesn't match
+  // reality" one level down). Not deduplicated against an overlapping
+  // existing row -- schedule_overlaps() on the backend is still what
+  // actually rejects that at Save time; this preview only visualizes,
+  // it never validates.
+  const draftEntries = formIsDirty
+    ? draftEntriesFor(selectedDays, scheduleSegments(), startDate, endDate, departmentId)
+    : []
+  const combinedEntries = formIsDirty ? [...entries, ...draftEntries] : entries
   const previewDayOfWeek = dateToDayOfWeek(previewDate)
-  const previewSlotsForDate = generateDaySlots(entries, previewDate, previewDayOfWeek, defaultDuration, bufferMinutes)
+  const previewSlotsForDate = generateDaySlots(combinedEntries, previewDate, previewDayOfWeek, defaultDuration, bufferMinutes)
 
   return (
-    <div className="schedule-tab-layout">
-      <div className="schedule-tab-main">
+    <div>
       <div className="admin-content-header">
         <div>
           <h4 style={{ margin: 0 }}>Working hours</h4>
-          <p className="muted" style={{ margin: 0 }}>These hours are used to generate available appointment slots.</p>
+          <p className="muted" style={{ margin: 0 }}>Set when this doctor is available for appointments.</p>
         </div>
         {isAdmin && daysWithEntries.length > 0 && (
           <button type="button" className="btn-secondary btn btn-sm" onClick={() => setShowCopyForm((v) => !v)}>
@@ -1469,6 +1486,12 @@ function ScheduleSection({
       </table>
       </div>
 
+      {/* Removing a saved row stays its own, immediately-persisted
+          action (own confirm dialog, own DELETE call) -- deliberately
+          NOT folded into the pending Save/Cancel diff below, which is
+          scoped to composing a new working-hours entry plus Slot
+          Settings. Undoing a queued delete would need real "undo"
+          machinery this screen has no other use for. */}
       <AlertDialog open={removeTarget !== null} onOpenChange={(open) => !open && setRemoveTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -1487,222 +1510,214 @@ function ScheduleSection({
         </AlertDialogContent>
       </AlertDialog>
 
-      {isAdmin && (
-        <form className={formIsDirty ? 'inline-form wrap schedule-form is-dirty' : 'inline-form wrap schedule-form'} onSubmit={handleCreate}>
-          <div style={{ width: '100%' }}>
-            <span className="field-label">Days</span>
-            <div className="day-multiselect" role="group" aria-label="Days of week">
-              {DAY_NAMES.slice(1).map((name, i) => {
-                const day = i + 1
-                return (
-                  <button
-                    key={day}
-                    type="button"
-                    className={selectedDays.includes(day) ? 'selected' : ''}
-                    aria-pressed={selectedDays.includes(day)}
-                    onClick={() => toggleDay(day)}
-                  >
-                    {name.slice(0, 3)}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-          <TimeCombobox value={startTime} onChange={setStartTime} durationMinutes={defaultDuration} ariaLabel="Start time" />
-          <TimeCombobox value={endTime} onChange={setEndTime} durationMinutes={defaultDuration} ariaLabel="End time" />
-          {/* A plain div, not <label> -- AdminDatePicker is a compound
-              widget with its own toggle button AND a calendar full of
-              day buttons, not a single native form control. A <label>
-              wrapping it delegates a click anywhere inside (including a
-              day cell deep in the calendar) to its first focusable
-              descendant, re-firing a *second*, browser-native click on
-              the toggle button right after a day pick's own setOpen
-              (false) -- reopening the panel it had just correctly
-              closed. Confirmed via a real (non-synthetic, isTrusted)
-              click event landing on the toggle button immediately after
-              picking a date; BlocksSection's own AdminDatePicker (never
-              wrapped in a <label>) never had this problem. */}
-          <div className="inline-label">
-            From
-            <AdminDatePicker value={startDate} onChange={setStartDate} label="Pick start date" />
-          </div>
-          <div className="inline-label">
-            Until
-            <AdminDatePicker value={endDate} onChange={setEndDate} label="Pick end date" />
-          </div>
-          <label className="inline-label">
-            Department
-            <select
-              value={departmentId}
-              onChange={(e) => setDepartmentId(e.target.value)}
-              disabled={departments.length === 0}
-            >
-              <option value="">All departments</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
-            {departments.length === 0 && (
-              <span className="muted">Assign a department (Departments tab) to set department-specific hours.</span>
-            )}
-          </label>
-          <button type="submit" disabled={busy || !canSubmit}>
-            {busy ? 'Saving…' : '+ Add working hours'}
-          </button>
-          {formIsDirty && (
-            <button type="button" className="btn-secondary btn btn-sm" onClick={resetForm}>
-              Cancel
-            </button>
-          )}
-          {formIsDirty && <span className="unsaved-badge">Unsaved changes</span>}
-          {savedFlash && <span className="save-success-flash">✓ Working hours saved</span>}
+      <div className={overallDirty ? 'schedule-tab-layout is-dirty' : 'schedule-tab-layout'}>
+        <div className="schedule-tab-main">
+          {isAdmin && (
+            <form id="working-hours-form" onSubmit={handleSaveAll}>
+              <div className="schedule-field-group">
+                <span className="field-label">Days</span>
+                <div className="day-multiselect" role="group" aria-label="Days of week">
+                  {DAY_NAMES.slice(1).map((name, i) => {
+                    const day = i + 1
+                    return (
+                      <button
+                        key={day}
+                        type="button"
+                        className={selectedDays.includes(day) ? 'selected' : ''}
+                        aria-pressed={selectedDays.includes(day)}
+                        onClick={() => toggleDay(day)}
+                      >
+                        {name.slice(0, 3)}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
 
-          <div style={{ width: '100%' }}>
-            {breaks.map((b, i) => (
-              <div key={i} className="inline-form wrap" style={{ marginTop: 0 }}>
-                <label className="inline-label">
-                  Break {i + 1} start
-                  <TimeCombobox
-                    value={b.start}
-                    onChange={(v) => updateBreak(i, 'start', v)}
-                    durationMinutes={defaultDuration}
-                    ariaLabel={`Break ${i + 1} start`}
-                  />
-                </label>
-                <label className="inline-label">
-                  Break {i + 1} end
-                  <TimeCombobox
-                    value={b.end}
-                    onChange={(v) => updateBreak(i, 'end', v)}
-                    durationMinutes={defaultDuration}
-                    ariaLabel={`Break ${i + 1} end`}
-                  />
-                </label>
-                <button type="button" className="link danger" onClick={() => removeBreak(i)}>
-                  Remove break
+              <div className="schedule-field-group">
+                <span className="field-label">Hours</span>
+                <div className="schedule-field-grid">
+                  <label className="schedule-field-group">
+                    <span className="field-label">From</span>
+                    <TimeCombobox value={startTime} onChange={setStartTime} durationMinutes={defaultDuration} ariaLabel="Start time" />
+                  </label>
+                  <label className="schedule-field-group">
+                    <span className="field-label">Until</span>
+                    <TimeCombobox value={endTime} onChange={setEndTime} durationMinutes={defaultDuration} ariaLabel="End time" />
+                  </label>
+                </div>
+              </div>
+
+              <div className="schedule-field-group">
+                <span className="field-label">Date range</span>
+                <div className="schedule-field-grid">
+                  {/* A plain div, not <label> -- AdminDatePicker is a
+                      compound widget with its own toggle button AND a
+                      calendar full of day buttons, not a single native
+                      form control. A <label> wrapping it delegates a
+                      click anywhere inside (including a day cell deep
+                      in the calendar) to its first focusable
+                      descendant, re-firing a *second*, browser-native
+                      click on the toggle button right after a day
+                      pick's own setOpen(false) -- reopening the panel
+                      it had just correctly closed. Confirmed via a
+                      real (non-synthetic, isTrusted) click event
+                      landing on the toggle button immediately after
+                      picking a date; BlocksSection's own
+                      AdminDatePicker (never wrapped in a <label>)
+                      never had this problem. */}
+                  <div className="schedule-field-group">
+                    <span className="field-label">Start date</span>
+                    <AdminDatePicker value={startDate} onChange={setStartDate} label="Pick start date" />
+                  </div>
+                  <div className="schedule-field-group">
+                    <span className="field-label">End date</span>
+                    <AdminDatePicker value={endDate} onChange={setEndDate} label="Pick end date" />
+                  </div>
+                </div>
+              </div>
+
+              <label className="schedule-field-group">
+                <span className="field-label">Department</span>
+                <select
+                  value={departmentId}
+                  onChange={(e) => setDepartmentId(e.target.value)}
+                  disabled={departments.length === 0}
+                >
+                  <option value="">All departments</option>
+                  {departments.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </select>
+                {departments.length === 0 && (
+                  <span className="muted">Assign a department (Departments tab) to set department-specific hours.</span>
+                )}
+              </label>
+
+              <div className="schedule-field-group schedule-breaks">
+                <span className="field-label">Breaks</span>
+                {breaks.map((b, i) => (
+                  <div key={i} className="schedule-break-row">
+                    <TimeCombobox
+                      value={b.start}
+                      onChange={(v) => updateBreak(i, 'start', v)}
+                      durationMinutes={defaultDuration}
+                      ariaLabel={`Break ${i + 1} start`}
+                    />
+                    <span className="arrow">→</span>
+                    <TimeCombobox
+                      value={b.end}
+                      onChange={(v) => updateBreak(i, 'end', v)}
+                      durationMinutes={defaultDuration}
+                      ariaLabel={`Break ${i + 1} end`}
+                    />
+                    <button type="button" className="link danger" onClick={() => removeBreak(i)}>
+                      Remove
+                    </button>
+                  </div>
+                ))}
+                <button type="button" className="link" onClick={addBreak}>
+                  + Add a break
                 </button>
               </div>
-            ))}
-            <button type="button" className="link" onClick={addBreak}>
-              + Add a break (lunch, or any other daily gap)
-            </button>
-          </div>
+            </form>
+          )}
+        </div>
 
-          <div className="schedule-preview-toggle">
-            <button type="button" className="link" onClick={() => setShowPreview((v) => !v)}>
-              {showPreview ? 'Hide' : 'Show'} generated-slot preview
-            </button>
-            {/* This preview is always computed from the form fields
-                above, not from anything saved yet (see previewSlots'
-                own docstring) -- unlike the sidebar's "Generated slots
-                preview" panel, which reads the actually-saved schedule.
-                Labeling it plainly here is what keeps the two from
-                reading as contradictory for the same date. */}
-            {showPreview && <span className="draft-badge">Draft — not yet saved</span>}
-          </div>
-
-          {showPreview && (
-            <div className="schedule-preview">
-              <strong>{formatTimeOfDay(startTime)}</strong>
-              <span className="arrow">→</span>
-              <strong>{formatTimeOfDay(endTime)}</strong>
-              {sortedBreaks.length > 0 && (
-                <span className="muted">
-                  (minus {sortedBreaks.map((b) => `${formatTimeOfDay(b.start)}–${formatTimeOfDay(b.end)}`).join(', ')})
-                </span>
-              )}
-              <span className="arrow">÷</span>
-              <label className="inline-label" style={{ marginBottom: 0 }}>
-                {previewDurationOverride !== null ? 'Preview duration (overrides default)' : 'Preview duration'}
-                <select
-                  aria-label="Preview appointment length"
-                  value={previewDuration}
-                  onChange={(e) => setPreviewDurationOverride(Number(e.target.value))}
-                  style={{ width: 'auto', marginBottom: 0 }}
-                >
+        <div className="schedule-tab-sidebar">
+          {isAdmin && (
+            <div className="schedule-sidebar-panel">
+              <h4 style={{ margin: 0 }}>Slot settings</h4>
+              <label className="inline-label">
+                Default appointment duration
+                <select value={defaultDuration} onChange={(e) => setDefaultDuration(Number(e.target.value))}>
                   {DURATION_OPTIONS.map((d) => (
                     <option key={d} value={d}>
-                      {d} min appt
+                      {d} minutes
                     </option>
                   ))}
                 </select>
               </label>
-              {previewDurationOverride !== null && (
-                <button type="button" className="link" onClick={() => setPreviewDurationOverride(null)}>
-                  Reset to default
-                </button>
-              )}
+              {/* This value is NOT what real patient-facing booking
+                  slots use -- that's per doctor+appointment type
+                  (doctor_appointment_types.duration_minutes, edited on
+                  the Appointment Types tab). This field only feeds the
+                  preview below and is deliberately a separate,
+                  doctor-level default; stated plainly here so an admin
+                  never reasonably assumes changing it changes what
+                  patients can book. */}
+              <p className="muted schedule-sidebar-note">
+                Used for this preview only -- actual appointment lengths are set per appointment type (Appointment
+                Types tab).
+              </p>
+              <label className="inline-label">
+                Buffer time between appointments
+                <select value={bufferMinutes} onChange={(e) => setBufferMinutes(Number(e.target.value))}>
+                  {[0, 5, 10, 15, 20, 30].map((b) => (
+                    <option key={b} value={b}>
+                      {b === 0 ? 'No buffer' : `${b} minutes`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          )}
+
+          <div className="schedule-sidebar-panel">
+            <div className="schedule-preview-heading">
+              <h4 style={{ margin: 0 }}>Generated slots preview</h4>
+              {/* The one preview for both an in-progress draft and the
+                  last-saved schedule (see combinedEntries above) --
+                  labeled whenever there's anything unsaved so it's
+                  never mistaken for what's actually live/bookable
+                  right now. */}
+              {overallDirty && <span className="draft-badge">Previewing unsaved changes</span>}
+            </div>
+            <p className="muted" style={{ margin: 0 }}>Preview available slots for a selected date.</p>
+            <AdminDatePicker value={previewDate} onChange={setPreviewDate} label="Pick a date" />
+            <p className="muted" style={{ margin: 0 }}>Available slots ({previewSlotsForDate.length})</p>
+            {previewSlotsForDate.length > 0 ? (
               <div className="schedule-preview-slots">
-                {previewSlotsList.map((s) => (
-                  <span key={s} className="slot-chip-static">
+                {previewSlotsForDate.map((s, i) => (
+                  <span key={i} className="slot-chip-static">
                     {s}
                   </span>
                 ))}
-                {previewSlotsList.length === 0 && (
-                  <span className="muted">End time must be after start time to preview slots.</span>
-                )}
               </div>
-            </div>
-          )}
-        </form>
-      )}
-      </div>
-
-      <div className="schedule-tab-sidebar">
-        {isAdmin && (
-          <div className="schedule-sidebar-panel">
-            <h4 style={{ margin: 0 }}>Slot settings</h4>
-            <label className="inline-label">
-              Default appointment duration
-              <select value={defaultDuration} onChange={(e) => { setDefaultDuration(Number(e.target.value)); setSlotSettingsSaved(false) }}>
-                {DURATION_OPTIONS.map((d) => (
-                  <option key={d} value={d}>
-                    {d} minutes
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="inline-label">
-              Buffer time between appointments
-              <select value={bufferMinutes} onChange={(e) => { setBufferMinutes(Number(e.target.value)); setSlotSettingsSaved(false) }}>
-                {[0, 5, 10, 15, 20, 30].map((b) => (
-                  <option key={b} value={b}>
-                    {b === 0 ? 'No buffer' : `${b} minutes`}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {slotSettingsError && <p className="error">{slotSettingsError}</p>}
-            <button type="button" className="btn btn-sm" onClick={handleSaveSlotSettings} disabled={slotSettingsBusy}>
-              {slotSettingsBusy ? 'Saving…' : slotSettingsSaved ? 'Saved' : 'Save settings'}
-            </button>
+            ) : (
+              <p className="muted">No working hours set for this day.</p>
+            )}
+            <p className="muted schedule-sidebar-note">
+              Slots are generated from working hours, appointment duration, and buffer time -- not a guarantee of real
+              booking availability (existing appointments and time off aren't excluded here).
+            </p>
           </div>
-        )}
-
-        <div className="schedule-sidebar-panel">
-          <h4 style={{ margin: 0 }}>Generated slots preview</h4>
-          <p className="muted" style={{ margin: 0 }}>Preview available slots for a selected date.</p>
-          <AdminDatePicker value={previewDate} onChange={setPreviewDate} label="Pick a date" />
-          <p className="muted" style={{ margin: 0 }}>Available slots ({previewSlotsForDate.length})</p>
-          {previewSlotsForDate.length > 0 ? (
-            <div className="schedule-preview-slots">
-              {previewSlotsForDate.map((s, i) => (
-                <span key={i} className="slot-chip-static">
-                  {s}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <p className="muted">No working hours set for this day.</p>
-          )}
-          <p className="muted schedule-sidebar-note">
-            Slots are generated from working hours, appointment duration, and buffer time -- not a guarantee of real
-            booking availability (existing appointments and time off aren't excluded here).
-          </p>
         </div>
       </div>
+
+      {isAdmin && (
+        <div className="schedule-save-bar">
+          {/* savedFlash takes priority over overallDirty for its brief
+              window -- after a successful save, the draft fields stay
+              populated (so a quick repeat-add doesn't require retyping
+              hours; see saveScheduleRows' own docstring), which would
+              otherwise make this say "Unsaved changes" again the
+              instant a real save just succeeded. */}
+          <span className={savedFlash ? 'schedule-save-status success' : 'schedule-save-status'}>
+            {savedFlash ? '✓ Saved' : overallDirty ? 'Unsaved changes' : ''}
+          </span>
+          <div className="schedule-save-bar-actions">
+            <button type="button" className="btn-secondary btn" onClick={handleCancelAll} disabled={cancelDisabled}>
+              Cancel
+            </button>
+            <button type="submit" form="working-hours-form" className="btn" disabled={saveDisabled}>
+              {busy ? 'Saving…' : 'Save changes'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
