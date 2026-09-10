@@ -4,6 +4,8 @@ import type {
   ArrivalActionResult,
   MarkArrivedResult,
   AppointmentType,
+  AppointmentTypeAdminRow,
+  AppointmentTypeDetail,
   AppointmentTypeSummary,
   ScheduledAppointment,
   BookingSource,
@@ -582,6 +584,33 @@ export function updateAppointmentType(
 
 export function deleteAppointmentType(appointmentTypeId: number): Promise<{ id: number; message: string }> {
   return request(`/appointment-types/${appointmentTypeId}`, { method: 'DELETE', auth: 'staff' })
+}
+
+// The redesigned Appointment Types admin page's own listing -- unlike
+// listAppointmentTypeCatalog above (public, active-only, and still
+// used as-is by AppointmentsPanel's filter and DoctorWorkspace's
+// "assign a new type" list), this one is staff-only and includes
+// inactive types plus a real per-type doctor count.
+export function listAppointmentTypesAdmin(): Promise<AppointmentTypeAdminRow[]> {
+  return request('/appointment-types/admin', { auth: 'staff' })
+}
+
+// The View drawer -- one call for name/status/doctor count plus the
+// doctor/duration/fee table, all read from existing data.
+export function getAppointmentTypeDetail(appointmentTypeId: number): Promise<AppointmentTypeDetail> {
+  return request(`/appointment-types/${appointmentTypeId}`, { auth: 'staff' })
+}
+
+// Deactivate/reactivate -- mirrors setDoctorActive exactly.
+export function setAppointmentTypeActive(
+  appointmentTypeId: number,
+  active: boolean,
+): Promise<{ id: number; active: boolean }> {
+  return request(`/appointment-types/${appointmentTypeId}/active`, {
+    method: 'PATCH',
+    auth: 'staff',
+    body: { active },
+  })
 }
 
 export function assignAppointmentTypeToDoctor(

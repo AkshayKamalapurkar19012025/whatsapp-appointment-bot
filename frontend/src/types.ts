@@ -212,6 +212,38 @@ export interface AppointmentTypeSummary {
   active: boolean
 }
 
+// GET /appointment-types/admin -- the redesigned Appointment Types
+// page's own row shape. doctor_count only ever counts an active
+// doctor_appointment_types assignment to an active doctor (the same
+// definition create_appointment_service/get_doctor_appointment_types
+// already use for "actually assigned").
+export interface AppointmentTypeAdminRow {
+  id: number
+  name: string
+  active: boolean
+  doctor_count: number
+}
+
+// GET /appointment-types/{id} -- the View drawer. duration_minutes/
+// consultation_fee come straight from doctor_appointment_types, never
+// duplicated onto the appointment type itself -- duration and fee stay
+// a per-doctor concept.
+export interface AppointmentTypeDoctorAssignment {
+  doctor_id: number
+  doctor_name: string
+  department_name: string | null
+  duration_minutes: number
+  consultation_fee: number
+}
+
+export interface AppointmentTypeDetail {
+  id: number
+  name: string
+  active: boolean
+  doctor_count: number
+  doctors: AppointmentTypeDoctorAssignment[]
+}
+
 export interface DoctorScheduleEntry {
   id: number
   day_of_week: number
