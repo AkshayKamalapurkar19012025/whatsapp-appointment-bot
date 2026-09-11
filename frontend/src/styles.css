@@ -2816,6 +2816,240 @@ a.link.danger {
 }
 
 /* ===========================================================
+   Schedule grid (ScheduleGrid.tsx) -- drag-to-block weekly editor
+   replacing the old Working Hours form. Reuses the same green/teal
+   accent, border, and radius tokens as the rest of the admin UI (no new
+   design system). */
+
+.schedule-grid-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-4);
+  margin: var(--space-3) 0 var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.schedule-merge-threshold {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.schedule-merge-threshold input {
+  width: 4.5rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  padding: 6px 8px;
+  font-size: 0.9rem;
+}
+
+.schedule-grid-wrap {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.schedule-grid-header-row {
+  display: grid;
+  grid-template-columns: 56px repeat(7, minmax(96px, 1fr));
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-primary-soft);
+}
+
+.schedule-grid-day-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-2) var(--space-2);
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--color-text);
+  border-left: 1px solid var(--color-border);
+}
+
+.schedule-range-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.schedule-range-pills button {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.schedule-range-pills button.selected {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.schedule-grid-scroll {
+  max-height: 560px;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+
+.schedule-grid-body {
+  display: grid;
+  grid-template-columns: 56px repeat(7, minmax(96px, 1fr));
+  position: relative;
+}
+
+.schedule-grid-hour-gutter {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.schedule-grid-hour-label {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 2px 8px 0 0;
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  transform: translateY(-0.5em);
+}
+
+.schedule-grid-day-col {
+  position: relative;
+  border-left: 1px solid var(--color-border);
+}
+
+.schedule-grid-cell {
+  display: block;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+  background: transparent;
+  cursor: pointer;
+}
+
+.schedule-grid-cell:nth-child(odd) {
+  background: rgba(0, 0, 0, 0.012);
+}
+
+.schedule-grid-cell:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+  position: relative;
+  z-index: 3;
+}
+
+.schedule-drag-preview {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  background: var(--color-primary-soft-strong);
+  border: 1px dashed var(--color-primary);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.schedule-drag-preview.erase {
+  background: var(--color-danger-soft, rgba(220, 38, 38, 0.12));
+  border-color: var(--color-danger, #dc2626);
+}
+
+.schedule-block {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  background: var(--color-primary);
+  color: #fff;
+  border-radius: var(--radius-sm);
+  padding: 3px 6px;
+  overflow: hidden;
+  cursor: pointer;
+  z-index: 1;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.15));
+}
+
+.schedule-block.selected {
+  outline: 2px solid var(--color-primary-hover);
+  outline-offset: 2px;
+}
+
+.schedule-block-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: normal;
+}
+
+.schedule-block-label .muted {
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 500;
+}
+
+.schedule-block-break {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.55),
+    rgba(255, 255, 255, 0.55) 4px,
+    rgba(255, 255, 255, 0.25) 4px,
+    rgba(255, 255, 255, 0.25) 8px
+  );
+  border-top: 1px solid rgba(255, 255, 255, 0.8);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.8);
+}
+
+.schedule-block-panel {
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.schedule-week-preview-day {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  padding: 4px 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.schedule-week-preview-day:first-of-type {
+  border-top: none;
+}
+
+.schedule-week-preview-day-name {
+  flex: 0 0 2.4rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+}
+
+@media (max-width: 700px) {
+  .schedule-grid-header-row,
+  .schedule-grid-body {
+    grid-template-columns: 44px repeat(7, minmax(64px, 1fr));
+  }
+}
+
+/* ===========================================================
    Patient login card (LoginFlow.tsx) -- icon badge, subtitle, and a
    2-step progress strip (Phone -> Verify) so the card reads as a short,
    guided flow rather than a single bare input.
