@@ -3023,23 +3023,47 @@ a.link.danger {
   background: var(--color-surface);
 }
 
-.schedule-week-preview-day {
+/* Whole-week generated-slots preview (ScheduleGrid.tsx's sidebar) --
+   was a tall list of 7 stacked rows, each a wrapped list of full-size
+   chips (30+ for a long working day), several screens tall. A 7-day
+   grid with one compact, independently-scrolling column per day keeps
+   the whole preview to one fixed-height panel instead. */
+.schedule-week-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+  gap: 6px;
+}
+
+.schedule-week-preview-col {
   display: flex;
-  gap: var(--space-2);
-  align-items: baseline;
-  padding: 4px 0;
-  border-top: 1px solid var(--color-border);
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
 }
 
-.schedule-week-preview-day:first-of-type {
-  border-top: none;
-}
-
-.schedule-week-preview-day-name {
-  flex: 0 0 2.4rem;
-  font-size: 0.75rem;
+.schedule-week-preview-col-name {
+  font-size: 0.72rem;
   font-weight: 700;
   color: var(--color-text-muted);
+  text-align: center;
+}
+
+.schedule-week-preview-col-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.slot-chip-static.compact {
+  padding: 2px 4px;
+  font-size: 0.66rem;
+  text-align: center;
+  white-space: nowrap;
 }
 
 @media (max-width: 700px) {

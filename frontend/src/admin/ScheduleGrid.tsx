@@ -915,25 +915,27 @@ export default function ScheduleGrid({
             <p className="muted" style={{ margin: 0 }}>
               Whole-week preview of the template above.
             </p>
-            {DAYS.map((day) => {
-              const slots = templateDaySlots(blocksForDay(day), defaultDuration, bufferMinutes)
-              return (
-                <div key={day} className="schedule-week-preview-day">
-                  <span className="schedule-week-preview-day-name">{DAY_NAMES[day].slice(0, 3)}</span>
-                  {slots.length > 0 ? (
-                    <div className="schedule-preview-slots">
-                      {slots.map((s, i) => (
-                        <span key={i} className="slot-chip-static">
-                          {s}
-                        </span>
-                      ))}
-                    </div>
-                  ) : (
-                    <span className="muted schedule-sidebar-note">No hours</span>
-                  )}
-                </div>
-              )
-            })}
+            <div className="schedule-week-preview-grid">
+              {DAYS.map((day) => {
+                const slots = templateDaySlots(blocksForDay(day), defaultDuration, bufferMinutes)
+                return (
+                  <div key={day} className="schedule-week-preview-col">
+                    <span className="schedule-week-preview-col-name">{DAY_NAMES[day].slice(0, 3)}</span>
+                    {slots.length > 0 ? (
+                      <div className="schedule-week-preview-col-slots">
+                        {slots.map((s, i) => (
+                          <span key={i} className="slot-chip-static compact">
+                            {s}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="muted schedule-sidebar-note">No hours</span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
             <p className="muted schedule-sidebar-note">
               Slots are generated from working hours, appointment duration, and buffer time -- not a guarantee of real
               booking availability (existing appointments and time off aren't excluded here).
