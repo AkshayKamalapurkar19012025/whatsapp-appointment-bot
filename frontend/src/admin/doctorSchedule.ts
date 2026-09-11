@@ -28,10 +28,29 @@ export function dateToDayOfWeek(dateStr: string): number {
   return jsDay === 0 ? 7 : jsDay
 }
 
-function dateInRange(dateStr: string, startDate: string | null, endDate: string | null): boolean {
+// Exported for the Schedule tab's monthly summary view (ScheduleGrid.tsx)
+// -- it needs the same "does this row apply on this real calendar date"
+// test todaysScheduleEntries already does, but per ScheduleBlock (day +
+// date-range, not yet expanded to rows) rather than per persisted row.
+export function dateInRange(dateStr: string, startDate: string | null, endDate: string | null): boolean {
   if (startDate && dateStr < startDate) return false
   if (endDate && dateStr > endDate) return false
   return true
+}
+
+// Does a one-off DoctorBlockEntry (start_at/end_at -- see its own
+// docstring in types.ts: entered/shown in Asia/Kolkata terms, the only
+// timezone any doctor here has) cover any part of the given "YYYY-MM-DD"
+// calendar date? Same wall-clock assumption isAvailableNow already makes
+// for "is the doctor blocked right now" -- this is the whole-day version,
+// for the monthly view's "Time off" status.
+export function blockCoversDate(block: DoctorBlockEntry, dateStr: string): boolean {
+  if (!block.active) return false
+  const dayStart = new Date(`${dateStr}T00:00:00`).getTime()
+  const dayEnd = new Date(`${dateStr}T23:59:59.999`).getTime()
+  const blockStart = new Date(block.start_at).getTime()
+  const blockEnd = new Date(block.end_at).getTime()
+  return blockStart <= dayEnd && blockEnd >= dayStart
 }
 
 // This doctor's recurring weekly schedule rows that apply on `dateStr`
@@ -383,6 +402,53 @@ export function templateDaySlots(
   )
   entries.sort((a, b) => a.start_time.localeCompare(b.start_time))
   return slotsForEntries(entries, durationMinutes, bufferMinutes)
+}
+
+// Strict overlap (unlike blocksOverlapOrTouch below): two blocks that
+// merely touch end-to-end are NOT a conflict for copyBlockToDay -- only
+// paint/erase treat touching as "the same drawn stroke".
+function blocksStrictlyOverlap(a: { startTime: string; endTime: string }, startTime: string, endTime: string): boolean {
+  return toMinutesSinceMidnight(startTime) < toMinutesSinceMidnight(a.endTime) &&
+    toMinutesSinceMidnight(endTime) > toMinutesSinceMidnight(a.startTime)
+}
+
+// "Copy schedule": places a copy of one day's block (its exact times,
+// breaks, and department) onto a different day/range, skipping it
+// silently if it would overlap a block already there on that day+range
+// -- same "skip conflicting days, don't abort the whole copy" behavior
+// the old Working Hours form's own copy feature had, just now staged
+// into the draft (part of the one save/cancel lifecycle) instead of
+// persisted immediately. Real overlap validation still happens at Save
+// time (schedule_overlaps() server-side); this is a good-enough
+// pre-check so an obviously-conflicting copy doesn't even make it into
+// the draft.
+export function copyBlockToDay(
+  blocks: ScheduleBlock[],
+  targetDay: number,
+  source: { startTime: string; endTime: string; breaks: ScheduleBreak[]; departmentId: number | null },
+  startDate: string | null,
+  endDate: string | null,
+): { blocks: ScheduleBlock[]; copied: boolean } {
+  const targetRangeKey = rangeKey(startDate, endDate)
+  const conflict = blocks.some(
+    (b) =>
+      b.day === targetDay &&
+      rangeKey(b.startDate, b.endDate) === targetRangeKey &&
+      blocksStrictlyOverlap(b, source.startTime, source.endTime),
+  )
+  if (conflict) return { blocks, copied: false }
+  const copy: ScheduleBlock = {
+    key: newBlockKey(),
+    day: targetDay,
+    startTime: source.startTime,
+    endTime: source.endTime,
+    breaks: source.breaks,
+    departmentId: source.departmentId,
+    startDate,
+    endDate,
+    sourceIds: [],
+  }
+  return { blocks: [...blocks, copy], copied: true }
 }
 
 function blocksOverlapOrTouch(a: { startTime: string; endTime: string }, startTime: string, endTime: string): boolean {

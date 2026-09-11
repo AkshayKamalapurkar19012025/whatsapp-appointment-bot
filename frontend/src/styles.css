@@ -3023,29 +3023,283 @@ a.link.danger {
   background: var(--color-surface);
 }
 
-.schedule-week-preview-day {
+/* Whole-week generated-slots preview (ScheduleGrid.tsx's sidebar) --
+   was a tall list of 7 stacked rows, each a wrapped list of full-size
+   chips (30+ for a long working day), several screens tall. A 7-day
+   grid with one compact, independently-scrolling column per day keeps
+   the whole preview to one fixed-height panel instead. */
+.schedule-week-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+  gap: 6px;
+}
+
+.schedule-week-preview-col {
   display: flex;
-  gap: var(--space-2);
-  align-items: baseline;
-  padding: 4px 0;
-  border-top: 1px solid var(--color-border);
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
 }
 
-.schedule-week-preview-day:first-of-type {
-  border-top: none;
-}
-
-.schedule-week-preview-day-name {
-  flex: 0 0 2.4rem;
-  font-size: 0.75rem;
+.schedule-week-preview-col-name {
+  font-size: 0.72rem;
   font-weight: 700;
   color: var(--color-text-muted);
+  text-align: center;
+}
+
+.schedule-week-preview-col-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.slot-chip-static.compact {
+  padding: 2px 4px;
+  font-size: 0.66rem;
+  text-align: center;
+  white-space: nowrap;
 }
 
 @media (max-width: 700px) {
   .schedule-grid-header-row,
   .schedule-grid-body {
     grid-template-columns: 44px repeat(7, minmax(64px, 1fr));
+  }
+}
+
+.schedule-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+/* Weekly/Monthly view toggle (ScheduleGrid.tsx) -- same pill-button
+   pattern as .day-multiselect, just two options instead of seven. */
+.schedule-view-toggle {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: var(--radius-md);
+  background: var(--color-primary-soft);
+  flex-shrink: 0;
+}
+
+.schedule-view-toggle button {
+  padding: 6px 14px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.schedule-view-toggle button.selected {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+/* ===========================================================
+   Schedule monthly view (ScheduleMonthView.tsx) -- Phase A of the
+   Schedule tab redesign: a read-oriented monthly summary of the same
+   doctor_schedule-backed blocks the weekly grid edits, plus one-off
+   Time off blocks for context. Not a second editor -- "Edit day"/"Add
+   working hours" hand off to the weekly grid's own per-block panel. */
+
+.schedule-month-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.schedule-month-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.schedule-month-jump {
+  position: relative;
+}
+
+.schedule-month-jump-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  gap: 6px;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.12));
+}
+
+.schedule-month-jump-popover select {
+  font-size: 0.85rem;
+}
+
+.schedule-month-period-menu {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-muted);
+}
+
+.schedule-month-title {
+  font-weight: 700;
+  min-width: 9rem;
+}
+
+.schedule-month-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.schedule-legend-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 8px;
+}
+
+.schedule-legend-dot:first-child {
+  margin-left: 0;
+}
+
+.schedule-legend-dot.working {
+  background: var(--color-primary);
+}
+
+.schedule-legend-dot.partial {
+  background: var(--color-primary-soft-strong);
+  border: 1px solid var(--color-primary);
+}
+
+.schedule-legend-dot.time_off {
+  background: var(--color-danger, #dc2626);
+}
+
+.schedule-legend-dot.none {
+  background: var(--color-border-strong);
+}
+
+.schedule-month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--color-border);
+  gap: 1px;
+}
+
+.schedule-month-weekday {
+  background: var(--color-primary-soft);
+  padding: var(--space-2);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.schedule-month-cell {
+  min-height: 76px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 6px;
+  border: none;
+  background: var(--color-surface);
+  cursor: pointer;
+  text-align: left;
+}
+
+.schedule-month-cell.empty {
+  background: var(--color-canvas, var(--color-surface));
+  cursor: default;
+}
+
+.schedule-month-cell.selected {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.schedule-month-cell-date {
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.schedule-month-cell-periods {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.schedule-month-cell-period {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--color-primary-hover);
+}
+
+.schedule-month-cell-period.partial {
+  color: var(--color-text-muted);
+}
+
+.schedule-month-cell-none {
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+}
+
+.schedule-month-cell-timeoff {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--color-danger, #dc2626);
+}
+
+.schedule-month-cell-timeoff.standalone {
+  font-size: 0.85rem;
+  margin: 0 0 var(--space-2);
+}
+
+.schedule-month-detail-period {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: 6px 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.schedule-month-detail-period:first-of-type {
+  border-top: none;
+}
+
+@media (max-width: 700px) {
+  .schedule-month-cell {
+    min-height: 56px;
+  }
+  .schedule-month-cell-period {
+    display: none;
   }
 }
 
