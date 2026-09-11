@@ -1,14 +1,16 @@
 import { useState } from 'react'
-import { CalendarBlank, DotsThreeVertical } from '@phosphor-icons/react'
+import { CalendarBlank } from '@phosphor-icons/react'
 import type { Department, DoctorBlockEntry } from '../types'
-import { formatTimeOfDay } from '../format'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu'
+import { formatDate, formatTimeOfDay } from '../format'
+import { TimeCombobox } from '../components/ui/time-combobox'
+import AdminDatePicker from './AdminDatePicker'
 import {
   DAY_NAMES,
   blockCoversDate,
   dateInRange,
   dateToDayOfWeek,
   templateDaySlots,
+  validateBlockBreaks,
   type ScheduleBlock,
 } from './doctorSchedule'
 
@@ -44,7 +46,9 @@ function statusForDate(
   draftBlocks: ScheduleBlock[],
   oneOffBlocks: DoctorBlockEntry[],
 ): { status: DayStatus; blocks: ScheduleBlock[] } {
-  const applicable = draftBlocks.filter((b) => b.day === dayOfWeek && dateInRange(dateStr, b.startDate, b.endDate))
+  const applicable = draftBlocks
+    .filter((b) => b.day === dayOfWeek && dateInRange(dateStr, b.startDate, b.endDate))
+    .sort((a, b) => a.startTime.localeCompare(b.startTime))
   if (oneOffBlocks.some((b) => blockCoversDate(b, dateStr))) {
     return { status: 'time_off', blocks: applicable }
   }
@@ -53,15 +57,30 @@ function statusForDate(
   return { status: 'partial', blocks: applicable }
 }
 
-// Monthly summary view for the Schedule tab: a read-oriented calendar
-// of the SAME doctor_schedule-backed blocks the weekly grid edits, plus
-// one-off Time off blocks layered on top for context. Not a second
-// editor -- "Edit day"/a period's own Edit action hand off to the
-// existing weekly grid's per-block panel (onEditDay), and "Remove"
-// stages the exact same removal the weekly grid's own block panel does
-// (onRemoveBlock, via the shared confirm dialog in ScheduleGrid.tsx).
-// Copy schedule lives one level up (ScheduleGrid's header), since it
-// isn't day-specific.
+// A block's own date-range label, for the small "applies to" note under
+// each period -- distinguishes a one-off single date (the default a new
+// period gets, see addPeriodForDate) from a range/recurring pattern
+// without forcing the range pickers into view for the common case.
+function rangeLabel(b: ScheduleBlock, dateStr: string): string {
+  if (b.startDate === dateStr && b.endDate === dateStr) return 'Just this day'
+  if (!b.startDate && !b.endDate) return `Every ${DAY_NAMES[b.day]}`
+  const start = b.startDate ? formatDate(b.startDate) : 'always'
+  const end = b.endDate ? formatDate(b.endDate) : 'always'
+  return `Every ${DAY_NAMES[b.day]}, ${start} – ${end}`
+}
+
+// Monthly calendar for the Schedule tab -- the primary scheduling
+// workspace: the admin selects a date and edits its working
+// hours/breaks/department right here, inline, without switching to the
+// weekly drag grid. Every period shown is directly editable;
+// "+ Add another working period" creates a new one that applies every
+// occurrence of that weekday by default (narrow it with "Change dates…"
+// if it should only apply to a bounded window or a single day). The
+// weekly grid (ScheduleGrid.tsx's own view) remains available as an
+// advanced/bulk option but is never required for normal day-to-day
+// schedule edits. Time off is read-only context here (layered from
+// doctor_blocks) -- editing it stays on the separate Time off tab, not
+// duplicated.
 export default function ScheduleMonthView({
   draftBlocks,
   oneOffBlocks,
@@ -70,8 +89,11 @@ export default function ScheduleMonthView({
   bufferMinutes,
   overallDirty,
   isAdmin,
-  onEditDay,
+  onAddPeriod,
+  onUpdateBlock,
+  onAddBreak,
   onRemoveBlock,
+  onCopyFromDate,
 }: {
   draftBlocks: ScheduleBlock[]
   oneOffBlocks: DoctorBlockEntry[]
@@ -80,8 +102,11 @@ export default function ScheduleMonthView({
   bufferMinutes: number
   overallDirty: boolean
   isAdmin: boolean
-  onEditDay: (dateStr: string, blockKey?: string) => void
-  onRemoveBlock: (blockKey: string) => void
+  onAddPeriod: (dateStr: string, departmentId?: number | null) => string
+  onUpdateBlock: (key: string, mutator: (b: ScheduleBlock) => ScheduleBlock) => void
+  onAddBreak: (key: string) => void
+  onRemoveBlock: (key: string) => void
+  onCopyFromDate: (dateStr: string) => void
 }) {
   const today = new Date()
   const [year, setYear] = useState(today.getFullYear())
@@ -89,6 +114,7 @@ export default function ScheduleMonthView({
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [jumpOpen, setJumpOpen] = useState(false)
   const [filterDepartmentId, setFilterDepartmentId] = useState('')
+  const [rangeEditingKeys, setRangeEditingKeys] = useState<Set<string>>(new Set())
 
   // Department filter -- real (blocks are actually department_id-scoped
   // in doctor_schedule, migrations/0010), unlike an "Appointment type"
@@ -98,11 +124,6 @@ export default function ScheduleMonthView({
   const visibleBlocks = filterDepartmentId
     ? draftBlocks.filter((b) => b.departmentId === Number(filterDepartmentId))
     : draftBlocks
-
-  function departmentName(id: number | null): string {
-    if (id === null) return 'All departments'
-    return departments.find((d) => d.id === id)?.name ?? 'All departments'
-  }
 
   function goPrevMonth() {
     setMonth((m) => (m === 1 ? (setYear((y) => y - 1), 12) : m - 1))
@@ -132,6 +153,15 @@ export default function ScheduleMonthView({
   const selectedIsTimeOff =
     selectedDate !== null && oneOffBlocks.some((b) => blockCoversDate(b, selectedDate))
   const selectedSlots = selectedInfo ? templateDaySlots(selectedInfo.blocks, defaultDuration, bufferMinutes) : []
+
+  function toggleRangeEditing(key: string) {
+    setRangeEditingKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   return (
     <>
@@ -214,6 +244,7 @@ export default function ScheduleMonthView({
             const dayOfWeek = dateToDayOfWeek(dateStr)
             const { status, blocks } = statusForDate(dateStr, dayOfWeek, visibleBlocks, oneOffBlocks)
             const isTimeOff = status === 'time_off'
+            const overflow = blocks.length - 2
             return (
               <button
                 key={i}
@@ -231,6 +262,7 @@ export default function ScheduleMonthView({
                         {formatTimeOfDay(b.startTime)} – {formatTimeOfDay(b.endTime)}
                       </span>
                     ))}
+                    {overflow > 0 && <span className="schedule-month-cell-more">+{overflow} more</span>}
                   </span>
                 ) : (
                   <span className="schedule-month-cell-none">No schedule</span>
@@ -252,49 +284,159 @@ export default function ScheduleMonthView({
                 year: 'numeric',
               })}
             </h4>
-            {isAdmin && (
-              <button type="button" className="btn btn-sm" onClick={() => onEditDay(selectedDate)}>
-                {selectedInfo && selectedInfo.blocks.length > 0 ? 'Edit day' : 'Add working hours'}
+            {isAdmin && selectedInfo && selectedInfo.blocks.length > 0 && (
+              <button type="button" className="link" onClick={() => onCopyFromDate(selectedDate)}>
+                Copy to other days
               </button>
             )}
           </div>
 
-          {selectedIsTimeOff && <p className="schedule-month-cell-timeoff standalone">Time off this day</p>}
+          {selectedIsTimeOff && (
+            <p className="schedule-month-cell-timeoff standalone">
+              Time off this day -- managed from the Time off tab; working hours below still describe the underlying
+              pattern.
+            </p>
+          )}
 
           {selectedInfo && selectedInfo.blocks.length > 0 ? (
             <>
               <p className="muted" style={{ margin: 0 }}>
                 Working hours ({selectedInfo.blocks.length} period{selectedInfo.blocks.length === 1 ? '' : 's'})
               </p>
-              {selectedInfo.blocks.map((b) => (
-                <div key={b.key} className="schedule-month-detail-period">
-                  <span>
-                    {formatTimeOfDay(b.startTime)} – {formatTimeOfDay(b.endTime)}
-                  </span>
-                  <span className="pill">{departmentName(b.departmentId)}</span>
-                  {b.breaks.length > 0 && (
-                    <span className="muted schedule-sidebar-note">
-                      {b.breaks.length} break{b.breaks.length === 1 ? '' : 's'}
-                    </span>
-                  )}
-                  {isAdmin && (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <button type="button" className="link schedule-month-period-menu" aria-label="Period actions">
-                          <DotsThreeVertical size={16} />
-                        </button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onSelect={() => onEditDay(selectedDate, b.key)}>Edit</DropdownMenuItem>
-                        <DropdownMenuItem onSelect={() => onRemoveBlock(b.key)}>Remove</DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  )}
-                </div>
-              ))}
+              {selectedInfo.blocks.map((b) => {
+                const blockError = !(b.startTime < b.endTime)
+                  ? 'End time must be after start time'
+                  : validateBlockBreaks(b.startTime, b.endTime, b.breaks)
+                const editingRange = rangeEditingKeys.has(b.key)
+                return (
+                  <div key={b.key} className="schedule-day-period">
+                    <div className="schedule-field-grid">
+                      <label className="schedule-field-group">
+                        <span className="field-label">Start</span>
+                        <TimeCombobox
+                          value={b.startTime}
+                          onChange={(v) => onUpdateBlock(b.key, (bl) => ({ ...bl, startTime: v }))}
+                          durationMinutes={defaultDuration}
+                          ariaLabel={`Period start, ${formatTimeOfDay(b.startTime)}`}
+                        />
+                      </label>
+                      <label className="schedule-field-group">
+                        <span className="field-label">End</span>
+                        <TimeCombobox
+                          value={b.endTime}
+                          onChange={(v) => onUpdateBlock(b.key, (bl) => ({ ...bl, endTime: v }))}
+                          durationMinutes={defaultDuration}
+                          ariaLabel={`Period end, ${formatTimeOfDay(b.endTime)}`}
+                        />
+                      </label>
+                      <label className="schedule-field-group">
+                        <span className="field-label">Department</span>
+                        <select
+                          value={b.departmentId ?? ''}
+                          onChange={(e) =>
+                            onUpdateBlock(b.key, (bl) => ({
+                              ...bl,
+                              departmentId: e.target.value ? Number(e.target.value) : null,
+                            }))
+                          }
+                        >
+                          <option value="">All departments</option>
+                          {departments.map((d) => (
+                            <option key={d.id} value={d.id}>
+                              {d.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+
+                    {blockError && <p className="error">{blockError}</p>}
+
+                    <div className="schedule-day-period-range">
+                      <span className="muted schedule-sidebar-note">{rangeLabel(b, selectedDate)}</span>
+                      <button type="button" className="link" onClick={() => toggleRangeEditing(b.key)}>
+                        {editingRange ? 'Done' : 'Change dates…'}
+                      </button>
+                    </div>
+                    {editingRange && (
+                      <div className="schedule-field-grid">
+                        <div className="schedule-field-group">
+                          <span className="field-label">Start date</span>
+                          <AdminDatePicker
+                            value={b.startDate ?? ''}
+                            onChange={(v) => onUpdateBlock(b.key, (bl) => ({ ...bl, startDate: v || null }))}
+                            label="Pick start date"
+                          />
+                        </div>
+                        <div className="schedule-field-group">
+                          <span className="field-label">Repeat until</span>
+                          <AdminDatePicker
+                            value={b.endDate ?? ''}
+                            onChange={(v) => onUpdateBlock(b.key, (bl) => ({ ...bl, endDate: v || null }))}
+                            label="Pick end date"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="schedule-field-group schedule-breaks">
+                      <span className="field-label">Breaks</span>
+                      {b.breaks.map((br, i) => (
+                        <div key={i} className="schedule-break-row">
+                          <TimeCombobox
+                            value={br.start}
+                            onChange={(v) =>
+                              onUpdateBlock(b.key, (bl) => ({
+                                ...bl,
+                                breaks: bl.breaks.map((x, xi) => (xi === i ? { ...x, start: v } : x)),
+                              }))
+                            }
+                            durationMinutes={defaultDuration}
+                            ariaLabel={`Break ${i + 1} start`}
+                          />
+                          <span className="arrow">{'→'}</span>
+                          <TimeCombobox
+                            value={br.end}
+                            onChange={(v) =>
+                              onUpdateBlock(b.key, (bl) => ({
+                                ...bl,
+                                breaks: bl.breaks.map((x, xi) => (xi === i ? { ...x, end: v } : x)),
+                              }))
+                            }
+                            durationMinutes={defaultDuration}
+                            ariaLabel={`Break ${i + 1} end`}
+                          />
+                          <button
+                            type="button"
+                            className="link danger"
+                            onClick={() =>
+                              onUpdateBlock(b.key, (bl) => ({ ...bl, breaks: bl.breaks.filter((_, xi) => xi !== i) }))
+                            }
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                      <button type="button" className="link" onClick={() => onAddBreak(b.key)}>
+                        + Add a break
+                      </button>
+                    </div>
+
+                    <button type="button" className="link danger" onClick={() => onRemoveBlock(b.key)}>
+                      Remove this period
+                    </button>
+                  </div>
+                )
+              })}
             </>
           ) : (
             !selectedIsTimeOff && <p className="muted">No working hours set for this day.</p>
+          )}
+
+          {isAdmin && (
+            <button type="button" className="btn btn-sm" onClick={() => onAddPeriod(selectedDate)}>
+              + Add another working period
+            </button>
           )}
 
           {selectedInfo && selectedInfo.blocks.length > 0 && (

@@ -3109,11 +3109,11 @@ a.link.danger {
 }
 
 /* ===========================================================
-   Schedule monthly view (ScheduleMonthView.tsx) -- Phase A of the
-   Schedule tab redesign: a read-oriented monthly summary of the same
-   doctor_schedule-backed blocks the weekly grid edits, plus one-off
-   Time off blocks for context. Not a second editor -- "Edit day"/"Add
-   working hours" hand off to the weekly grid's own per-block panel. */
+   Schedule monthly view (ScheduleMonthView.tsx) -- the primary Schedule
+   tab workspace: a calendar of the same doctor_schedule-backed blocks
+   the weekly grid edits, plus one-off Time off blocks for context, with
+   its own inline day-panel editor (start/end/department/breaks per
+   period) so normal editing never requires the weekly grid. */
 
 .schedule-month-filters {
   display: flex;
@@ -3150,13 +3150,6 @@ a.link.danger {
 
 .schedule-month-jump-popover select {
   font-size: 0.85rem;
-}
-
-.schedule-month-period-menu {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  color: var(--color-text-muted);
 }
 
 .schedule-month-title {
@@ -3281,17 +3274,9 @@ a.link.danger {
   margin: 0 0 var(--space-2);
 }
 
-.schedule-month-detail-period {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  padding: 6px 0;
-  border-top: 1px solid var(--color-border);
-}
-
-.schedule-month-detail-period:first-of-type {
-  border-top: none;
+.schedule-month-cell-more {
+  font-size: 0.64rem;
+  color: var(--color-text-muted);
 }
 
 @media (max-width: 700px) {
@@ -3301,6 +3286,30 @@ a.link.danger {
   .schedule-month-cell-period {
     display: none;
   }
+}
+
+/* Monthly day panel's per-period inline editor (ScheduleMonthView.tsx) --
+   the same start/end/department/breaks fields the weekly grid's own
+   per-block panel uses, repeated once per working period on the
+   selected date so every period is directly editable without switching
+   views. */
+.schedule-day-period {
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.schedule-day-period:first-of-type {
+  border-top: none;
+}
+
+.schedule-day-period-range {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
 }
 
 /* ===========================================================
