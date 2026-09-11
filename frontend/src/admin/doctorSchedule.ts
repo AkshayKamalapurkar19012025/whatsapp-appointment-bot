@@ -404,6 +404,53 @@ export function templateDaySlots(
   return slotsForEntries(entries, durationMinutes, bufferMinutes)
 }
 
+// Strict overlap (unlike blocksOverlapOrTouch below): two blocks that
+// merely touch end-to-end are NOT a conflict for copyBlockToDay -- only
+// paint/erase treat touching as "the same drawn stroke".
+function blocksStrictlyOverlap(a: { startTime: string; endTime: string }, startTime: string, endTime: string): boolean {
+  return toMinutesSinceMidnight(startTime) < toMinutesSinceMidnight(a.endTime) &&
+    toMinutesSinceMidnight(endTime) > toMinutesSinceMidnight(a.startTime)
+}
+
+// "Copy schedule": places a copy of one day's block (its exact times,
+// breaks, and department) onto a different day/range, skipping it
+// silently if it would overlap a block already there on that day+range
+// -- same "skip conflicting days, don't abort the whole copy" behavior
+// the old Working Hours form's own copy feature had, just now staged
+// into the draft (part of the one save/cancel lifecycle) instead of
+// persisted immediately. Real overlap validation still happens at Save
+// time (schedule_overlaps() server-side); this is a good-enough
+// pre-check so an obviously-conflicting copy doesn't even make it into
+// the draft.
+export function copyBlockToDay(
+  blocks: ScheduleBlock[],
+  targetDay: number,
+  source: { startTime: string; endTime: string; breaks: ScheduleBreak[]; departmentId: number | null },
+  startDate: string | null,
+  endDate: string | null,
+): { blocks: ScheduleBlock[]; copied: boolean } {
+  const targetRangeKey = rangeKey(startDate, endDate)
+  const conflict = blocks.some(
+    (b) =>
+      b.day === targetDay &&
+      rangeKey(b.startDate, b.endDate) === targetRangeKey &&
+      blocksStrictlyOverlap(b, source.startTime, source.endTime),
+  )
+  if (conflict) return { blocks, copied: false }
+  const copy: ScheduleBlock = {
+    key: newBlockKey(),
+    day: targetDay,
+    startTime: source.startTime,
+    endTime: source.endTime,
+    breaks: source.breaks,
+    departmentId: source.departmentId,
+    startDate,
+    endDate,
+    sourceIds: [],
+  }
+  return { blocks: [...blocks, copy], copied: true }
+}
+
 function blocksOverlapOrTouch(a: { startTime: string; endTime: string }, startTime: string, endTime: string): boolean {
   return toMinutesSinceMidnight(startTime) <= toMinutesSinceMidnight(a.endTime) &&
     toMinutesSinceMidnight(endTime) >= toMinutesSinceMidnight(a.startTime)

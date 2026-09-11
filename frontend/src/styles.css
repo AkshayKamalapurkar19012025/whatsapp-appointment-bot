@@ -3049,6 +3049,14 @@ a.link.danger {
   }
 }
 
+.schedule-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
 /* Weekly/Monthly view toggle (ScheduleGrid.tsx) -- same pill-button
    pattern as .day-multiselect, just two options instead of seven. */
 .schedule-view-toggle {
@@ -3083,12 +3091,48 @@ a.link.danger {
    Time off blocks for context. Not a second editor -- "Edit day"/"Add
    working hours" hand off to the weekly grid's own per-block panel. */
 
+.schedule-month-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
 .schedule-month-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
   margin-bottom: var(--space-3);
+}
+
+.schedule-month-jump {
+  position: relative;
+}
+
+.schedule-month-jump-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  gap: 6px;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.12));
+}
+
+.schedule-month-jump-popover select {
+  font-size: 0.85rem;
+}
+
+.schedule-month-period-menu {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-muted);
 }
 
 .schedule-month-title {

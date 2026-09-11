@@ -38,6 +38,7 @@ import {
   rangeKey,
   rowTupleKey,
   blocksToRowPayloads,
+  copyBlockToDay,
   templateDaySlots,
   toMinutesSinceMidnight,
   validateBlockBreaks,
@@ -129,6 +130,15 @@ export default function ScheduleGrid({
 
   const [confirmReconcileOpen, setConfirmReconcileOpen] = useState(false)
   const [removeBlockTarget, setRemoveBlockTarget] = useState<string | null>(null)
+
+  // "Copy schedule" -- copies one day's blocks (times, breaks,
+  // department) onto other days, staged into the draft like any other
+  // edit (see copyBlockToDay's own docstring for why conflicting target
+  // days are skipped rather than aborting the whole copy).
+  const [showCopyForm, setShowCopyForm] = useState(false)
+  const [copySourceDay, setCopySourceDay] = useState('')
+  const [copyTargetDays, setCopyTargetDays] = useState<number[]>([])
+  const [copyError, setCopyError] = useState<string | null>(null)
 
   const scrollRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -330,16 +340,50 @@ export default function ScheduleGrid({
   // block yet just lands the admin on its column, ready to drag -- there
   // is no way to fabricate a drag gesture, so "Add working hours" cannot
   // draw a block by itself.
-  function handleEditDay(dateStr: string) {
+  function handleEditDay(dateStr: string, blockKey?: string) {
     const day = dateToDayOfWeek(dateStr)
     const applicable = draftBlocks.filter((b) => b.day === day && dateInRange(dateStr, b.startDate, b.endDate))
+    const target = blockKey ? applicable.find((b) => b.key === blockKey) ?? applicable[0] : applicable[0]
     setView('week')
-    if (applicable.length > 0) {
-      setRangeOverride((prev) => ({ ...prev, [day]: rangeKey(applicable[0].startDate, applicable[0].endDate) }))
-      setSelectedBlockKey(applicable[0].key)
+    if (target) {
+      setRangeOverride((prev) => ({ ...prev, [day]: rangeKey(target.startDate, target.endDate) }))
+      setSelectedBlockKey(target.key)
     } else {
       setSelectedBlockKey(null)
     }
+  }
+
+  function toggleCopyTargetDay(day: number) {
+    setCopyTargetDays((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort((a, b) => a - b)))
+  }
+
+  function handleCopySchedule() {
+    setCopyError(null)
+    const sourceDay = Number(copySourceDay)
+    if (!copySourceDay) {
+      setCopyError('Pick a day to copy hours from.')
+      return
+    }
+    const sourceBlocks = blocksForDay(sourceDay)
+    if (sourceBlocks.length === 0 || copyTargetDays.length === 0) {
+      setCopyError('Pick a source day with hours and at least one target day.')
+      return
+    }
+    let next = draftBlocks
+    let copiedCount = 0
+    for (const targetDay of copyTargetDays) {
+      const { startDate, endDate } = parseRangeKey(activeRangeForDay(targetDay))
+      for (const b of sourceBlocks) {
+        const result = copyBlockToDay(next, targetDay, b, startDate, endDate)
+        next = result.blocks
+        if (result.copied) copiedCount++
+      }
+    }
+    setDraftBlocks(next)
+    setShowCopyForm(false)
+    setCopySourceDay('')
+    setCopyTargetDays([])
+    setCopyError(copiedCount === 0 ? 'Nothing was copied -- the target days already have overlapping hours.' : null)
   }
 
   const selectedBlockError = selectedBlock
@@ -447,6 +491,8 @@ export default function ScheduleGrid({
               : 'A read-only summary of the configured weekly pattern across real calendar dates.'}
           </p>
         </div>
+      </div>
+      <div className="schedule-header-actions">
         <div className="schedule-view-toggle" role="group" aria-label="Schedule view">
           <button type="button" className={view === 'week' ? 'selected' : ''} onClick={() => setView('week')}>
             Weekly view
@@ -455,8 +501,63 @@ export default function ScheduleGrid({
             Monthly view
           </button>
         </div>
+        {isAdmin && (
+          <>
+            <button type="button" className="btn-secondary btn btn-sm" onClick={() => setShowCopyForm((v) => !v)}>
+              {showCopyForm ? 'Cancel copy' : 'Copy schedule'}
+            </button>
+            <button type="button" className="btn btn-sm" onClick={() => setView('week')}>
+              + Add working hours
+            </button>
+          </>
+        )}
       </div>
       {error && <p className="error">{error}</p>}
+
+      {isAdmin && showCopyForm && (
+        <form
+          className="inline-form wrap"
+          onSubmit={(e) => {
+            e.preventDefault()
+            handleCopySchedule()
+          }}
+        >
+          <label className="inline-label">
+            Copy hours from
+            <select value={copySourceDay} onChange={(e) => setCopySourceDay(e.target.value)} required>
+              <option value="">Choose a day…</option>
+              {DAYS.filter((d) => blocksForDay(d).length > 0).map((d) => (
+                <option key={d} value={d}>
+                  {DAY_NAMES[d]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div style={{ width: '100%' }}>
+            <span className="field-label">To</span>
+            <div className="day-multiselect" role="group" aria-label="Target days">
+              {DAY_NAMES.slice(1).map((name, i) => {
+                const day = i + 1
+                const isSource = copySourceDay !== '' && Number(copySourceDay) === day
+                return (
+                  <button
+                    key={day}
+                    type="button"
+                    className={copyTargetDays.includes(day) ? 'selected' : ''}
+                    aria-pressed={copyTargetDays.includes(day)}
+                    disabled={isSource}
+                    onClick={() => toggleCopyTargetDay(day)}
+                  >
+                    {name.slice(0, 3)}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          {copyError && <p className="error">{copyError}</p>}
+          <button type="submit">Copy hours</button>
+        </form>
+      )}
 
       {isAdmin && view === 'week' && (
         <div className="schedule-grid-toolbar">
@@ -636,7 +737,9 @@ export default function ScheduleGrid({
           defaultDuration={defaultDuration}
           bufferMinutes={bufferMinutes}
           overallDirty={overallDirty}
+          isAdmin={isAdmin}
           onEditDay={handleEditDay}
+          onRemoveBlock={(key) => setRemoveBlockTarget(key)}
         />
       )}
 

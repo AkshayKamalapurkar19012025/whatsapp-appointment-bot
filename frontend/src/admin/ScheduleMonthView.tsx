@@ -1,6 +1,8 @@
 import { useState } from 'react'
+import { CalendarBlank, DotsThreeVertical } from '@phosphor-icons/react'
 import type { Department, DoctorBlockEntry } from '../types'
 import { formatTimeOfDay } from '../format'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu'
 import {
   DAY_NAMES,
   blockCoversDate,
@@ -51,13 +53,15 @@ function statusForDate(
   return { status: 'partial', blocks: applicable }
 }
 
-// Phase A of the Schedule tab redesign (see the approved PLAN): a
-// read-oriented monthly summary of the SAME doctor_schedule-backed
-// blocks the weekly grid edits, plus one-off Time off blocks layered on
-// top for context. Deliberately not a second editor -- "Edit day" hands
-// off to the existing weekly grid's own per-block panel (onEditDay),
-// and there is no Copy-schedule or other bulk convenience here, per the
-// PLAN's explicit "core loop first" scope.
+// Monthly summary view for the Schedule tab: a read-oriented calendar
+// of the SAME doctor_schedule-backed blocks the weekly grid edits, plus
+// one-off Time off blocks layered on top for context. Not a second
+// editor -- "Edit day"/a period's own Edit action hand off to the
+// existing weekly grid's per-block panel (onEditDay), and "Remove"
+// stages the exact same removal the weekly grid's own block panel does
+// (onRemoveBlock, via the shared confirm dialog in ScheduleGrid.tsx).
+// Copy schedule lives one level up (ScheduleGrid's header), since it
+// isn't day-specific.
 export default function ScheduleMonthView({
   draftBlocks,
   oneOffBlocks,
@@ -65,7 +69,9 @@ export default function ScheduleMonthView({
   defaultDuration,
   bufferMinutes,
   overallDirty,
+  isAdmin,
   onEditDay,
+  onRemoveBlock,
 }: {
   draftBlocks: ScheduleBlock[]
   oneOffBlocks: DoctorBlockEntry[]
@@ -73,12 +79,25 @@ export default function ScheduleMonthView({
   defaultDuration: number
   bufferMinutes: number
   overallDirty: boolean
-  onEditDay: (dateStr: string) => void
+  isAdmin: boolean
+  onEditDay: (dateStr: string, blockKey?: string) => void
+  onRemoveBlock: (blockKey: string) => void
 }) {
   const today = new Date()
   const [year, setYear] = useState(today.getFullYear())
   const [month, setMonth] = useState(today.getMonth() + 1)
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  const [jumpOpen, setJumpOpen] = useState(false)
+  const [filterDepartmentId, setFilterDepartmentId] = useState('')
+
+  // Department filter -- real (blocks are actually department_id-scoped
+  // in doctor_schedule, migrations/0010), unlike an "Appointment type"
+  // filter would be: doctor_schedule has no appointment-type dimension
+  // at all, so that control from the reference mockup was left out
+  // rather than shipped as a dropdown that silently filters nothing.
+  const visibleBlocks = filterDepartmentId
+    ? draftBlocks.filter((b) => b.departmentId === Number(filterDepartmentId))
+    : draftBlocks
 
   function departmentName(id: number | null): string {
     if (id === null) return 'All departments'
@@ -97,6 +116,8 @@ export default function ScheduleMonthView({
     setSelectedDate(null)
   }
 
+  const yearOptions = Array.from({ length: 6 }, (_, i) => today.getFullYear() - 2 + i)
+
   const totalDays = daysInMonth(year, month)
   const leadingBlanks = firstWeekdayColumn(year, month)
   const cells: (number | null)[] = [
@@ -106,7 +127,7 @@ export default function ScheduleMonthView({
   while (cells.length % 7 !== 0) cells.push(null)
 
   const selectedInfo = selectedDate
-    ? statusForDate(selectedDate, dateToDayOfWeek(selectedDate), draftBlocks, oneOffBlocks)
+    ? statusForDate(selectedDate, dateToDayOfWeek(selectedDate), visibleBlocks, oneOffBlocks)
     : null
   const selectedIsTimeOff =
     selectedDate !== null && oneOffBlocks.some((b) => blockCoversDate(b, selectedDate))
@@ -115,6 +136,20 @@ export default function ScheduleMonthView({
   return (
     <>
       <div className="schedule-month-main">
+        <div className="schedule-month-filters">
+          <label className="inline-label">
+            Department
+            <select value={filterDepartmentId} onChange={(e) => setFilterDepartmentId(e.target.value)}>
+              <option value="">All departments</option>
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
         <div className="schedule-month-toolbar">
           <button type="button" className="btn-secondary btn btn-sm" onClick={goPrevMonth} aria-label="Previous month">
             {'‹'}
@@ -125,6 +160,37 @@ export default function ScheduleMonthView({
           <button type="button" className="btn-secondary btn btn-sm" onClick={goNextMonth} aria-label="Next month">
             {'›'}
           </button>
+          <div className="schedule-month-jump">
+            <button
+              type="button"
+              className="btn-secondary btn btn-sm"
+              aria-label="Jump to month"
+              onClick={() => setJumpOpen((v) => !v)}
+            >
+              <CalendarBlank size={16} />
+            </button>
+            {jumpOpen && (
+              <div className="schedule-month-jump-popover">
+                <select value={month} onChange={(e) => setMonth(Number(e.target.value))}>
+                  {MONTH_NAMES.map((name, i) => (
+                    <option key={name} value={i + 1}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+                <select value={year} onChange={(e) => setYear(Number(e.target.value))}>
+                  {yearOptions.map((y) => (
+                    <option key={y} value={y}>
+                      {y}
+                    </option>
+                  ))}
+                </select>
+                <button type="button" className="btn btn-sm" onClick={() => setJumpOpen(false)}>
+                  Go
+                </button>
+              </div>
+            )}
+          </div>
           <button type="button" className="btn-secondary btn btn-sm" onClick={goToday}>
             Today
           </button>
@@ -146,7 +212,7 @@ export default function ScheduleMonthView({
             if (day === null) return <div key={i} className="schedule-month-cell empty" />
             const dateStr = isoDate(year, month, day)
             const dayOfWeek = dateToDayOfWeek(dateStr)
-            const { status, blocks } = statusForDate(dateStr, dayOfWeek, draftBlocks, oneOffBlocks)
+            const { status, blocks } = statusForDate(dateStr, dayOfWeek, visibleBlocks, oneOffBlocks)
             const isTimeOff = status === 'time_off'
             return (
               <button
@@ -186,9 +252,11 @@ export default function ScheduleMonthView({
                 year: 'numeric',
               })}
             </h4>
-            <button type="button" className="btn btn-sm" onClick={() => onEditDay(selectedDate)}>
-              {selectedInfo && selectedInfo.blocks.length > 0 ? 'Edit day' : 'Add working hours'}
-            </button>
+            {isAdmin && (
+              <button type="button" className="btn btn-sm" onClick={() => onEditDay(selectedDate)}>
+                {selectedInfo && selectedInfo.blocks.length > 0 ? 'Edit day' : 'Add working hours'}
+              </button>
+            )}
           </div>
 
           {selectedIsTimeOff && <p className="schedule-month-cell-timeoff standalone">Time off this day</p>}
@@ -208,6 +276,19 @@ export default function ScheduleMonthView({
                     <span className="muted schedule-sidebar-note">
                       {b.breaks.length} break{b.breaks.length === 1 ? '' : 's'}
                     </span>
+                  )}
+                  {isAdmin && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button type="button" className="link schedule-month-period-menu" aria-label="Period actions">
+                          <DotsThreeVertical size={16} />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onSelect={() => onEditDay(selectedDate, b.key)}>Edit</DropdownMenuItem>
+                        <DropdownMenuItem onSelect={() => onRemoveBlock(b.key)}>Remove</DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   )}
                 </div>
               ))}
