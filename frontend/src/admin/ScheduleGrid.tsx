@@ -29,9 +29,12 @@ import {
   DURATION_OPTIONS,
   dateInRange,
   dateToDayOfWeek,
+  defaultBreakFor,
   isoDateToday,
   minutesToHHMM,
   mergeEntriesIntoBlocks,
+  newBlockKey,
+  newPeriodDefaults,
   parseRangeKey,
   paintRange,
   eraseRange,
@@ -88,7 +91,11 @@ export default function ScheduleGrid({
   // into one editable model is exactly the "preview vs real availability"
   // conflation the PLAN said to keep apart.
   const [oneOffBlocks, setOneOffBlocks] = useState<DoctorBlockEntry[]>([])
-  const [view, setView] = useState<'week' | 'month'>('week')
+  // Calendar-first: the monthly view is the default, primary scheduling
+  // workspace (select a date, edit it inline, see the live preview). The
+  // 7x24 drag grid is kept as an advanced/bulk-editing option, not the
+  // entry point -- see the toggle's labels below.
+  const [view, setView] = useState<'week' | 'month'>('month')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [savedFlash, setSavedFlash] = useState(false)
@@ -310,20 +317,20 @@ export default function ScheduleGrid({
   // -- Block editing (department / fine-adjust / breaks / range) ----------
   const selectedBlock = draftBlocks.find((b) => b.key === selectedBlockKey) ?? null
 
+  function updateBlock(key: string, mutator: (b: ScheduleBlock) => ScheduleBlock) {
+    setDraftBlocks((prev) => prev.map((b) => (b.key === key ? mutator(b) : b)))
+  }
+
   function updateSelectedBlock(mutator: (b: ScheduleBlock) => ScheduleBlock) {
-    setDraftBlocks((prev) => prev.map((b) => (b.key === selectedBlockKey ? mutator(b) : b)))
+    if (selectedBlockKey) updateBlock(selectedBlockKey, mutator)
+  }
+
+  function addBreakToBlock(key: string) {
+    updateBlock(key, (b) => ({ ...b, breaks: [...b.breaks, defaultBreakFor(b.startTime, b.endTime)] }))
   }
 
   function addBreakToSelected() {
-    if (!selectedBlock) return
-    updateSelectedBlock((b) => {
-      const startMin = toMinutesSinceMidnight(b.startTime)
-      const endMin = toMinutesSinceMidnight(b.endTime)
-      const mid = Math.round((startMin + endMin) / 2 / 5) * 5
-      const breakStart = minutesToHHMM(Math.max(startMin + 5, mid - 15))
-      const breakEnd = minutesToHHMM(Math.min(endMin - 5, mid + 15))
-      return { ...b, breaks: [...b.breaks, { start: breakStart, end: breakEnd }] }
-    })
+    if (selectedBlockKey) addBreakToBlock(selectedBlockKey)
   }
 
   function removeBlock(key: string) {
@@ -332,25 +339,44 @@ export default function ScheduleGrid({
     setRemoveBlockTarget(null)
   }
 
-  // Monthly view's "Edit day"/"Add working hours" hand-off -- switches
-  // to the weekly grid (the one real editor; the month view is
-  // read-oriented navigation only, see ScheduleMonthView's own
-  // docstring) and, if that date already has a block, opens the exact
-  // same per-block panel a click on the grid itself would. A day with no
-  // block yet just lands the admin on its column, ready to drag -- there
-  // is no way to fabricate a drag gesture, so "Add working hours" cannot
-  // draw a block by itself.
-  function handleEditDay(dateStr: string, blockKey?: string) {
+  // Monthly day panel's "+ Add another working period" -- creates a new
+  // block for that date's weekday, open-ended (applies every such
+  // weekday going forward) by default, same convention the weekly grid's
+  // own drawn blocks use. The panel's own "Change dates..." lets the
+  // admin narrow it to a specific window (or a single day) afterwards.
+  // Open-ended by default also keeps "Copy to other days" predictable --
+  // a period and its copies share the same range convention, so the
+  // calendar doesn't show one weekday recurring into future months while
+  // its copies silently don't (or vice versa). This is what lets an
+  // admin add hours entirely from the calendar without ever touching the
+  // weekly drag grid.
+  function addPeriodForDate(dateStr: string, departmentId: number | null = null): string {
     const day = dateToDayOfWeek(dateStr)
-    const applicable = draftBlocks.filter((b) => b.day === day && dateInRange(dateStr, b.startDate, b.endDate))
-    const target = blockKey ? applicable.find((b) => b.key === blockKey) ?? applicable[0] : applicable[0]
-    setView('week')
-    if (target) {
-      setRangeOverride((prev) => ({ ...prev, [day]: rangeKey(target.startDate, target.endDate) }))
-      setSelectedBlockKey(target.key)
-    } else {
-      setSelectedBlockKey(null)
+    const existing = draftBlocks
+      .filter((b) => b.day === day && dateInRange(dateStr, b.startDate, b.endDate))
+      .sort((a, b) => a.startTime.localeCompare(b.startTime))
+    const lastEnd = existing.length ? existing[existing.length - 1].endTime : undefined
+    const { startTime, endTime } = newPeriodDefaults(lastEnd)
+    const block: ScheduleBlock = {
+      key: newBlockKey(),
+      day,
+      startTime,
+      endTime,
+      breaks: [],
+      departmentId,
+      startDate: null,
+      endDate: null,
+      sourceIds: [],
     }
+    setDraftBlocks((prev) => [...prev, block])
+    return block.key
+  }
+
+  function handleCopyFromDate(dateStr: string) {
+    setCopySourceDay(String(dateToDayOfWeek(dateStr)))
+    setCopyTargetDays([])
+    setCopyError(null)
+    setShowCopyForm(true)
   }
 
   function toggleCopyTargetDay(day: number) {
@@ -488,28 +514,23 @@ export default function ScheduleGrid({
           <p className="muted" style={{ margin: 0 }}>
             {view === 'week'
               ? 'Drag across the grid to draw availability, drag again to erase it.'
-              : 'A read-only summary of the configured weekly pattern across real calendar dates.'}
+              : 'Click a date to see and edit that day’s working hours.'}
           </p>
         </div>
       </div>
       <div className="schedule-header-actions">
         <div className="schedule-view-toggle" role="group" aria-label="Schedule view">
-          <button type="button" className={view === 'week' ? 'selected' : ''} onClick={() => setView('week')}>
-            Weekly view
-          </button>
           <button type="button" className={view === 'month' ? 'selected' : ''} onClick={() => setView('month')}>
-            Monthly view
+            Calendar
+          </button>
+          <button type="button" className={view === 'week' ? 'selected' : ''} onClick={() => setView('week')}>
+            Weekly grid (advanced)
           </button>
         </div>
         {isAdmin && (
-          <>
-            <button type="button" className="btn-secondary btn btn-sm" onClick={() => setShowCopyForm((v) => !v)}>
-              {showCopyForm ? 'Cancel copy' : 'Copy schedule'}
-            </button>
-            <button type="button" className="btn btn-sm" onClick={() => setView('week')}>
-              + Add working hours
-            </button>
-          </>
+          <button type="button" className="btn-secondary btn btn-sm" onClick={() => setShowCopyForm((v) => !v)}>
+            {showCopyForm ? 'Cancel copy' : 'Copy schedule'}
+          </button>
         )}
       </div>
       {error && <p className="error">{error}</p>}
@@ -738,8 +759,11 @@ export default function ScheduleGrid({
           bufferMinutes={bufferMinutes}
           overallDirty={overallDirty}
           isAdmin={isAdmin}
-          onEditDay={handleEditDay}
+          onAddPeriod={addPeriodForDate}
+          onUpdateBlock={updateBlock}
+          onAddBreak={addBreakToBlock}
           onRemoveBlock={(key) => setRemoveBlockTarget(key)}
+          onCopyFromDate={handleCopyFromDate}
         />
       )}
 

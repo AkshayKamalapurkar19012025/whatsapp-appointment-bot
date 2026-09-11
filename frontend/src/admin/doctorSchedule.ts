@@ -204,6 +204,34 @@ export interface ScheduleBreak {
   end: string
 }
 
+// Sensible default midpoint break span for a newly added break inside
+// [startTime, endTime) -- shared by the weekly grid's per-block panel and
+// the monthly day panel's per-period editor so "+ Add a break" behaves
+// identically in both.
+export function defaultBreakFor(startTime: string, endTime: string): ScheduleBreak {
+  const startMin = toMinutesSinceMidnight(startTime)
+  const endMin = toMinutesSinceMidnight(endTime)
+  const mid = Math.round((startMin + endMin) / 2 / 5) * 5
+  return {
+    start: minutesToHHMM(Math.max(startMin + 5, mid - 15)),
+    end: minutesToHHMM(Math.min(endMin - 5, mid + 15)),
+  }
+}
+
+// Default working hours for a newly added period -- the monthly day
+// panel's "+ Add another working period". Just the start/end time; the
+// period's date range defaults to open-ended (every occurrence of that
+// weekday), the same convention the weekly grid's own drawn blocks use,
+// so a period added from one date and then copied to other days behaves
+// the same way in both places (see addPeriodForDate in ScheduleGrid.tsx).
+export function newPeriodDefaults(afterEndTime?: string): { startTime: string; endTime: string } {
+  if (!afterEndTime) return { startTime: '09:00', endTime: '17:00' }
+  const afterMin = toMinutesSinceMidnight(afterEndTime)
+  const startMin = Math.min(afterMin + 60, 22 * 60)
+  const endMin = Math.min(startMin + 180, 24 * 60)
+  return { startTime: minutesToHHMM(startMin), endTime: minutesToHHMM(endMin) }
+}
+
 // One drawable/editable shift on the grid -- corresponds to one or more
 // doctor_schedule rows (sourceIds; empty for a block drawn in this
 // session that has never been saved). A block with breaks expands back
