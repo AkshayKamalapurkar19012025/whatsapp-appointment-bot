@@ -3312,6 +3312,37 @@ a.link.danger {
   flex-wrap: wrap;
 }
 
+/* Add Schedule flow's Step 1 (ScheduleMonthView.tsx's AddScheduleWizard)
+   -- an explicit, mandatory scope choice before any hours are
+   configured. Styled as a plain vertical radio list rather than pill
+   buttons so it doesn't compete visually with the day-multiselect pills
+   used elsewhere (Copy schedule, the wizard's own "Which days?" step). */
+.schedule-add-wizard {
+  background: var(--color-primary-soft);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+}
+
+.schedule-scope-choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.schedule-scope-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+.schedule-scope-summary {
+  background: var(--color-surface);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+}
+
 /* ===========================================================
    Patient login card (LoginFlow.tsx) -- icon badge, subtitle, and a
    2-step progress strip (Phone -> Verify) so the card reads as a short,

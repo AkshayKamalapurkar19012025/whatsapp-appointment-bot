@@ -218,18 +218,98 @@ export function defaultBreakFor(startTime: string, endTime: string): ScheduleBre
   }
 }
 
-// Default working hours for a newly added period -- the monthly day
-// panel's "+ Add another working period". Just the start/end time; the
-// period's date range defaults to open-ended (every occurrence of that
-// weekday), the same convention the weekly grid's own drawn blocks use,
-// so a period added from one date and then copied to other days behaves
-// the same way in both places (see addPeriodForDate in ScheduleGrid.tsx).
+// Default working hours for a newly added period. Just the start/end
+// time -- the period's scope (which weekday(s), one date or recurring)
+// is chosen explicitly by the admin via the Add Schedule flow
+// (AddScheduleWizard in ScheduleMonthView.tsx), never defaulted silently.
 export function newPeriodDefaults(afterEndTime?: string): { startTime: string; endTime: string } {
   if (!afterEndTime) return { startTime: '09:00', endTime: '17:00' }
   const afterMin = toMinutesSinceMidnight(afterEndTime)
   const startMin = Math.min(afterMin + 60, 22 * 60)
   const endMin = Math.min(startMin + 180, 24 * 60)
   return { startTime: minutesToHHMM(startMin), endTime: minutesToHHMM(endMin) }
+}
+
+// "YYYY-MM-DD" +/- deltaDays, for splitBlockForEdit's past/future
+// boundaries.
+export function shiftDateStr(dateStr: string, deltaDays: number): string {
+  const d = new Date(`${dateStr}T00:00:00`)
+  d.setDate(d.getDate() + deltaDays)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// How many real calendar dates a set of weekdays within [startDate,
+// endDate] actually lands on -- the Add Schedule flow's "this applies to
+// N dates" summary (an explicit, honest number instead of a vague
+// "recurring"). Returns null for an open-ended side (no finite count to
+// give); callers show "every <weekday(s)>" instead in that case.
+export function countOccurrences(weekdays: number[], startDate: string | null, endDate: string | null): number | null {
+  if (!startDate || !endDate) return null
+  const wanted = new Set(weekdays)
+  let count = 0
+  const cursor = new Date(`${startDate}T00:00:00`)
+  const end = new Date(`${endDate}T00:00:00`)
+  while (cursor <= end) {
+    const jsDay = cursor.getDay() === 0 ? 7 : cursor.getDay()
+    if (wanted.has(jsDay)) count++
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return count
+}
+
+export type EditScope = 'this_date' | 'this_and_future' | 'entire'
+
+// Applies an edit (or a removal, when mutator is null) to an existing
+// block that spans more than one real calendar date, honoring the
+// admin's explicit choice of how far the change should reach:
+//   'this_date'        -- only anchorDate changes; the rest of the
+//                          pattern (before and after) keeps its old
+//                          shape, via up to two unedited replacement
+//                          segments plus one new one-off segment.
+//   'this_and_future'   -- anchorDate onward gets the edit; everything
+//                          strictly before it is unaffected.
+//   'entire'            -- the whole block is edited/removed as one,
+//                          today's existing behavior.
+// Every segment this produces is a plain ScheduleBlock with the same
+// day/startDate/endDate/department_id shape the backend already
+// understands -- no new persisted concept, just more rows (or fewer,
+// for a partial removal). Never mutates `original`; sourceIds is
+// cleared on every output since (a) the real Save diff is purely
+// tuple-content based (see ScheduleGrid's desiredKeys/existingKeys) so
+// sourceIds isn't needed for correctness, and (b) clearing it means a
+// second edit to a freshly-split segment in the same sitting is treated
+// as an edit to a new/unambiguous block and doesn't re-prompt.
+export function splitBlockForEdit(
+  original: ScheduleBlock,
+  anchorDate: string,
+  scope: EditScope,
+  mutator: ((b: ScheduleBlock) => ScheduleBlock) | null,
+): ScheduleBlock[] {
+  if (scope === 'entire') {
+    return mutator ? [{ ...mutator(original), key: newBlockKey(), sourceIds: [] }] : []
+  }
+
+  const pastNeeded = original.startDate === null || original.startDate < anchorDate
+  const pastSegment: ScheduleBlock[] = pastNeeded
+    ? [{ ...original, key: newBlockKey(), endDate: shiftDateStr(anchorDate, -1), sourceIds: [] }]
+    : []
+
+  if (scope === 'this_and_future') {
+    const futureSegment: ScheduleBlock[] = mutator
+      ? [{ ...mutator(original), key: newBlockKey(), startDate: anchorDate, sourceIds: [] }]
+      : []
+    return [...pastSegment, ...futureSegment]
+  }
+
+  // 'this_date'
+  const futureNeeded = original.endDate === null || anchorDate < original.endDate
+  const futureSegment: ScheduleBlock[] = futureNeeded
+    ? [{ ...original, key: newBlockKey(), startDate: shiftDateStr(anchorDate, 1), sourceIds: [] }]
+    : []
+  const thisDateSegment: ScheduleBlock[] = mutator
+    ? [{ ...mutator(original), key: newBlockKey(), startDate: anchorDate, endDate: anchorDate, sourceIds: [] }]
+    : []
+  return [...pastSegment, ...futureSegment, ...thisDateSegment]
 }
 
 // One drawable/editable shift on the grid -- corresponds to one or more

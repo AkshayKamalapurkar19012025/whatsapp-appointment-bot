@@ -27,14 +27,12 @@ import {
   DAY_NAMES,
   DEFAULT_MERGE_GAP_MINUTES,
   DURATION_OPTIONS,
-  dateInRange,
   dateToDayOfWeek,
   defaultBreakFor,
   isoDateToday,
   minutesToHHMM,
   mergeEntriesIntoBlocks,
   newBlockKey,
-  newPeriodDefaults,
   parseRangeKey,
   paintRange,
   eraseRange,
@@ -42,10 +40,13 @@ import {
   rowTupleKey,
   blocksToRowPayloads,
   copyBlockToDay,
+  splitBlockForEdit,
   templateDaySlots,
   toMinutesSinceMidnight,
   validateBlockBreaks,
+  type EditScope,
   type ScheduleBlock,
+  type ScheduleBreak,
 } from './doctorSchedule'
 
 const DAYS = [1, 2, 3, 4, 5, 6, 7]
@@ -137,6 +138,19 @@ export default function ScheduleGrid({
 
   const [confirmReconcileOpen, setConfirmReconcileOpen] = useState(false)
   const [removeBlockTarget, setRemoveBlockTarget] = useState<string | null>(null)
+
+  // Editing an existing, persisted block that spans more than the one
+  // date it's being edited from needs an explicit "how far should this
+  // reach" answer before the edit is applied at all -- see
+  // splitBlockForEdit's own docstring. `pendingEdit` holds the in-flight
+  // edit (or removal, mutator === null) while that choice dialog is
+  // open; a brand-new or already single-day block never reaches this
+  // (requestBlockEdit/requestBlockRemove apply those immediately).
+  const [pendingEdit, setPendingEdit] = useState<{
+    block: ScheduleBlock
+    dateStr: string
+    mutator: ((b: ScheduleBlock) => ScheduleBlock) | null
+  } | null>(null)
 
   // "Copy schedule" -- copies one day's blocks (times, breaks,
   // department) onto other days, staged into the draft like any other
@@ -339,37 +353,68 @@ export default function ScheduleGrid({
     setRemoveBlockTarget(null)
   }
 
-  // Monthly day panel's "+ Add another working period" -- creates a new
-  // block for that date's weekday, open-ended (applies every such
-  // weekday going forward) by default, same convention the weekly grid's
-  // own drawn blocks use. The panel's own "Change dates..." lets the
-  // admin narrow it to a specific window (or a single day) afterwards.
-  // Open-ended by default also keeps "Copy to other days" predictable --
-  // a period and its copies share the same range convention, so the
-  // calendar doesn't show one weekday recurring into future months while
-  // its copies silently don't (or vice versa). This is what lets an
-  // admin add hours entirely from the calendar without ever touching the
-  // weekly drag grid.
-  function addPeriodForDate(dateStr: string, departmentId: number | null = null): string {
-    const day = dateToDayOfWeek(dateStr)
-    const existing = draftBlocks
-      .filter((b) => b.day === day && dateInRange(dateStr, b.startDate, b.endDate))
-      .sort((a, b) => a.startTime.localeCompare(b.startTime))
-    const lastEnd = existing.length ? existing[existing.length - 1].endTime : undefined
-    const { startTime, endTime } = newPeriodDefaults(lastEnd)
-    const block: ScheduleBlock = {
+  // Monthly day panel's Add Schedule flow -- the admin has already
+  // explicitly chosen the scope (which weekdays, one date or a
+  // date-bounded/open-ended pattern) before this is ever called, so it
+  // just materializes one ScheduleBlock per weekday with the
+  // already-decided hours/breaks/department. No implicit recurrence
+  // here: `startDate`/`endDate` are exactly what the admin chose in the
+  // scope step, not a silent default.
+  function createSchedule(
+    weekdays: number[],
+    startDate: string | null,
+    endDate: string | null,
+    startTime: string,
+    endTime: string,
+    breaks: ScheduleBreak[],
+    departmentId: number | null,
+  ) {
+    const newBlocks: ScheduleBlock[] = weekdays.map((day) => ({
       key: newBlockKey(),
       day,
       startTime,
       endTime,
-      breaks: [],
+      breaks,
       departmentId,
-      startDate: null,
-      endDate: null,
+      startDate,
+      endDate,
       sourceIds: [],
+    }))
+    setDraftBlocks((prev) => [...prev, ...newBlocks])
+  }
+
+  // Does `block` (as currently in draftBlocks, before any edit) already
+  // span more than the single date it's being edited from? Only then is
+  // "how far should this change reach" actually ambiguous -- a block
+  // that's brand new (no sourceIds -- nothing persisted yet to
+  // disambiguate against) or already scoped to just this one date needs
+  // no prompt at all.
+  function editIsAmbiguous(block: ScheduleBlock, dateStr: string): boolean {
+    return block.sourceIds.length > 0 && !(block.startDate === dateStr && block.endDate === dateStr)
+  }
+
+  function requestBlockEdit(block: ScheduleBlock, dateStr: string, mutator: (b: ScheduleBlock) => ScheduleBlock) {
+    if (!editIsAmbiguous(block, dateStr)) {
+      updateBlock(block.key, mutator)
+      return
     }
-    setDraftBlocks((prev) => [...prev, block])
-    return block.key
+    setPendingEdit({ block, dateStr, mutator })
+  }
+
+  function requestBlockRemove(block: ScheduleBlock, dateStr: string) {
+    if (!editIsAmbiguous(block, dateStr)) {
+      removeBlock(block.key)
+      return
+    }
+    setPendingEdit({ block, dateStr, mutator: null })
+  }
+
+  function resolvePendingEdit(scope: EditScope) {
+    if (!pendingEdit) return
+    const { block, dateStr, mutator } = pendingEdit
+    const replacements = splitBlockForEdit(block, dateStr, scope, mutator)
+    setDraftBlocks((prev) => [...prev.filter((b) => b.key !== block.key), ...replacements])
+    setPendingEdit(null)
   }
 
   function handleCopyFromDate(dateStr: string) {
@@ -759,10 +804,9 @@ export default function ScheduleGrid({
           bufferMinutes={bufferMinutes}
           overallDirty={overallDirty}
           isAdmin={isAdmin}
-          onAddPeriod={addPeriodForDate}
-          onUpdateBlock={updateBlock}
-          onAddBreak={addBreakToBlock}
-          onRemoveBlock={(key) => setRemoveBlockTarget(key)}
+          onCreateSchedule={createSchedule}
+          onEditBlock={requestBlockEdit}
+          onRemoveBlock={requestBlockRemove}
           onCopyFromDate={handleCopyFromDate}
         />
       )}
@@ -871,6 +915,54 @@ export default function ScheduleGrid({
             <AlertDialogAction variant="danger" onClick={() => removeBlockTarget && removeBlock(removeBlockTarget)}>
               Remove
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={pendingEdit !== null} onOpenChange={(open) => !open && setPendingEdit(null)}>
+        <AlertDialogContent className="max-w-[460px]">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pendingEdit && pendingEdit.mutator === null ? 'Remove which occurrences?' : 'Apply this change to which dates?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingEdit && (
+                <>
+                  This schedule applies to every {DAY_NAMES[pendingEdit.block.day]}
+                  {pendingEdit.block.startDate || pendingEdit.block.endDate ? (
+                    <>
+                      {' from '}
+                      {pendingEdit.block.startDate ? formatDate(pendingEdit.block.startDate) : 'the start'}
+                      {' to '}
+                      {pendingEdit.block.endDate ? formatDate(pendingEdit.block.endDate) : 'no end date'}
+                    </>
+                  ) : (
+                    ', with no end date'
+                  )}
+                  . Choose how far this {pendingEdit.mutator === null ? 'removal' : 'change'} should reach.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="flex flex-col gap-2">
+            <AlertDialogAction className="w-full justify-start" onClick={() => resolvePendingEdit('this_date')}>
+              Only {pendingEdit && formatDate(pendingEdit.dateStr)}
+            </AlertDialogAction>
+            <AlertDialogAction
+              className="w-full justify-start bg-[var(--color-surface)] text-[var(--color-primary-hover)] border border-[var(--color-border-strong)] hover:bg-[var(--color-primary-soft)]"
+              onClick={() => resolvePendingEdit('this_and_future')}
+            >
+              This and future occurrences
+            </AlertDialogAction>
+            <AlertDialogAction
+              className="w-full justify-start bg-[var(--color-surface)] text-[var(--color-primary-hover)] border border-[var(--color-border-strong)] hover:bg-[var(--color-primary-soft)]"
+              onClick={() => resolvePendingEdit('entire')}
+            >
+              Entire schedule
+            </AlertDialogAction>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
