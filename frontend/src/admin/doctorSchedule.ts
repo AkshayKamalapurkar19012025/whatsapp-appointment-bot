@@ -28,10 +28,29 @@ export function dateToDayOfWeek(dateStr: string): number {
   return jsDay === 0 ? 7 : jsDay
 }
 
-function dateInRange(dateStr: string, startDate: string | null, endDate: string | null): boolean {
+// Exported for the Schedule tab's monthly summary view (ScheduleGrid.tsx)
+// -- it needs the same "does this row apply on this real calendar date"
+// test todaysScheduleEntries already does, but per ScheduleBlock (day +
+// date-range, not yet expanded to rows) rather than per persisted row.
+export function dateInRange(dateStr: string, startDate: string | null, endDate: string | null): boolean {
   if (startDate && dateStr < startDate) return false
   if (endDate && dateStr > endDate) return false
   return true
+}
+
+// Does a one-off DoctorBlockEntry (start_at/end_at -- see its own
+// docstring in types.ts: entered/shown in Asia/Kolkata terms, the only
+// timezone any doctor here has) cover any part of the given "YYYY-MM-DD"
+// calendar date? Same wall-clock assumption isAvailableNow already makes
+// for "is the doctor blocked right now" -- this is the whole-day version,
+// for the monthly view's "Time off" status.
+export function blockCoversDate(block: DoctorBlockEntry, dateStr: string): boolean {
+  if (!block.active) return false
+  const dayStart = new Date(`${dateStr}T00:00:00`).getTime()
+  const dayEnd = new Date(`${dateStr}T23:59:59.999`).getTime()
+  const blockStart = new Date(block.start_at).getTime()
+  const blockEnd = new Date(block.end_at).getTime()
+  return blockStart <= dayEnd && blockEnd >= dayStart
 }
 
 // This doctor's recurring weekly schedule rows that apply on `dateStr`

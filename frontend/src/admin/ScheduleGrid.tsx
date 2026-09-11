@@ -3,14 +3,16 @@ import {
   ApiError,
   createDoctorSchedule,
   deleteDoctorSchedule,
+  getDoctorBlocks,
   getDoctorDepartments,
   getDoctorScheduleAdmin,
   updateDoctorSlotSettings,
 } from '../api'
-import type { Department, Doctor, DoctorScheduleEntry } from '../types'
+import type { Department, Doctor, DoctorBlockEntry, DoctorScheduleEntry } from '../types'
 import { formatDate, formatTimeOfDay } from '../format'
 import AdminDatePicker from './AdminDatePicker'
 import { TimeCombobox } from '../components/ui/time-combobox'
+import ScheduleMonthView from './ScheduleMonthView'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,6 +27,8 @@ import {
   DAY_NAMES,
   DEFAULT_MERGE_GAP_MINUTES,
   DURATION_OPTIONS,
+  dateInRange,
+  dateToDayOfWeek,
   isoDateToday,
   minutesToHHMM,
   mergeEntriesIntoBlocks,
@@ -77,6 +81,13 @@ export default function ScheduleGrid({
 }) {
   const [entries, setEntries] = useState<DoctorScheduleEntry[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
+  // One-off blocks (Time off tab) -- read-only context for the monthly
+  // summary view's "Time off" status, never edited from here. Kept
+  // separate from doctor_schedule/draftBlocks on purpose: mixing the two
+  // into one editable model is exactly the "preview vs real availability"
+  // conflation the PLAN said to keep apart.
+  const [oneOffBlocks, setOneOffBlocks] = useState<DoctorBlockEntry[]>([])
+  const [view, setView] = useState<'week' | 'month'>('week')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [savedFlash, setSavedFlash] = useState(false)
@@ -125,10 +136,11 @@ export default function ScheduleGrid({
   }, [])
 
   function load() {
-    Promise.all([getDoctorScheduleAdmin(doctor.id), getDoctorDepartments(doctor.id)])
-      .then(([schedule, depts]) => {
+    Promise.all([getDoctorScheduleAdmin(doctor.id), getDoctorDepartments(doctor.id), getDoctorBlocks(doctor.id)])
+      .then(([schedule, depts, blocks]) => {
         setEntries(schedule)
         setDepartments(depts)
+        setOneOffBlocks(blocks)
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load schedule'))
   }
@@ -310,6 +322,26 @@ export default function ScheduleGrid({
     setRemoveBlockTarget(null)
   }
 
+  // Monthly view's "Edit day"/"Add working hours" hand-off -- switches
+  // to the weekly grid (the one real editor; the month view is
+  // read-oriented navigation only, see ScheduleMonthView's own
+  // docstring) and, if that date already has a block, opens the exact
+  // same per-block panel a click on the grid itself would. A day with no
+  // block yet just lands the admin on its column, ready to drag -- there
+  // is no way to fabricate a drag gesture, so "Add working hours" cannot
+  // draw a block by itself.
+  function handleEditDay(dateStr: string) {
+    const day = dateToDayOfWeek(dateStr)
+    const applicable = draftBlocks.filter((b) => b.day === day && dateInRange(dateStr, b.startDate, b.endDate))
+    setView('week')
+    if (applicable.length > 0) {
+      setRangeOverride((prev) => ({ ...prev, [day]: rangeKey(applicable[0].startDate, applicable[0].endDate) }))
+      setSelectedBlockKey(applicable[0].key)
+    } else {
+      setSelectedBlockKey(null)
+    }
+  }
+
   const selectedBlockError = selectedBlock
     ? !(selectedBlock.startTime < selectedBlock.endTime)
       ? 'End time must be after start time'
@@ -410,13 +442,23 @@ export default function ScheduleGrid({
         <div>
           <h4 style={{ margin: 0 }}>Working hours</h4>
           <p className="muted" style={{ margin: 0 }}>
-            Drag across the grid to draw availability, drag again to erase it.
+            {view === 'week'
+              ? 'Drag across the grid to draw availability, drag again to erase it.'
+              : 'A read-only summary of the configured weekly pattern across real calendar dates.'}
           </p>
+        </div>
+        <div className="schedule-view-toggle" role="group" aria-label="Schedule view">
+          <button type="button" className={view === 'week' ? 'selected' : ''} onClick={() => setView('week')}>
+            Weekly view
+          </button>
+          <button type="button" className={view === 'month' ? 'selected' : ''} onClick={() => setView('month')}>
+            Monthly view
+          </button>
         </div>
       </div>
       {error && <p className="error">{error}</p>}
 
-      {isAdmin && (
+      {isAdmin && view === 'week' && (
         <div className="schedule-grid-toolbar">
           <label className="inline-label">
             New block department
@@ -462,6 +504,7 @@ export default function ScheduleGrid({
         </div>
       )}
 
+      {view === 'week' && (
       <div className="schedule-grid-wrap">
         <div className="schedule-grid-header-row">
           <div className="schedule-grid-hour-gutter" />
@@ -583,8 +626,21 @@ export default function ScheduleGrid({
           </div>
         </div>
       </div>
+      )}
 
-      {selectedBlock && isAdmin && (
+      {view === 'month' && (
+        <ScheduleMonthView
+          draftBlocks={draftBlocks}
+          oneOffBlocks={oneOffBlocks}
+          departments={departments}
+          defaultDuration={defaultDuration}
+          bufferMinutes={bufferMinutes}
+          overallDirty={overallDirty}
+          onEditDay={handleEditDay}
+        />
+      )}
+
+      {view === 'week' && selectedBlock && isAdmin && (
         <div className="schedule-block-panel">
           <div className="admin-content-header">
             <h4 style={{ margin: 0 }}>

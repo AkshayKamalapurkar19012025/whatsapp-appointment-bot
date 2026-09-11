@@ -3049,6 +3049,192 @@ a.link.danger {
   }
 }
 
+/* Weekly/Monthly view toggle (ScheduleGrid.tsx) -- same pill-button
+   pattern as .day-multiselect, just two options instead of seven. */
+.schedule-view-toggle {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: var(--radius-md);
+  background: var(--color-primary-soft);
+  flex-shrink: 0;
+}
+
+.schedule-view-toggle button {
+  padding: 6px 14px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.schedule-view-toggle button.selected {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+/* ===========================================================
+   Schedule monthly view (ScheduleMonthView.tsx) -- Phase A of the
+   Schedule tab redesign: a read-oriented monthly summary of the same
+   doctor_schedule-backed blocks the weekly grid edits, plus one-off
+   Time off blocks for context. Not a second editor -- "Edit day"/"Add
+   working hours" hand off to the weekly grid's own per-block panel. */
+
+.schedule-month-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.schedule-month-title {
+  font-weight: 700;
+  min-width: 9rem;
+}
+
+.schedule-month-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.schedule-legend-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 8px;
+}
+
+.schedule-legend-dot:first-child {
+  margin-left: 0;
+}
+
+.schedule-legend-dot.working {
+  background: var(--color-primary);
+}
+
+.schedule-legend-dot.partial {
+  background: var(--color-primary-soft-strong);
+  border: 1px solid var(--color-primary);
+}
+
+.schedule-legend-dot.time_off {
+  background: var(--color-danger, #dc2626);
+}
+
+.schedule-legend-dot.none {
+  background: var(--color-border-strong);
+}
+
+.schedule-month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--color-border);
+  gap: 1px;
+}
+
+.schedule-month-weekday {
+  background: var(--color-primary-soft);
+  padding: var(--space-2);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.schedule-month-cell {
+  min-height: 76px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 6px;
+  border: none;
+  background: var(--color-surface);
+  cursor: pointer;
+  text-align: left;
+}
+
+.schedule-month-cell.empty {
+  background: var(--color-canvas, var(--color-surface));
+  cursor: default;
+}
+
+.schedule-month-cell.selected {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.schedule-month-cell-date {
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.schedule-month-cell-periods {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.schedule-month-cell-period {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--color-primary-hover);
+}
+
+.schedule-month-cell-period.partial {
+  color: var(--color-text-muted);
+}
+
+.schedule-month-cell-none {
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+}
+
+.schedule-month-cell-timeoff {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--color-danger, #dc2626);
+}
+
+.schedule-month-cell-timeoff.standalone {
+  font-size: 0.85rem;
+  margin: 0 0 var(--space-2);
+}
+
+.schedule-month-detail-period {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: 6px 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.schedule-month-detail-period:first-of-type {
+  border-top: none;
+}
+
+@media (max-width: 700px) {
+  .schedule-month-cell {
+    min-height: 56px;
+  }
+  .schedule-month-cell-period {
+    display: none;
+  }
+}
+
 /* ===========================================================
    Patient login card (LoginFlow.tsx) -- icon badge, subtitle, and a
    2-step progress strip (Phone -> Verify) so the card reads as a short,
