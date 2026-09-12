@@ -4,17 +4,16 @@ import type { Department, DoctorBlockEntry } from '../types'
 import { formatDate, formatTimeOfDay } from '../format'
 import { TimeCombobox } from '../components/ui/time-combobox'
 import AdminDatePicker from './AdminDatePicker'
+import ConfigureScheduleModal from './ConfigureScheduleModal'
 import {
   DAY_NAMES,
   blockCoversDate,
-  countOccurrences,
   dateInRange,
   dateToDayOfWeek,
   defaultBreakFor,
   templateDaySlots,
   validateBlockBreaks,
   type ScheduleBlock,
-  type ScheduleBreak,
 } from './doctorSchedule'
 
 const MONTH_NAMES = [
@@ -72,257 +71,25 @@ function rangeLabel(b: ScheduleBlock, dateStr: string): string {
   return `Every ${DAY_NAMES[b.day]}, ${start} – ${end}`
 }
 
-type Scope = 'this_date' | 'every_weekday' | 'selected_days' | 'custom_range'
-
-// The Add Schedule flow -- Step 1 (explicit scope: no recurrence is ever
-// implicit) then Step 2 (hours/breaks/department), both inline in the
-// day panel rather than a separate modal form. Only materializes real
-// ScheduleBlocks (via onCreate) once the admin confirms; nothing is
-// added to the draft while choosing/configuring.
-function AddScheduleWizard({
-  dateStr,
-  departments,
-  defaultDuration,
-  bufferMinutes,
-  onCreate,
-  onCancel,
-}: {
-  dateStr: string
-  departments: Department[]
-  defaultDuration: number
-  bufferMinutes: number
-  onCreate: (
-    weekdays: number[],
-    startDate: string | null,
-    endDate: string | null,
-    startTime: string,
-    endTime: string,
-    breaks: ScheduleBreak[],
-    departmentId: number | null,
-  ) => void
-  onCancel: () => void
-}) {
-  const clickedWeekday = dateToDayOfWeek(dateStr)
-  const [scope, setScope] = useState<Scope | null>(null)
-  const [weekdays, setWeekdays] = useState<number[]>([clickedWeekday])
-  const [rangeStart, setRangeStart] = useState(dateStr)
-  const [rangeEnd, setRangeEnd] = useState('')
-  const [startTime, setStartTime] = useState('09:00')
-  const [endTime, setEndTime] = useState('17:00')
-  const [breaks, setBreaks] = useState<ScheduleBreak[]>([])
-  const [departmentId, setDepartmentId] = useState('')
-
-  function toggleWeekday(day: number) {
-    setWeekdays((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort((a, b) => a - b)))
-  }
-
-  const resolvedWeekdays = scope === 'this_date' || scope === 'every_weekday' ? [clickedWeekday] : weekdays
-  const resolvedStartDate = scope === 'this_date' ? dateStr : scope === 'custom_range' ? rangeStart || null : null
-  const resolvedEndDate = scope === 'this_date' ? dateStr : scope === 'custom_range' ? rangeEnd || null : null
-
-  const scopeValid =
-    scope === 'this_date' ||
-    scope === 'every_weekday' ||
-    (scope === 'selected_days' && weekdays.length > 0) ||
-    (scope === 'custom_range' && weekdays.length > 0 && !!rangeStart && !!rangeEnd && rangeStart <= rangeEnd)
-
-  const timeError = !(startTime < endTime)
-    ? 'End time must be after start time'
-    : validateBlockBreaks(startTime, endTime, breaks)
-
-  const previewBlock: ScheduleBlock = {
-    key: 'preview',
-    day: resolvedWeekdays[0] ?? clickedWeekday,
-    startTime,
-    endTime,
-    breaks,
-    departmentId: null,
-    startDate: null,
-    endDate: null,
-    sourceIds: [],
-  }
-  const previewSlots = timeError ? [] : templateDaySlots([previewBlock], defaultDuration, bufferMinutes)
-
-  const occurrenceCount =
-    resolvedStartDate && resolvedEndDate ? countOccurrences(resolvedWeekdays, resolvedStartDate, resolvedEndDate) : null
-  const weekdayList = resolvedWeekdays.map((d) => DAY_NAMES[d]).join(', ')
-  const summary =
-    occurrenceCount !== null
-      ? `${weekdayList}, ${formatDate(resolvedStartDate!)} – ${formatDate(resolvedEndDate!)} (${occurrenceCount} date${occurrenceCount === 1 ? '' : 's'})`
-      : `Every ${weekdayList}`
-
-  function handleCreate() {
-    if (!scopeValid || timeError) return
-    onCreate(resolvedWeekdays, resolvedStartDate, resolvedEndDate, startTime, endTime, breaks, departmentId ? Number(departmentId) : null)
-    onCancel()
-  }
-
-  return (
-    <div className="schedule-day-period schedule-add-wizard">
-      {scope === null ? (
-        <>
-          <span className="field-label">How should this schedule apply?</span>
-          <div className="schedule-scope-choices" role="radiogroup" aria-label="Schedule scope">
-            <label className="schedule-scope-option">
-              <input type="radio" name="schedule-scope" onChange={() => setScope('this_date')} />
-              This day only ({formatDate(dateStr)})
-            </label>
-            <label className="schedule-scope-option">
-              <input type="radio" name="schedule-scope" onChange={() => setScope('every_weekday')} />
-              Every {DAY_NAMES[clickedWeekday]} (recurring)
-            </label>
-            <label className="schedule-scope-option">
-              <input type="radio" name="schedule-scope" onChange={() => setScope('selected_days')} />
-              Selected days
-            </label>
-            <label className="schedule-scope-option">
-              <input type="radio" name="schedule-scope" onChange={() => setScope('custom_range')} />
-              Custom date range
-            </label>
-          </div>
-          <div className="schedule-save-bar-actions">
-            <button type="button" className="btn-secondary btn btn-sm" onClick={onCancel}>
-              Cancel
-            </button>
-          </div>
-        </>
-      ) : (
-        <>
-          {(scope === 'selected_days' || scope === 'custom_range') && (
-            <div className="schedule-field-group">
-              <span className="field-label">Which days?</span>
-              <div className="day-multiselect" role="group" aria-label="Weekdays">
-                {DAY_NAMES.slice(1).map((name, i) => {
-                  const day = i + 1
-                  return (
-                    <button
-                      key={day}
-                      type="button"
-                      className={weekdays.includes(day) ? 'selected' : ''}
-                      aria-pressed={weekdays.includes(day)}
-                      onClick={() => toggleWeekday(day)}
-                    >
-                      {name.slice(0, 3)}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-          {scope === 'custom_range' && (
-            <div className="schedule-field-grid">
-              <div className="schedule-field-group">
-                <span className="field-label">Start date</span>
-                <AdminDatePicker value={rangeStart} onChange={setRangeStart} label="Pick start date" />
-              </div>
-              <div className="schedule-field-group">
-                <span className="field-label">End date</span>
-                <AdminDatePicker value={rangeEnd} onChange={setRangeEnd} label="Pick end date" />
-              </div>
-            </div>
-          )}
-
-          <div className="schedule-field-grid">
-            <label className="schedule-field-group">
-              <span className="field-label">Start</span>
-              <TimeCombobox value={startTime} onChange={setStartTime} durationMinutes={defaultDuration} ariaLabel="New schedule start time" />
-            </label>
-            <label className="schedule-field-group">
-              <span className="field-label">End</span>
-              <TimeCombobox value={endTime} onChange={setEndTime} durationMinutes={defaultDuration} ariaLabel="New schedule end time" />
-            </label>
-            <label className="schedule-field-group">
-              <span className="field-label">Department</span>
-              <select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
-                <option value="">All departments</option>
-                {departments.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          {timeError && <p className="error">{timeError}</p>}
-
-          <div className="schedule-field-group schedule-breaks">
-            <span className="field-label">Breaks</span>
-            {breaks.map((br, i) => (
-              <div key={i} className="schedule-break-row">
-                <TimeCombobox
-                  value={br.start}
-                  onChange={(v) => setBreaks((prev) => prev.map((x, xi) => (xi === i ? { ...x, start: v } : x)))}
-                  durationMinutes={defaultDuration}
-                  ariaLabel={`Break ${i + 1} start`}
-                />
-                <span className="arrow">{'→'}</span>
-                <TimeCombobox
-                  value={br.end}
-                  onChange={(v) => setBreaks((prev) => prev.map((x, xi) => (xi === i ? { ...x, end: v } : x)))}
-                  durationMinutes={defaultDuration}
-                  ariaLabel={`Break ${i + 1} end`}
-                />
-                <button type="button" className="link danger" onClick={() => setBreaks((prev) => prev.filter((_, xi) => xi !== i))}>
-                  Remove
-                </button>
-              </div>
-            ))}
-            <button type="button" className="link" onClick={() => setBreaks((prev) => [...prev, defaultBreakFor(startTime, endTime)])}>
-              + Add a break
-            </button>
-          </div>
-
-          <div className="schedule-preview-heading">
-            <p className="muted schedule-sidebar-note" style={{ margin: 0 }}>
-              Generated slots preview
-            </p>
-          </div>
-          {previewSlots.length > 0 ? (
-            <div className="schedule-preview-slots">
-              {previewSlots.map((s, i) => (
-                <span key={i} className="slot-chip-static">
-                  {s}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <span className="muted schedule-sidebar-note">No slots</span>
-          )}
-
-          <p className="muted schedule-sidebar-note schedule-scope-summary">
-            <strong>This schedule will apply to:</strong> {summary}
-          </p>
-
-          <div className="schedule-save-bar-actions">
-            <button type="button" className="btn-secondary btn btn-sm" onClick={() => setScope(null)}>
-              Back
-            </button>
-            <button type="button" className="btn btn-sm" onClick={handleCreate} disabled={!scopeValid || !!timeError}>
-              Add schedule
-            </button>
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
 // Monthly calendar for the Schedule tab -- the primary scheduling
-// workspace: the admin selects a date, explicitly chooses a scope for
-// any new schedule (This day only / Every weekday / Selected days /
-// Custom date range -- never an implicit default), configures
-// hours/breaks/department, sees a live preview and an explicit "applies
-// to N dates" summary, and only then creates it. Existing periods stay
-// directly editable inline; editing or removing one that spans more
-// than the clicked date triggers onEditBlock/onRemoveBlock's own
-// this-date/this-and-future/entire-schedule prompt (ScheduleGrid.tsx)
-// rather than silently changing the whole pattern. The weekly grid
-// (ScheduleGrid.tsx's own view) remains available as an advanced/bulk
-// option but is never required for normal day-to-day schedule edits.
-// Time off is read-only context here (layered from doctor_blocks) --
-// editing it stays on the separate Time off tab, not duplicated.
+// workspace: the admin selects a date, then opens the Configure Schedule
+// modal (ConfigureScheduleModal.tsx) to add a new schedule -- an explicit
+// scope step (This day only / Every weekday / Selected days / Custom
+// date range -- never an implicit default), then hours/breaks/department,
+// then a live preview and explicit "applies to N dates" summary, then
+// Save Schedule persists it immediately (like Add Doctor/Add Department)
+// and shows a success screen. Existing periods stay directly editable
+// inline right here in the day panel (not the modal); editing or
+// removing one that spans more than the clicked date triggers
+// onEditBlock/onRemoveBlock's own this-date/this-and-future/
+// entire-schedule prompt (ScheduleGrid.tsx) rather than silently
+// changing the whole pattern. The weekly grid (ScheduleGrid.tsx's own
+// view) remains available as an advanced/bulk option but is never
+// required for normal day-to-day schedule edits. Time off is read-only
+// context here (layered from doctor_blocks) -- editing it stays on the
+// separate Time off tab, not duplicated.
 export default function ScheduleMonthView({
+  doctorId,
   draftBlocks,
   oneOffBlocks,
   departments,
@@ -330,11 +97,12 @@ export default function ScheduleMonthView({
   bufferMinutes,
   overallDirty,
   isAdmin,
-  onCreateSchedule,
+  onScheduleSaved,
   onEditBlock,
   onRemoveBlock,
   onCopyFromDate,
 }: {
+  doctorId: number
   draftBlocks: ScheduleBlock[]
   oneOffBlocks: DoctorBlockEntry[]
   departments: Department[]
@@ -342,15 +110,7 @@ export default function ScheduleMonthView({
   bufferMinutes: number
   overallDirty: boolean
   isAdmin: boolean
-  onCreateSchedule: (
-    weekdays: number[],
-    startDate: string | null,
-    endDate: string | null,
-    startTime: string,
-    endTime: string,
-    breaks: ScheduleBreak[],
-    departmentId: number | null,
-  ) => void
+  onScheduleSaved: () => void
   onEditBlock: (block: ScheduleBlock, dateStr: string, mutator: (b: ScheduleBlock) => ScheduleBlock) => void
   onRemoveBlock: (block: ScheduleBlock, dateStr: string) => void
   onCopyFromDate: (dateStr: string) => void
@@ -362,7 +122,7 @@ export default function ScheduleMonthView({
   const [jumpOpen, setJumpOpen] = useState(false)
   const [filterDepartmentId, setFilterDepartmentId] = useState('')
   const [rangeEditingKeys, setRangeEditingKeys] = useState<Set<string>>(new Set())
-  const [addingSchedule, setAddingSchedule] = useState(false)
+  const [showConfigureModal, setShowConfigureModal] = useState(false)
 
   // Department filter -- real (blocks are actually department_id-scoped
   // in doctor_schedule, migrations/0010), unlike an "Appointment type"
@@ -387,7 +147,7 @@ export default function ScheduleMonthView({
 
   function selectDate(dateStr: string) {
     setSelectedDate(dateStr)
-    setAddingSchedule(false)
+    setShowConfigureModal(false)
   }
 
   const yearOptions = Array.from({ length: 6 }, (_, i) => today.getFullYear() - 2 + i)
@@ -692,20 +452,21 @@ export default function ScheduleMonthView({
             !selectedIsTimeOff && <p className="muted">No working hours set for this day.</p>
           )}
 
-          {isAdmin && addingSchedule && (
-            <AddScheduleWizard
-              dateStr={selectedDate}
+          {isAdmin && (
+            <button type="button" className="btn btn-sm" onClick={() => setShowConfigureModal(true)}>
+              + Add schedule
+            </button>
+          )}
+          {showConfigureModal && (
+            <ConfigureScheduleModal
+              doctorId={doctorId}
               departments={departments}
               defaultDuration={defaultDuration}
               bufferMinutes={bufferMinutes}
-              onCreate={onCreateSchedule}
-              onCancel={() => setAddingSchedule(false)}
+              initialDate={selectedDate}
+              onClose={() => setShowConfigureModal(false)}
+              onSaved={onScheduleSaved}
             />
-          )}
-          {isAdmin && !addingSchedule && (
-            <button type="button" className="btn btn-sm" onClick={() => setAddingSchedule(true)}>
-              + Add schedule
-            </button>
           )}
 
           {selectedInfo && selectedInfo.blocks.length > 0 && (

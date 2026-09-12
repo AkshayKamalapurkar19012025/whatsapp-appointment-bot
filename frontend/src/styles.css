@@ -3312,17 +3312,11 @@ a.link.danger {
   flex-wrap: wrap;
 }
 
-/* Add Schedule flow's Step 1 (ScheduleMonthView.tsx's AddScheduleWizard)
-   -- an explicit, mandatory scope choice before any hours are
-   configured. Styled as a plain vertical radio list rather than pill
-   buttons so it doesn't compete visually with the day-multiselect pills
-   used elsewhere (Copy schedule, the wizard's own "Which days?" step). */
-.schedule-add-wizard {
-  background: var(--color-primary-soft);
-  border-radius: var(--radius-md);
-  padding: var(--space-3);
-}
-
+/* Configure Schedule modal's Step 1 (ConfigureScheduleModal.tsx) -- an
+   explicit, mandatory scope choice before any hours are configured.
+   Styled as a plain vertical radio list rather than pill buttons so it
+   doesn't compete visually with the day-multiselect pills used
+   elsewhere (Copy schedule, the modal's own "Which days?" step). */
 .schedule-scope-choices {
   display: flex;
   flex-direction: column;
@@ -3349,6 +3343,101 @@ a.link.danger {
   background: var(--color-surface);
   border-radius: var(--radius-sm);
   padding: var(--space-2);
+}
+
+/* Configure Schedule modal (ConfigureScheduleModal.tsx) -- a proper
+   modal (same .modal-overlay/.modal-panel shell as AddDoctorModal.tsx)
+   with three gated internal steps plus a success screen. */
+.schedule-modal-wide {
+  max-width: 760px;
+}
+
+.schedule-modal-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.schedule-modal-step {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.schedule-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.schedule-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.schedule-modal-footer-full {
+  grid-column: 1 / -1;
+}
+
+.schedule-modal-review {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+
+@media (max-width: 640px) {
+  .schedule-modal-review {
+    grid-template-columns: 1fr;
+  }
+}
+
+.schedule-summary-list {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-3);
+}
+
+.schedule-summary-list dt {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.schedule-summary-list dd {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--color-text);
+}
+
+.schedule-modal-success {
+  align-items: center;
+  text-align: center;
+  padding: var(--space-4) 0;
+}
+
+.schedule-success-check {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: 1.6rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 12px;
+}
+
+.schedule-modal-success .schedule-modal-footer {
+  justify-content: center;
+  margin-top: var(--space-4);
 }
 
 /* ===========================================================

@@ -32,7 +32,6 @@ import {
   isoDateToday,
   minutesToHHMM,
   mergeEntriesIntoBlocks,
-  newBlockKey,
   parseRangeKey,
   paintRange,
   eraseRange,
@@ -46,7 +45,6 @@ import {
   validateBlockBreaks,
   type EditScope,
   type ScheduleBlock,
-  type ScheduleBreak,
 } from './doctorSchedule'
 
 const DAYS = [1, 2, 3, 4, 5, 6, 7]
@@ -351,36 +349,6 @@ export default function ScheduleGrid({
     setDraftBlocks((prev) => prev.filter((b) => b.key !== key))
     if (selectedBlockKey === key) setSelectedBlockKey(null)
     setRemoveBlockTarget(null)
-  }
-
-  // Monthly day panel's Add Schedule flow -- the admin has already
-  // explicitly chosen the scope (which weekdays, one date or a
-  // date-bounded/open-ended pattern) before this is ever called, so it
-  // just materializes one ScheduleBlock per weekday with the
-  // already-decided hours/breaks/department. No implicit recurrence
-  // here: `startDate`/`endDate` are exactly what the admin chose in the
-  // scope step, not a silent default.
-  function createSchedule(
-    weekdays: number[],
-    startDate: string | null,
-    endDate: string | null,
-    startTime: string,
-    endTime: string,
-    breaks: ScheduleBreak[],
-    departmentId: number | null,
-  ) {
-    const newBlocks: ScheduleBlock[] = weekdays.map((day) => ({
-      key: newBlockKey(),
-      day,
-      startTime,
-      endTime,
-      breaks,
-      departmentId,
-      startDate,
-      endDate,
-      sourceIds: [],
-    }))
-    setDraftBlocks((prev) => [...prev, ...newBlocks])
   }
 
   // Does `block` (as currently in draftBlocks, before any edit) already
@@ -797,6 +765,7 @@ export default function ScheduleGrid({
 
       {view === 'month' && (
         <ScheduleMonthView
+          doctorId={doctor.id}
           draftBlocks={draftBlocks}
           oneOffBlocks={oneOffBlocks}
           departments={departments}
@@ -804,7 +773,7 @@ export default function ScheduleGrid({
           bufferMinutes={bufferMinutes}
           overallDirty={overallDirty}
           isAdmin={isAdmin}
-          onCreateSchedule={createSchedule}
+          onScheduleSaved={load}
           onEditBlock={requestBlockEdit}
           onRemoveBlock={requestBlockRemove}
           onCopyFromDate={handleCopyFromDate}

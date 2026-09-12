@@ -181,7 +181,13 @@ export function TimeCombobox({
           onOpenAutoFocus={(e) => e.preventDefault()}
           onCloseAutoFocus={(e) => e.preventDefault()}
           className={cn(
-            'z-50 max-h-56 w-[7.5rem] overflow-y-auto rounded-[var(--radius-md)] p-1',
+            // Higher than .modal-overlay's z-index:1000 (styles.css) --
+            // this combobox is now also used inside ConfigureScheduleModal,
+            // whose overlay would otherwise sit on top of and intercept
+            // clicks on this floating dropdown (Tailwind's z-50 = z-index
+            // 50 loses to the modal's plain-CSS z-index:1000, even though
+            // both portal to document.body).
+            'z-[1100] max-h-56 w-[7.5rem] overflow-y-auto rounded-[var(--radius-md)] p-1',
             'border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)]',
           )}
         >

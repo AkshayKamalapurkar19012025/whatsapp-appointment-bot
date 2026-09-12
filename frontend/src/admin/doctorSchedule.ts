@@ -257,6 +257,29 @@ export function countOccurrences(weekdays: number[], startDate: string | null, e
   return count
 }
 
+// First real calendar date on/after `fromDate` (and not after `endDate`,
+// when bounded) that falls on one of `weekdays` -- the Configure Schedule
+// modal's Step 3 "Generated Slots Preview" default date selection, so the
+// preview never opens on a date the new schedule wouldn't actually apply
+// to. Searches at most a year forward to stay finite for a bounded range
+// that (by mistake) never actually contains its own weekday.
+export function firstMatchingDate(weekdays: number[], fromDate: string, endDate: string | null): string | null {
+  const wanted = new Set(weekdays)
+  const cursor = new Date(`${fromDate}T00:00:00`)
+  const end = endDate ? new Date(`${endDate}T00:00:00`) : null
+  const limit = new Date(cursor)
+  limit.setDate(limit.getDate() + 366)
+  while (!end || cursor <= end) {
+    if (cursor > limit) return null
+    const jsDay = cursor.getDay() === 0 ? 7 : cursor.getDay()
+    if (wanted.has(jsDay)) {
+      return `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`
+    }
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return null
+}
+
 export type EditScope = 'this_date' | 'this_and_future' | 'entire'
 
 // Applies an edit (or a removal, when mutator is null) to an existing
