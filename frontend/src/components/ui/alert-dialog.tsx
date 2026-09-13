@@ -19,7 +19,13 @@ const AlertDialogPortal = AlertDialogPrimitive.Portal
 function AlertDialogOverlay({ className, ...props }: React.ComponentProps<typeof AlertDialogPrimitive.Overlay>) {
   return (
     <AlertDialogPrimitive.Overlay
-      className={cn('alert-dialog-overlay fixed inset-0 z-50 bg-black/40 backdrop-blur-sm', className)}
+      // z-[1200]: higher than .modal-overlay's plain-CSS z-index:1000
+      // (styles.css) and TimeCombobox's z-[1100] -- a confirm dialog
+      // (e.g. ConfigureScheduleModal's "Discard this schedule?") must
+      // always render on top of any modal it's nested inside, not be
+      // silently hidden behind it (Tailwind's z-50 = z-index 50 lost to
+      // that fight even though both portal to document.body).
+      className={cn('alert-dialog-overlay fixed inset-0 z-[1200] bg-black/40 backdrop-blur-sm', className)}
       {...props}
     />
   )
@@ -31,7 +37,7 @@ function AlertDialogContent({ className, ...props }: React.ComponentProps<typeof
       <AlertDialogOverlay />
       <AlertDialogPrimitive.Content
         className={cn(
-          'alert-dialog-content fixed left-1/2 top-1/2 z-50 w-full max-w-[420px] -translate-x-1/2 -translate-y-1/2',
+          'alert-dialog-content fixed left-1/2 top-1/2 z-[1200] w-full max-w-[420px] -translate-x-1/2 -translate-y-1/2',
           'rounded-[var(--radius-lg)] border border-[var(--color-glass-border)] bg-[var(--color-glass)] p-6',
           'shadow-[var(--shadow-lg)] backdrop-blur-[20px]',
           className,
