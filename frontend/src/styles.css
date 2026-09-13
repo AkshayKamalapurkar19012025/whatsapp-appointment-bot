@@ -2770,33 +2770,6 @@ a.link.danger {
   color: var(--color-success, var(--color-primary));
 }
 
-/* Schedule tab's two-column layout (working hours + copy/add form on
-   the left, Slot settings + Generated slots preview on the right) --
-   stacks to one column below 960px, same breakpoint the rest of this
-   file uses for admin two-column layouts. */
-.schedule-tab-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
-  gap: var(--space-5);
-  align-items: start;
-}
-
-.schedule-tab-sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.schedule-sidebar-panel {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-}
-
 .schedule-sidebar-note {
   font-size: 0.76rem;
 }
@@ -2808,30 +2781,7 @@ a.link.danger {
   gap: var(--space-2);
 }
 
-/* The one dirty-state indicator for the whole card (working-hours
-   draft fields AND Slot Settings, see ScheduleSection's overallDirty)
-   -- a subtle left-border tint spanning both columns, so "there's an
-   unsaved change somewhere in here" reads as one area, not two. */
-.schedule-tab-layout.is-dirty {
-  border-left: 3px solid var(--color-primary);
-  padding-left: var(--space-3);
-  margin-left: calc(-1 * var(--space-3) - 3px);
-}
-
-.draft-badge {
-  display: inline-flex;
-  align-items: center;
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
-  background: var(--color-warning-soft);
-  color: var(--color-warning);
-}
-
-/* Field-group grid used throughout the Working Hours form (Hours'
+/* Field-group grid used throughout the Configure Schedule popup (Hours'
    From/Until, Date range's Start/End date) -- every label sits
    directly above the one field it belongs to (a <span class="field-
    label"> immediately followed by its control inside one
@@ -2870,111 +2820,10 @@ a.link.danger {
   flex-wrap: wrap;
 }
 
-/* The single Save/Cancel action bar for the whole card (working-hours
-   draft + Slot Settings) -- see ScheduleSection's handleSaveAll/
-   handleCancelAll. Not viewport-sticky (deliberately -- a fixed
-   footer here would need its own z-index/stacking-context
-   coordination against existing modals this app already has, for no
-   requirement that specifically asked for that); it sits at the
-   bottom of this card instead, always visible on scroll to it. */
-.schedule-save-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  margin-top: var(--space-5);
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--color-border);
-}
-
-.schedule-save-bar-actions {
-  display: flex;
-  gap: var(--space-2);
-}
-
-.schedule-save-status {
-  display: inline-flex;
-  align-items: center;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--color-text-muted);
-}
-
-.schedule-save-status.success {
-  color: var(--color-success);
-}
-
-@media (max-width: 960px) {
-  .schedule-tab-layout {
-    grid-template-columns: 1fr;
-  }
-}
-
-.schedule-block-panel {
-  margin-top: var(--space-4);
-  padding: var(--space-4);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-}
-
-/* Whole-week generated-slots preview (ScheduleGrid.tsx's sidebar) --
-   was a tall list of 7 stacked rows, each a wrapped list of full-size
-   chips (30+ for a long working day), several screens tall. A 7-day
-   grid with one compact, independently-scrolling column per day keeps
-   the whole preview to one fixed-height panel instead. */
-.schedule-week-preview-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
-  gap: 6px;
-}
-
-.schedule-week-preview-col {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 4px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface);
-}
-
-.schedule-week-preview-col-name {
-  font-size: 0.72rem;
-  font-weight: 700;
-  color: var(--color-text-muted);
-  text-align: center;
-}
-
-.schedule-week-preview-col-slots {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.slot-chip-static.compact {
-  padding: 2px 4px;
-  font-size: 0.66rem;
-  text-align: center;
-  white-space: nowrap;
-}
-
-.schedule-header-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  margin-bottom: var(--space-3);
-}
-
 /* ===========================================================
-   Schedule monthly view (ScheduleMonthView.tsx) -- the only Schedule
-   tab workspace: a calendar of doctor_schedule-backed blocks plus
-   one-off Time off blocks for context, with its own inline day-panel
-   editor (start/end/department/breaks per period). */
+   Schedule monthly view (ScheduleMonthView.tsx) -- a pure calendar
+   VIEW of the doctor's schedule; every create/edit/remove happens in
+   the Configure Schedule popup (ConfigureScheduleModal.tsx), not here. */
 
 .schedule-month-filters {
   display: flex;
@@ -3016,6 +2865,26 @@ a.link.danger {
 .schedule-month-title {
   font-weight: 700;
   min-width: 9rem;
+}
+
+/* Pushes "Slot settings"/"+ Add Schedule" to the right end of the
+   toolbar row, keeping month navigation grouped on the left -- same
+   row-with-a-spacer pattern used elsewhere in this file rather than a
+   second flex container. */
+.schedule-month-toolbar-spacer {
+  flex: 1;
+}
+
+/* Compact doctor-level settings popover (ScheduleMonthView.tsx) --
+   reuses .schedule-month-jump-popover's floating-panel look, just
+   wider and stacked vertically for two labeled selects instead of the
+   jump popover's two inline ones. */
+.schedule-slot-settings-popover {
+  right: 0;
+  left: auto;
+  display: flex;
+  flex-direction: column;
+  width: 15rem;
 }
 
 .schedule-month-legend {
@@ -3149,13 +3018,8 @@ a.link.danger {
   }
 }
 
-/* Monthly day panel's per-period editor (ScheduleMonthView.tsx). Each
-   existing period shows as a compact one-line summary (time range,
-   department, break count, applies-to range) by default -- the full
-   start/end/department/breaks fields only appear once "Edit" is
-   clicked, mirroring the Configure Schedule modal's own
-   progressive-disclosure pattern instead of always exposing every
-   field for every period. */
+/* Configure Schedule popup's per-period fields (ConfigureScheduleModal.tsx
+   Step 2) -- one of these per working period (start/end/breaks). */
 .schedule-day-period {
   padding: var(--space-3) 0;
   border-top: 1px solid var(--color-border);
@@ -3166,31 +3030,6 @@ a.link.danger {
 
 .schedule-day-period:first-of-type {
   border-top: none;
-}
-
-.schedule-day-period-summary {
-  flex-direction: row;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.schedule-day-period-summary-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.schedule-day-period-summary-time {
-  font-weight: 600;
-  color: var(--color-text);
-}
-
-.schedule-day-period-range {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
 }
 
 /* Configure Schedule modal's Step 1 (ConfigureScheduleModal.tsx) -- an
@@ -3303,7 +3142,7 @@ a.link.danger {
   grid-column: 1 / -1;
 }
 
-/* Step 3's headline (ConfigureScheduleModal.tsx) -- the one line the
+/* Step 4's headline (ConfigureScheduleModal.tsx) -- the one line the
    admin must read before Save is even clickable: exactly how many
    dates this schedule touches. Spans both review columns, above the
    Summary/Preview split. */
@@ -3316,6 +3155,15 @@ a.link.danger {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--space-4);
+}
+
+/* Step 3 (Generated Slots Preview) is its own step, with nothing but
+   the timeline -- reuses .schedule-modal-review's grid/gap so the
+   footer's schedule-modal-footer-full still spans correctly, but the
+   preview itself spans both columns since there's no summary column
+   beside it here. */
+.schedule-review-preview-full {
+  grid-column: 1 / -1;
 }
 
 @media (max-width: 640px) {

@@ -282,57 +282,108 @@ export function firstMatchingDate(weekdays: number[], fromDate: string, endDate:
 
 export type EditScope = 'this_date' | 'this_and_future' | 'entire'
 
-// Applies an edit (or a removal, when mutator is null) to an existing
-// block that spans more than one real calendar date, honoring the
-// admin's explicit choice of how far the change should reach:
+// The set of a date's ScheduleBlocks that share the exact same
+// day-of-week + date-range -- i.e. one coherent, persisted schedule
+// "instance" (possibly several working periods, e.g. a split shift),
+// as opposed to a second, independently-scoped block that happens to
+// also apply to the same real calendar date (see editGroupForDate).
+function rangeGroupKey(b: ScheduleBlock): string {
+  return rangeKey(b.startDate, b.endDate)
+}
+
+// All of a date's applicable blocks (day-of-week + date-range match),
+// earliest start time first -- the calendar cell's own "what does this
+// date look like" read, shared so the Configure Schedule popup's edit
+// target is computed the same way the cell's own display is.
+export function applicableBlocksForDate(blocks: ScheduleBlock[], dateStr: string): ScheduleBlock[] {
+  const dayOfWeek = dateToDayOfWeek(dateStr)
+  return blocks
+    .filter((b) => b.day === dayOfWeek && dateInRange(dateStr, b.startDate, b.endDate))
+    .sort((a, b) => a.startTime.localeCompare(b.startTime))
+}
+
+// The one range-group the Configure Schedule popup edits when a date is
+// clicked -- the first (earliest-starting) group found among that
+// date's applicable blocks, same "first distinct range wins" precedent
+// this codebase already used for Copy Schedule. A date very occasionally
+// carries a second, independently-scoped block (e.g. a recurring 9-5
+// plus a one-off evening event on just one date) -- that second block
+// still renders correctly on the calendar, it's just not what a click
+// on that date edits; a deliberate, documented simplification rather
+// than a full multi-group editor.
+export function editGroupForDate(blocks: ScheduleBlock[], dateStr: string): ScheduleBlock[] {
+  const applicable = applicableBlocksForDate(blocks, dateStr)
+  if (applicable.length === 0) return []
+  const primaryKey = rangeGroupKey(applicable[0])
+  return applicable.filter((b) => rangeGroupKey(b) === primaryKey)
+}
+
+// Is editing this group from `dateStr` actually ambiguous -- does it
+// already span more than the single date it's being edited from? Only
+// then does "how far should this change reach" need asking; a group
+// that's brand new (no sourceIds) or already scoped to just this one
+// date has only one possible answer, so the popup skips the question.
+export function groupIsAmbiguous(group: ScheduleBlock[], dateStr: string): boolean {
+  if (group.length === 0) return false
+  const hasPersisted = group.some((b) => b.sourceIds.length > 0)
+  const alreadyJustThisDate = group[0].startDate === dateStr && group[0].endDate === dateStr
+  return hasPersisted && !alreadyJustThisDate
+}
+
+// Applies an edit (or a removal, when replacement is null) to an
+// existing range-group that spans more than one real calendar date,
+// honoring the admin's explicit choice of how far the change should
+// reach:
 //   'this_date'        -- only anchorDate changes; the rest of the
 //                          pattern (before and after) keeps its old
 //                          shape, via up to two unedited replacement
-//                          segments plus one new one-off segment.
+//                          segments plus the new one-off segment(s).
 //   'this_and_future'   -- anchorDate onward gets the edit; everything
 //                          strictly before it is unaffected.
-//   'entire'            -- the whole block is edited/removed as one,
-//                          today's existing behavior.
-// Every segment this produces is a plain ScheduleBlock with the same
-// day/startDate/endDate/department_id shape the backend already
-// understands -- no new persisted concept, just more rows (or fewer,
-// for a partial removal). Never mutates `original`; sourceIds is
-// cleared on every output since (a) the real Save diff is purely
-// tuple-content based (see ScheduleGrid's desiredKeys/existingKeys) so
-// sourceIds isn't needed for correctness, and (b) clearing it means a
-// second edit to a freshly-split segment in the same sitting is treated
-// as an edit to a new/unambiguous block and doesn't re-prompt.
-export function splitBlockForEdit(
-  original: ScheduleBlock,
+//   'entire'            -- the whole group is edited/removed as one.
+// `replacement` is the new list of working periods (already shaped as
+// ScheduleBlock, day/department already set) the admin configured in
+// Step 2 -- this function only decides their startDate/endDate per the
+// chosen scope, plus what (if anything) survives from the original
+// group outside that scope. Every output is a plain ScheduleBlock with
+// the same day/startDate/endDate/department_id shape the backend
+// already understands -- no new persisted concept, just more rows (or
+// fewer, for a partial removal). Never mutates `originalGroup`;
+// sourceIds is cleared on every output since the actual Save is a
+// direct delete-the-old-rows/create-the-new-rows call, not a diff.
+export function splitGroupForEdit(
+  originalGroup: ScheduleBlock[],
   anchorDate: string,
   scope: EditScope,
-  mutator: ((b: ScheduleBlock) => ScheduleBlock) | null,
+  replacement: ScheduleBlock[] | null,
 ): ScheduleBlock[] {
-  if (scope === 'entire') {
-    return mutator ? [{ ...mutator(original), key: newBlockKey(), sourceIds: [] }] : []
+  if (originalGroup.length === 0) return replacement ?? []
+  const groupStart = originalGroup[0].startDate
+  const groupEnd = originalGroup[0].endDate
+
+  function cloneGroupWithDates(startDate: string | null, endDate: string | null): ScheduleBlock[] {
+    return originalGroup.map((b) => ({ ...b, key: newBlockKey(), startDate, endDate, sourceIds: [] }))
+  }
+  function replacementWithDates(startDate: string | null, endDate: string | null): ScheduleBlock[] {
+    if (!replacement) return []
+    return replacement.map((b) => ({ ...b, key: newBlockKey(), startDate, endDate, sourceIds: [] }))
   }
 
-  const pastNeeded = original.startDate === null || original.startDate < anchorDate
-  const pastSegment: ScheduleBlock[] = pastNeeded
-    ? [{ ...original, key: newBlockKey(), endDate: shiftDateStr(anchorDate, -1), sourceIds: [] }]
-    : []
+  if (scope === 'entire') {
+    return replacementWithDates(groupStart, groupEnd)
+  }
+
+  const pastNeeded = groupStart === null || groupStart < anchorDate
+  const pastBlocks = pastNeeded ? cloneGroupWithDates(groupStart, shiftDateStr(anchorDate, -1)) : []
 
   if (scope === 'this_and_future') {
-    const futureSegment: ScheduleBlock[] = mutator
-      ? [{ ...mutator(original), key: newBlockKey(), startDate: anchorDate, sourceIds: [] }]
-      : []
-    return [...pastSegment, ...futureSegment]
+    return [...pastBlocks, ...replacementWithDates(anchorDate, groupEnd)]
   }
 
   // 'this_date'
-  const futureNeeded = original.endDate === null || anchorDate < original.endDate
-  const futureSegment: ScheduleBlock[] = futureNeeded
-    ? [{ ...original, key: newBlockKey(), startDate: shiftDateStr(anchorDate, 1), sourceIds: [] }]
-    : []
-  const thisDateSegment: ScheduleBlock[] = mutator
-    ? [{ ...mutator(original), key: newBlockKey(), startDate: anchorDate, endDate: anchorDate, sourceIds: [] }]
-    : []
-  return [...pastSegment, ...futureSegment, ...thisDateSegment]
+  const futureNeeded = groupEnd === null || anchorDate < groupEnd
+  const futureBlocks = futureNeeded ? cloneGroupWithDates(shiftDateStr(anchorDate, 1), groupEnd) : []
+  return [...pastBlocks, ...futureBlocks, ...replacementWithDates(anchorDate, anchorDate)]
 }
 
 // One drawable/editable shift on the grid -- corresponds to one or more
@@ -360,11 +411,6 @@ export function newBlockKey(): string {
 
 export function rangeKey(startDate: string | null, endDate: string | null): string {
   return `${startDate ?? ''}|${endDate ?? ''}`
-}
-
-export function parseRangeKey(key: string): { startDate: string | null; endDate: string | null } {
-  const [s, e] = key.split('|')
-  return { startDate: s || null, endDate: e || null }
 }
 
 // Identifies a doctor_schedule row by its content (not id) -- lets Save
@@ -595,150 +641,4 @@ export function countSlots(segments: TimelineSegment[]): { total: number; mornin
   const slotStarts = segments.filter((s) => s.type === 'slot').map((s) => toMinutesSinceMidnight(s.start))
   const morning = slotStarts.filter((m) => m < 12 * 60).length
   return { total: slotStarts.length, morning, afternoon: slotStarts.length - morning }
-}
-
-// Strict overlap (unlike blocksOverlapOrTouch below): two blocks that
-// merely touch end-to-end are NOT a conflict for copyBlockToDay -- only
-// paint/erase treat touching as "the same drawn stroke".
-function blocksStrictlyOverlap(a: { startTime: string; endTime: string }, startTime: string, endTime: string): boolean {
-  return toMinutesSinceMidnight(startTime) < toMinutesSinceMidnight(a.endTime) &&
-    toMinutesSinceMidnight(endTime) > toMinutesSinceMidnight(a.startTime)
-}
-
-// "Copy schedule": places a copy of one day's block (its exact times,
-// breaks, and department) onto a different day/range, skipping it
-// silently if it would overlap a block already there on that day+range
-// -- same "skip conflicting days, don't abort the whole copy" behavior
-// the old Working Hours form's own copy feature had, just now staged
-// into the draft (part of the one save/cancel lifecycle) instead of
-// persisted immediately. Real overlap validation still happens at Save
-// time (schedule_overlaps() server-side); this is a good-enough
-// pre-check so an obviously-conflicting copy doesn't even make it into
-// the draft.
-export function copyBlockToDay(
-  blocks: ScheduleBlock[],
-  targetDay: number,
-  source: { startTime: string; endTime: string; breaks: ScheduleBreak[]; departmentId: number | null },
-  startDate: string | null,
-  endDate: string | null,
-): { blocks: ScheduleBlock[]; copied: boolean } {
-  const targetRangeKey = rangeKey(startDate, endDate)
-  const conflict = blocks.some(
-    (b) =>
-      b.day === targetDay &&
-      rangeKey(b.startDate, b.endDate) === targetRangeKey &&
-      blocksStrictlyOverlap(b, source.startTime, source.endTime),
-  )
-  if (conflict) return { blocks, copied: false }
-  const copy: ScheduleBlock = {
-    key: newBlockKey(),
-    day: targetDay,
-    startTime: source.startTime,
-    endTime: source.endTime,
-    breaks: source.breaks,
-    departmentId: source.departmentId,
-    startDate,
-    endDate,
-    sourceIds: [],
-  }
-  return { blocks: [...blocks, copy], copied: true }
-}
-
-function blocksOverlapOrTouch(a: { startTime: string; endTime: string }, startTime: string, endTime: string): boolean {
-  return toMinutesSinceMidnight(startTime) <= toMinutesSinceMidnight(a.endTime) &&
-    toMinutesSinceMidnight(endTime) >= toMinutesSinceMidnight(a.startTime)
-}
-
-// Drag-to-paint: adds [startTime, endTime) as available time on `day`
-// within the given date-range group (rangeKey/departmentId identify
-// which range's blocks this draw belongs to -- see the grid's
-// per-day range-selector pills). Any existing block in that same
-// day+range group that the new range touches or overlaps is merged into
-// one wider block; breaks that would now fall inside the newly-painted
-// span are dropped (painting fills that gap back in), others are kept.
-export function paintRange(
-  blocks: ScheduleBlock[],
-  day: number,
-  startTime: string,
-  endTime: string,
-  startDate: string | null,
-  endDate: string | null,
-  departmentId: number | null,
-): ScheduleBlock[] {
-  const key = rangeKey(startDate, endDate)
-  const others: ScheduleBlock[] = []
-  const touched: ScheduleBlock[] = []
-  for (const b of blocks) {
-    if (b.day === day && rangeKey(b.startDate, b.endDate) === key && blocksOverlapOrTouch(b, startTime, endTime)) {
-      touched.push(b)
-    } else {
-      others.push(b)
-    }
-  }
-
-  const mergedStart = touched.length
-    ? [startTime, ...touched.map((b) => b.startTime)].reduce((a, c) => (a < c ? a : c))
-    : startTime
-  const mergedEnd = touched.length
-    ? [endTime, ...touched.map((b) => b.endTime)].reduce((a, c) => (a > c ? a : c))
-    : endTime
-  const mergedBreaks = touched
-    .flatMap((b) => b.breaks)
-    .filter((br) => !(toMinutesSinceMidnight(br.end) > toMinutesSinceMidnight(startTime) && toMinutesSinceMidnight(br.start) < toMinutesSinceMidnight(endTime)))
-  const merged: ScheduleBlock = {
-    key: touched[0]?.key ?? newBlockKey(),
-    day,
-    startTime: mergedStart,
-    endTime: mergedEnd,
-    breaks: mergedBreaks,
-    departmentId: touched.find((b) => b.departmentId !== null)?.departmentId ?? departmentId,
-    startDate,
-    endDate,
-    sourceIds: touched.flatMap((b) => b.sourceIds),
-  }
-  return [...others, merged]
-}
-
-// Drag-to-erase (drag again over a painted block): removes [startTime,
-// endTime) from any block it overlaps in that day+range group --
-// shrinking, splitting into two, or deleting the block entirely as
-// needed, and clipping/dropping breaks that no longer fall inside the
-// remaining piece(s).
-export function eraseRange(
-  blocks: ScheduleBlock[],
-  day: number,
-  startTime: string,
-  endTime: string,
-  activeRangeKey?: string,
-): ScheduleBlock[] {
-  const result: ScheduleBlock[] = []
-  for (const b of blocks) {
-    const inScope = b.day === day && (!activeRangeKey || rangeKey(b.startDate, b.endDate) === activeRangeKey)
-    if (!inScope || !blocksOverlapOrTouch(b, startTime, endTime)) {
-      result.push(b)
-      continue
-    }
-    const eraseFromBefore = startTime > b.startTime
-    const eraseToAfter = endTime < b.endTime
-    if (eraseFromBefore) {
-      const newEnd = startTime
-      result.push({
-        ...b,
-        key: newBlockKey(),
-        endTime: newEnd,
-        breaks: b.breaks.filter((br) => br.end <= newEnd),
-      })
-    }
-    if (eraseToAfter) {
-      const newStart = endTime
-      result.push({
-        ...b,
-        key: eraseFromBefore ? newBlockKey() : b.key,
-        startTime: newStart,
-        breaks: b.breaks.filter((br) => br.start >= newStart),
-      })
-    }
-    // Neither piece kept (erase fully covers the block) -- dropped.
-  }
-  return result
 }
