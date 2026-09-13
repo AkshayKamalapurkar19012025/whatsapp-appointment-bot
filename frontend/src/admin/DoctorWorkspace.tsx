@@ -108,27 +108,18 @@ export default function DoctorWorkspace({
   const [deactivateOpen, setDeactivateOpen] = useState(false)
   const [deactivating, setDeactivating] = useState(false)
   const [deactivateError, setDeactivateError] = useState<string | null>(null)
-  // Set by ScheduleSection's own onDirtyChange while its working-hours
-  // form has in-progress, not-yet-saved changes -- guards the two
-  // navigation actions this component itself controls (switching tabs,
-  // going back to the Doctors directory) so neither silently discards
-  // them. Switching to a *different* doctor happens one level up (the
-  // Doctors directory list), outside what this component can guard.
-  const [scheduleFormDirty, setScheduleFormDirty] = useState(false)
-
-  function confirmDiscardIfDirty(): boolean {
-    if (!scheduleFormDirty) return true
-    return window.confirm('You have unsaved working hours — discard changes?')
-  }
-
+  // The Schedule tab no longer stages edits into a page-wide draft --
+  // every create/edit now persists immediately through the Configure
+  // Schedule popup (its own discard-confirm guards unsaved *popup*
+  // state), so tab switches and back-navigation no longer need a
+  // separate dirty guard here. Kept as plain aliases so the many call
+  // sites below don't need touching.
   function guardedSetTab(next: WorkspaceTab) {
     if (next === tab) return
-    if (tab === 'schedule' && !confirmDiscardIfDirty()) return
     setTab(next)
   }
 
   function guardedOnBack() {
-    if (tab === 'schedule' && !confirmDiscardIfDirty()) return
     onBack()
   }
 
@@ -250,9 +241,7 @@ export default function DoctorWorkspace({
         />
       )}
       {tab === 'appointments' && <DoctorAppointmentsTab doctor={doctor} isAdmin={isAdmin} />}
-      {tab === 'schedule' && (
-        <ScheduleGrid doctor={doctor} isAdmin={isAdmin} onDirtyChange={setScheduleFormDirty} />
-      )}
+      {tab === 'schedule' && <ScheduleGrid doctor={doctor} isAdmin={isAdmin} />}
       {tab === 'blocks' && <BlocksSection doctor={doctor} />}
       {tab === 'departments' && <DepartmentAssignment doctor={doctor} isAdmin={isAdmin} />}
       {tab === 'types' && <AppointmentTypeAssignment doctor={doctor} isAdmin={isAdmin} />}
