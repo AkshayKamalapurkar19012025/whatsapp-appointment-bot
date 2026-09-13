@@ -1,17 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import {
-  ApiError,
-  createDoctorSchedule,
-  deleteDoctorSchedule,
-  getDoctorBlocks,
-  getDoctorDepartments,
-  getDoctorScheduleAdmin,
-  updateDoctorSlotSettings,
-} from '../api'
+import { useEffect, useMemo, useState } from 'react'
+import { ApiError, createDoctorSchedule, deleteDoctorSchedule, getDoctorBlocks, getDoctorDepartments, getDoctorScheduleAdmin, updateDoctorSlotSettings } from '../api'
 import type { Department, Doctor, DoctorBlockEntry, DoctorScheduleEntry } from '../types'
-import { formatDate, formatTimeOfDay } from '../format'
-import AdminDatePicker from './AdminDatePicker'
-import { TimeCombobox } from '../components/ui/time-combobox'
+import { formatDate } from '../format'
 import ScheduleMonthView from './ScheduleMonthView'
 import {
   AlertDialog,
@@ -28,51 +18,30 @@ import {
   DEFAULT_MERGE_GAP_MINUTES,
   DURATION_OPTIONS,
   dateToDayOfWeek,
-  defaultBreakFor,
   isoDateToday,
-  minutesToHHMM,
   mergeEntriesIntoBlocks,
-  parseRangeKey,
-  paintRange,
-  eraseRange,
   rangeKey,
   rowTupleKey,
   blocksToRowPayloads,
   copyBlockToDay,
   splitBlockForEdit,
   templateDaySlots,
-  toMinutesSinceMidnight,
   validateBlockBreaks,
   type EditScope,
   type ScheduleBlock,
 } from './doctorSchedule'
 
 const DAYS = [1, 2, 3, 4, 5, 6, 7]
-const GRID_HOURS = Array.from({ length: 24 }, (_, i) => i)
-const ROW_HEIGHT = 32
-const INITIAL_SCROLL_HOUR = 6
-const MERGE_THRESHOLD_STORAGE_KEY = 'scheduleGrid.mergeThresholdMinutes'
 
-function hourLabel(hour: number): string {
-  return formatTimeOfDay(`${String(hour).padStart(2, '0')}:00`)
-}
-
-function loadMergeThreshold(): number {
-  try {
-    const raw = window.localStorage.getItem(MERGE_THRESHOLD_STORAGE_KEY)
-    const parsed = raw ? Number(raw) : NaN
-    return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MERGE_GAP_MINUTES
-  } catch {
-    return DEFAULT_MERGE_GAP_MINUTES
-  }
-}
-
-// Full-rebuild replacement for the old Working Hours form (ScheduleSection):
-// a 7-day x 24-hour drag-to-block weekly grid instead of a Days/Hours/
-// Date-range/Department form. See the approved PLAN for the mapping onto
-// the unchanged backend (doctor_schedule rows, no new endpoints) and the
-// migration approach for existing split-shift/non-standard-time rows
-// (doctorSchedule.ts's mergeEntriesIntoBlocks).
+// The Schedule tab -- one workflow, the monthly calendar
+// (ScheduleMonthView.tsx: select a date, Configure Schedule modal,
+// live preview, save), plus Copy schedule and the Slot settings/
+// week-at-a-glance preview sidebar. There used to also be a 7x24
+// drag-to-paint weekly grid as a secondary "advanced" view; it was
+// removed (not just hidden) so there is exactly one way to manage a
+// doctor's schedule -- its bulk-editing use case (many days/hours at
+// once) is covered by the Configure Schedule modal's own "Selected
+// days"/"Custom date range" scope plus Copy schedule.
 export default function ScheduleGrid({
   doctor,
   isAdmin,
@@ -90,43 +59,15 @@ export default function ScheduleGrid({
   // into one editable model is exactly the "preview vs real availability"
   // conflation the PLAN said to keep apart.
   const [oneOffBlocks, setOneOffBlocks] = useState<DoctorBlockEntry[]>([])
-  // Calendar-first: the monthly view is the default, primary scheduling
-  // workspace (select a date, edit it inline, see the live preview). The
-  // 7x24 drag grid is kept as an advanced/bulk-editing option, not the
-  // entry point -- see the toggle's labels below.
-  const [view, setView] = useState<'week' | 'month'>('month')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [savedFlash, setSavedFlash] = useState(false)
 
-  // User-adjustable "does this gap read as a break or as two separate
-  // shifts" cutoff for interpreting existing multi-row days on load --
-  // a display/editing preference, not real schedule data, so it lives in
-  // localStorage rather than a new backend column (see the PLAN's
-  // section 6 sign-off).
-  const [mergeThresholdMinutes, setMergeThresholdMinutes] = useState(loadMergeThreshold)
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(MERGE_THRESHOLD_STORAGE_KEY, String(mergeThresholdMinutes))
-    } catch {
-      // best-effort only
-    }
-  }, [mergeThresholdMinutes])
-
   const savedBlocks = useMemo(
-    () => mergeEntriesIntoBlocks(entries, mergeThresholdMinutes),
-    [entries, mergeThresholdMinutes],
+    () => mergeEntriesIntoBlocks(entries, DEFAULT_MERGE_GAP_MINUTES),
+    [entries],
   )
   const [draftBlocks, setDraftBlocks] = useState<ScheduleBlock[]>([])
-  const [selectedBlockKey, setSelectedBlockKey] = useState<string | null>(null)
-  const [rangeOverride, setRangeOverride] = useState<Record<number, string>>({})
-
-  // Defaults applied to a block drawn on a day that has no existing
-  // blocks yet -- once a day has a block, further painting on it extends
-  // that day's currently-active range instead (see activeRangeForDay).
-  const [pendingDepartmentId, setPendingDepartmentId] = useState('')
-  const [pendingStartDate, setPendingStartDate] = useState('')
-  const [pendingEndDate, setPendingEndDate] = useState('')
 
   const [defaultDuration, setDefaultDuration] = useState(doctor.default_duration_minutes)
   const [bufferMinutes, setBufferMinutes] = useState(doctor.buffer_minutes)
@@ -135,7 +76,6 @@ export default function ScheduleGrid({
   const slotSettingsDirty = defaultDuration !== savedDuration || bufferMinutes !== savedBuffer
 
   const [confirmReconcileOpen, setConfirmReconcileOpen] = useState(false)
-  const [removeBlockTarget, setRemoveBlockTarget] = useState<string | null>(null)
 
   // Editing an existing, persisted block that spans more than the one
   // date it's being edited from needs an explicit "how far should this
@@ -159,11 +99,6 @@ export default function ScheduleGrid({
   const [copyTargetDays, setCopyTargetDays] = useState<number[]>([])
   const [copyError, setCopyError] = useState<string | null>(null)
 
-  const scrollRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = INITIAL_SCROLL_HOUR * ROW_HEIGHT
-  }, [])
-
   function load() {
     Promise.all([getDoctorScheduleAdmin(doctor.id), getDoctorDepartments(doctor.id), getDoctorBlocks(doctor.id)])
       .then(([schedule, depts, blocks]) => {
@@ -179,42 +114,18 @@ export default function ScheduleGrid({
   // whenever `entries` changes (initial load, or after a successful
   // save's own reload) -- mirrors the old form's load()/resetForm() pair.
   useEffect(() => {
-    setDraftBlocks(mergeEntriesIntoBlocks(entries, mergeThresholdMinutes))
-    setSelectedBlockKey(null)
-    setRangeOverride({})
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setDraftBlocks(mergeEntriesIntoBlocks(entries, DEFAULT_MERGE_GAP_MINUTES))
   }, [entries])
 
-  function departmentName(id: number | null): string {
-    if (id === null) return 'All departments'
-    return departments.find((d) => d.id === id)?.name ?? 'All departments'
-  }
-
-  function distinctRangesForDay(day: number): string[] {
-    return [...new Set(draftBlocks.filter((b) => b.day === day).map((b) => rangeKey(b.startDate, b.endDate)))]
-  }
-
-  function defaultRangeForDay(day: number): string {
-    const ranges = distinctRangesForDay(day)
-    if (ranges.length > 0) return ranges[0]
-    return rangeKey(pendingStartDate || null, pendingEndDate || null)
-  }
-
-  function activeRangeForDay(day: number): string {
-    return rangeOverride[day] ?? defaultRangeForDay(day)
-  }
-
+  // A day's applicable blocks -- the first date-range group found for
+  // that weekday (a day almost always has just one; Copy schedule and
+  // the week-at-a-glance preview don't need to pick among several).
   function blocksForDay(day: number): ScheduleBlock[] {
-    const active = activeRangeForDay(day)
+    const ranges = [...new Set(draftBlocks.filter((b) => b.day === day).map((b) => rangeKey(b.startDate, b.endDate)))]
+    const active = ranges[0] ?? rangeKey(null, null)
     return draftBlocks
       .filter((b) => b.day === day && rangeKey(b.startDate, b.endDate) === active)
       .sort((a, b) => a.startTime.localeCompare(b.startTime))
-  }
-
-  function cellFilled(day: number, hour: number): boolean {
-    return blocksForDay(day).some(
-      (b) => toMinutesSinceMidnight(b.startTime) <= hour * 60 && hour * 60 < toMinutesSinceMidnight(b.endTime),
-    )
   }
 
   // -- Desired-vs-persisted diff (also this section's dirty flag) --------
@@ -236,119 +147,12 @@ export default function ScheduleGrid({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overallDirty])
 
-  // -- Drag (mouse) --------------------------------------------------------
-  const [drag, setDrag] = useState<{ day: number; mode: 'paint' | 'erase'; anchorHour: number; currentHour: number } | null>(
-    null,
-  )
-  const dragRef = useRef(drag)
-  useEffect(() => {
-    dragRef.current = drag
-  }, [drag])
-
-  function commitDrag(d: { day: number; mode: 'paint' | 'erase'; anchorHour: number; currentHour: number }) {
-    const lo = Math.min(d.anchorHour, d.currentHour)
-    const hi = Math.max(d.anchorHour, d.currentHour) + 1
-    const startTime = minutesToHHMM(lo * 60)
-    const endTime = minutesToHHMM(hi * 60)
-    const rk = activeRangeForDay(d.day)
-    const { startDate, endDate } = parseRangeKey(rk)
-    setDraftBlocks((prev) =>
-      d.mode === 'paint'
-        ? paintRange(prev, d.day, startTime, endTime, startDate, endDate, pendingDepartmentId ? Number(pendingDepartmentId) : null)
-        : eraseRange(prev, d.day, startTime, endTime, rk),
-    )
-    setSelectedBlockKey(null)
-  }
-  const commitDragRef = useRef(commitDrag)
-  useEffect(() => {
-    commitDragRef.current = commitDrag
-  })
-  useEffect(() => {
-    function onUp() {
-      if (dragRef.current) {
-        commitDragRef.current(dragRef.current)
-        setDrag(null)
-      }
-    }
-    window.addEventListener('mouseup', onUp)
-    return () => window.removeEventListener('mouseup', onUp)
-  }, [])
-
-  function onCellMouseDown(day: number, hour: number) {
-    if (!isAdmin) return
-    setDrag({ day, mode: cellFilled(day, hour) ? 'erase' : 'paint', anchorHour: hour, currentHour: hour })
-  }
-  function onCellMouseEnter(day: number, hour: number) {
-    if (!isAdmin) return
-    setDrag((prev) => (prev && prev.day === day ? { ...prev, currentHour: hour } : prev))
-  }
-
-  // -- Keyboard path (parallel to drag, same commitDrag) -------------------
-  const [focusCell, setFocusCell] = useState({ day: 1, hour: 9 })
-  const [keyboardAnchor, setKeyboardAnchor] = useState<{ day: number; hour: number; mode: 'paint' | 'erase' } | null>(null)
-  const cellRefs = useRef<Record<string, HTMLButtonElement | null>>({})
-
-  function moveFocus(day: number, hour: number) {
-    setFocusCell({ day, hour })
-    requestAnimationFrame(() => cellRefs.current[`${day}-${hour}`]?.focus())
-  }
-
-  function onCellKeyDown(e: React.KeyboardEvent, day: number, hour: number) {
-    if (!isAdmin) return
-    if (e.key === 'ArrowRight') {
-      e.preventDefault()
-      moveFocus(Math.min(day + 1, 7), hour)
-    } else if (e.key === 'ArrowLeft') {
-      e.preventDefault()
-      moveFocus(Math.max(day - 1, 1), hour)
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      moveFocus(day, Math.min(hour + 1, 23))
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      moveFocus(day, Math.max(hour - 1, 0))
-    } else if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      if (!keyboardAnchor || keyboardAnchor.day !== day) {
-        setKeyboardAnchor({ day, hour, mode: cellFilled(day, hour) ? 'erase' : 'paint' })
-      } else {
-        commitDrag({ day, mode: keyboardAnchor.mode, anchorHour: keyboardAnchor.hour, currentHour: hour })
-        setKeyboardAnchor(null)
-      }
-    } else if (e.key === 'Escape') {
-      setKeyboardAnchor(null)
-    }
-  }
-
-  function cellAriaLabel(day: number, hour: number): string {
-    const state = cellFilled(day, hour) ? 'available' : 'empty'
-    const anchor = keyboardAnchor && keyboardAnchor.day === day && keyboardAnchor.hour === hour ? ', block start set' : ''
-    return `${DAY_NAMES[day]}, ${hourLabel(hour)}, ${state}${anchor}`
-  }
-
-  // -- Block editing (department / fine-adjust / breaks / range) ----------
-  const selectedBlock = draftBlocks.find((b) => b.key === selectedBlockKey) ?? null
-
   function updateBlock(key: string, mutator: (b: ScheduleBlock) => ScheduleBlock) {
     setDraftBlocks((prev) => prev.map((b) => (b.key === key ? mutator(b) : b)))
   }
 
-  function updateSelectedBlock(mutator: (b: ScheduleBlock) => ScheduleBlock) {
-    if (selectedBlockKey) updateBlock(selectedBlockKey, mutator)
-  }
-
-  function addBreakToBlock(key: string) {
-    updateBlock(key, (b) => ({ ...b, breaks: [...b.breaks, defaultBreakFor(b.startTime, b.endTime)] }))
-  }
-
-  function addBreakToSelected() {
-    if (selectedBlockKey) addBreakToBlock(selectedBlockKey)
-  }
-
   function removeBlock(key: string) {
     setDraftBlocks((prev) => prev.filter((b) => b.key !== key))
-    if (selectedBlockKey === key) setSelectedBlockKey(null)
-    setRemoveBlockTarget(null)
   }
 
   // Does `block` (as currently in draftBlocks, before any edit) already
@@ -411,7 +215,9 @@ export default function ScheduleGrid({
     let next = draftBlocks
     let copiedCount = 0
     for (const targetDay of copyTargetDays) {
-      const { startDate, endDate } = parseRangeKey(activeRangeForDay(targetDay))
+      const targetBlocks = blocksForDay(targetDay)
+      const startDate = targetBlocks[0]?.startDate ?? null
+      const endDate = targetBlocks[0]?.endDate ?? null
       for (const b of sourceBlocks) {
         const result = copyBlockToDay(next, targetDay, b, startDate, endDate)
         next = result.blocks
@@ -424,12 +230,6 @@ export default function ScheduleGrid({
     setCopyTargetDays([])
     setCopyError(copiedCount === 0 ? 'Nothing was copied -- the target days already have overlapping hours.' : null)
   }
-
-  const selectedBlockError = selectedBlock
-    ? !(selectedBlock.startTime < selectedBlock.endTime)
-      ? 'End time must be after start time'
-      : validateBlockBreaks(selectedBlock.startTime, selectedBlock.endTime, selectedBlock.breaks)
-    : null
 
   // -- Save / Cancel --------------------------------------------------------
   function anyBlockingError(): string | null {
@@ -509,8 +309,6 @@ export default function ScheduleGrid({
     setDraftBlocks(savedBlocks)
     setDefaultDuration(savedDuration)
     setBufferMinutes(savedBuffer)
-    setSelectedBlockKey(null)
-    setRangeOverride({})
     setError(null)
   }
 
@@ -525,21 +323,11 @@ export default function ScheduleGrid({
         <div>
           <h4 style={{ margin: 0 }}>Working hours</h4>
           <p className="muted" style={{ margin: 0 }}>
-            {view === 'week'
-              ? 'Drag across the grid to draw availability, drag again to erase it.'
-              : 'Click a date to see and edit that day’s working hours.'}
+            Click a date to see and edit that day’s working hours.
           </p>
         </div>
       </div>
       <div className="schedule-header-actions">
-        <div className="schedule-view-toggle" role="group" aria-label="Schedule view">
-          <button type="button" className={view === 'month' ? 'selected' : ''} onClick={() => setView('month')}>
-            Calendar
-          </button>
-          <button type="button" className={view === 'week' ? 'selected' : ''} onClick={() => setView('week')}>
-            Weekly grid (advanced)
-          </button>
-        </div>
         {isAdmin && (
           <button type="button" className="btn-secondary btn btn-sm" onClick={() => setShowCopyForm((v) => !v)}>
             {showCopyForm ? 'Cancel copy' : 'Copy schedule'}
@@ -593,300 +381,20 @@ export default function ScheduleGrid({
         </form>
       )}
 
-      {isAdmin && view === 'week' && (
-        <div className="schedule-grid-toolbar">
-          <label className="inline-label">
-            New block department
-            <select value={pendingDepartmentId} onChange={(e) => setPendingDepartmentId(e.target.value)}>
-              <option value="">All departments</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="schedule-field-group">
-            <span className="field-label">{selectedBlock ? 'Selected block: start date' : 'Start date (new blocks)'}</span>
-            <AdminDatePicker
-              value={selectedBlock ? selectedBlock.startDate ?? '' : pendingStartDate}
-              onChange={(v) => (selectedBlock ? updateSelectedBlock((b) => ({ ...b, startDate: v || null })) : setPendingStartDate(v))}
-              label="Pick start date"
-            />
-          </div>
-          <div className="schedule-field-group">
-            <span className="field-label">{selectedBlock ? 'Selected block: repeat until' : 'Repeat until (new blocks)'}</span>
-            <AdminDatePicker
-              value={selectedBlock ? selectedBlock.endDate ?? '' : pendingEndDate}
-              onChange={(v) => (selectedBlock ? updateSelectedBlock((b) => ({ ...b, endDate: v || null })) : setPendingEndDate(v))}
-              label="Pick end date"
-            />
-          </div>
-          <label className="inline-label">
-            Merge gaps under
-            <span className="schedule-merge-threshold">
-              <input
-                type="number"
-                min={0}
-                step={15}
-                value={mergeThresholdMinutes}
-                onChange={(e) => setMergeThresholdMinutes(Math.max(0, Number(e.target.value) || 0))}
-                aria-label="Merge gap threshold in minutes, applied when interpreting saved schedules as blocks"
-              />
-              min into a break
-            </span>
-          </label>
-        </div>
-      )}
-
-      {view === 'week' && (
-      <div className="schedule-grid-wrap">
-        <div className="schedule-grid-header-row">
-          <div className="schedule-grid-hour-gutter" />
-          {DAYS.map((day) => {
-            const ranges = distinctRangesForDay(day)
-            const active = activeRangeForDay(day)
-            return (
-              <div key={day} className="schedule-grid-day-header">
-                <span>{DAY_NAMES[day]}</span>
-                {(ranges.length > 1 || (ranges.length === 1 && ranges[0] !== rangeKey(null, null))) && (
-                  <div className="schedule-range-pills" role="group" aria-label={`${DAY_NAMES[day]} date ranges`}>
-                    {ranges.map((rk) => {
-                      const { startDate, endDate } = parseRangeKey(rk)
-                      const label = startDate || endDate ? `${startDate ? formatDate(startDate) : 'Always'}–${endDate ? formatDate(endDate) : 'Always'}` : 'Always'
-                      return (
-                        <button
-                          key={rk}
-                          type="button"
-                          className={rk === active ? 'selected' : ''}
-                          onClick={() => setRangeOverride((prev) => ({ ...prev, [day]: rk }))}
-                        >
-                          {label}
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
-                {isAdmin && (pendingStartDate || pendingEndDate) && (
-                  <button
-                    type="button"
-                    className="link"
-                    onClick={() =>
-                      setRangeOverride((prev) => ({ ...prev, [day]: rangeKey(pendingStartDate || null, pendingEndDate || null) }))
-                    }
-                  >
-                    + add date range
-                  </button>
-                )}
-              </div>
-            )
-          })}
-        </div>
-
-        <div className="schedule-grid-scroll" ref={scrollRef}>
-          <div className="schedule-grid-body" style={{ height: 24 * ROW_HEIGHT }}>
-            <div className="schedule-grid-hour-gutter">
-              {GRID_HOURS.map((h) => (
-                <div key={h} className="schedule-grid-hour-label" style={{ height: ROW_HEIGHT }}>
-                  {hourLabel(h)}
-                </div>
-              ))}
-            </div>
-            {DAYS.map((day) => {
-              const dayDrag = drag && drag.day === day ? drag : null
-              return (
-                <div key={day} className="schedule-grid-day-col" style={{ height: 24 * ROW_HEIGHT }}>
-                  {GRID_HOURS.map((h) => (
-                    <button
-                      key={h}
-                      type="button"
-                      ref={(el) => {
-                        cellRefs.current[`${day}-${h}`] = el
-                      }}
-                      className="schedule-grid-cell"
-                      style={{ height: ROW_HEIGHT }}
-                      tabIndex={focusCell.day === day && focusCell.hour === h ? 0 : -1}
-                      aria-label={cellAriaLabel(day, h)}
-                      onFocus={() => setFocusCell({ day, hour: h })}
-                      onMouseDown={() => onCellMouseDown(day, h)}
-                      onMouseEnter={() => onCellMouseEnter(day, h)}
-                      onKeyDown={(e) => onCellKeyDown(e, day, h)}
-                    />
-                  ))}
-
-                  {dayDrag && (
-                    <div
-                      className={dayDrag.mode === 'erase' ? 'schedule-drag-preview erase' : 'schedule-drag-preview'}
-                      style={{
-                        top: Math.min(dayDrag.anchorHour, dayDrag.currentHour) * ROW_HEIGHT,
-                        height: (Math.abs(dayDrag.currentHour - dayDrag.anchorHour) + 1) * ROW_HEIGHT,
-                      }}
-                    />
-                  )}
-
-                  {blocksForDay(day).map((b) => (
-                    <div
-                      key={b.key}
-                      className={b.key === selectedBlockKey ? 'schedule-block selected' : 'schedule-block'}
-                      style={{
-                        top: (toMinutesSinceMidnight(b.startTime) / 60) * ROW_HEIGHT,
-                        height: ((toMinutesSinceMidnight(b.endTime) - toMinutesSinceMidnight(b.startTime)) / 60) * ROW_HEIGHT,
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (isAdmin) setSelectedBlockKey(b.key)
-                      }}
-                    >
-                      <div className="schedule-block-label">
-                        {formatTimeOfDay(b.startTime)} – {formatTimeOfDay(b.endTime)}
-                        <span className="muted"> {departmentName(b.departmentId)}</span>
-                      </div>
-                      {b.breaks.map((br, i) => (
-                        <div
-                          key={i}
-                          className="schedule-block-break"
-                          style={{
-                            top: ((toMinutesSinceMidnight(br.start) - toMinutesSinceMidnight(b.startTime)) / 60) * ROW_HEIGHT,
-                            height: ((toMinutesSinceMidnight(br.end) - toMinutesSinceMidnight(br.start)) / 60) * ROW_HEIGHT,
-                          }}
-                          title={`Break ${formatTimeOfDay(br.start)} – ${formatTimeOfDay(br.end)}`}
-                        />
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      </div>
-      )}
-
-      {view === 'month' && (
-        <ScheduleMonthView
-          doctorId={doctor.id}
-          draftBlocks={draftBlocks}
-          oneOffBlocks={oneOffBlocks}
-          departments={departments}
-          defaultDuration={defaultDuration}
-          bufferMinutes={bufferMinutes}
-          overallDirty={overallDirty}
-          isAdmin={isAdmin}
-          onScheduleSaved={load}
-          onEditBlock={requestBlockEdit}
-          onRemoveBlock={requestBlockRemove}
-          onCopyFromDate={handleCopyFromDate}
-        />
-      )}
-
-      {view === 'week' && selectedBlock && isAdmin && (
-        <div className="schedule-block-panel">
-          <div className="admin-content-header">
-            <h4 style={{ margin: 0 }}>
-              {DAY_NAMES[selectedBlock.day]} shift
-            </h4>
-            <button type="button" className="link" onClick={() => setSelectedBlockKey(null)}>
-              Close
-            </button>
-          </div>
-          {selectedBlockError && <p className="error">{selectedBlockError}</p>}
-          <div className="schedule-field-grid">
-            <label className="schedule-field-group">
-              <span className="field-label">Start</span>
-              <TimeCombobox
-                value={selectedBlock.startTime}
-                onChange={(v) => updateSelectedBlock((b) => ({ ...b, startTime: v }))}
-                durationMinutes={defaultDuration}
-                ariaLabel="Block start time"
-              />
-            </label>
-            <label className="schedule-field-group">
-              <span className="field-label">End</span>
-              <TimeCombobox
-                value={selectedBlock.endTime}
-                onChange={(v) => updateSelectedBlock((b) => ({ ...b, endTime: v }))}
-                durationMinutes={defaultDuration}
-                ariaLabel="Block end time"
-              />
-            </label>
-          </div>
-          <label className="schedule-field-group">
-            <span className="field-label">Department</span>
-            <select
-              value={selectedBlock.departmentId ?? ''}
-              onChange={(e) => updateSelectedBlock((b) => ({ ...b, departmentId: e.target.value ? Number(e.target.value) : null }))}
-            >
-              <option value="">All departments</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="schedule-field-group schedule-breaks">
-            <span className="field-label">Breaks</span>
-            {selectedBlock.breaks.map((br, i) => (
-              <div key={i} className="schedule-break-row">
-                <TimeCombobox
-                  value={br.start}
-                  onChange={(v) =>
-                    updateSelectedBlock((b) => ({
-                      ...b,
-                      breaks: b.breaks.map((x, xi) => (xi === i ? { ...x, start: v } : x)),
-                    }))
-                  }
-                  durationMinutes={defaultDuration}
-                  ariaLabel={`Break ${i + 1} start`}
-                />
-                <span className="arrow">{'→'}</span>
-                <TimeCombobox
-                  value={br.end}
-                  onChange={(v) =>
-                    updateSelectedBlock((b) => ({
-                      ...b,
-                      breaks: b.breaks.map((x, xi) => (xi === i ? { ...x, end: v } : x)),
-                    }))
-                  }
-                  durationMinutes={defaultDuration}
-                  ariaLabel={`Break ${i + 1} end`}
-                />
-                <button
-                  type="button"
-                  className="link danger"
-                  onClick={() => updateSelectedBlock((b) => ({ ...b, breaks: b.breaks.filter((_, xi) => xi !== i) }))}
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
-            <button type="button" className="link" onClick={addBreakToSelected}>
-              + Add a break
-            </button>
-          </div>
-          <button type="button" className="link danger" onClick={() => setRemoveBlockTarget(selectedBlock.key)}>
-            Remove this block
-          </button>
-        </div>
-      )}
-
-      <AlertDialog open={removeBlockTarget !== null} onOpenChange={(open) => !open && setRemoveBlockTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove this block?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This removes the shift from the draft grid. It isn't persisted until you Save changes.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep it</AlertDialogCancel>
-            <AlertDialogAction variant="danger" onClick={() => removeBlockTarget && removeBlock(removeBlockTarget)}>
-              Remove
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ScheduleMonthView
+        doctorId={doctor.id}
+        draftBlocks={draftBlocks}
+        oneOffBlocks={oneOffBlocks}
+        departments={departments}
+        defaultDuration={defaultDuration}
+        bufferMinutes={bufferMinutes}
+        overallDirty={overallDirty}
+        isAdmin={isAdmin}
+        onScheduleSaved={load}
+        onEditBlock={requestBlockEdit}
+        onRemoveBlock={requestBlockRemove}
+        onCopyFromDate={handleCopyFromDate}
+      />
 
       <AlertDialog open={pendingEdit !== null} onOpenChange={(open) => !open && setPendingEdit(null)}>
         <AlertDialogContent className="max-w-[460px]">

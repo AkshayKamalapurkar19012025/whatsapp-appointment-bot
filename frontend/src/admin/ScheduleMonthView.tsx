@@ -5,13 +5,14 @@ import { formatDate, formatTimeOfDay } from '../format'
 import { TimeCombobox } from '../components/ui/time-combobox'
 import AdminDatePicker from './AdminDatePicker'
 import ConfigureScheduleModal from './ConfigureScheduleModal'
+import SlotsTimeline from './SlotsTimeline'
 import {
   DAY_NAMES,
   blockCoversDate,
   dateInRange,
   dateToDayOfWeek,
   defaultBreakFor,
-  templateDaySlots,
+  timelineForBlocks,
   validateBlockBreaks,
   type ScheduleBlock,
 } from './doctorSchedule'
@@ -122,6 +123,7 @@ export default function ScheduleMonthView({
   const [jumpOpen, setJumpOpen] = useState(false)
   const [filterDepartmentId, setFilterDepartmentId] = useState('')
   const [rangeEditingKeys, setRangeEditingKeys] = useState<Set<string>>(new Set())
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
   const [showConfigureModal, setShowConfigureModal] = useState(false)
 
   // Department filter -- real (blocks are actually department_id-scoped
@@ -165,10 +167,19 @@ export default function ScheduleMonthView({
     : null
   const selectedIsTimeOff =
     selectedDate !== null && oneOffBlocks.some((b) => blockCoversDate(b, selectedDate))
-  const selectedSlots = selectedInfo ? templateDaySlots(selectedInfo.blocks, defaultDuration, bufferMinutes) : []
+  const selectedTimeline = selectedInfo ? timelineForBlocks(selectedInfo.blocks, defaultDuration, bufferMinutes) : []
 
   function toggleRangeEditing(key: string) {
     setRangeEditingKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  function toggleExpanded(key: string) {
+    setExpandedKeys((prev) => {
       const next = new Set(prev)
       if (next.has(key)) next.delete(key)
       else next.add(key)
@@ -321,8 +332,42 @@ export default function ScheduleMonthView({
                   ? 'End time must be after start time'
                   : validateBlockBreaks(b.startTime, b.endTime, b.breaks)
                 const editingRange = rangeEditingKeys.has(b.key)
+                const expanded = expandedKeys.has(b.key)
+                const departmentName = b.departmentId ? departments.find((d) => d.id === b.departmentId)?.name : null
+
+                if (!expanded) {
+                  return (
+                    <div key={b.key} className="schedule-day-period schedule-day-period-summary">
+                      <div className="schedule-day-period-summary-text">
+                        <span className="schedule-day-period-summary-time">
+                          {formatTimeOfDay(b.startTime)} – {formatTimeOfDay(b.endTime)}
+                        </span>
+                        <span className="muted schedule-sidebar-note">
+                          {[
+                            departmentName ?? 'All departments',
+                            b.breaks.length > 0 ? `${b.breaks.length} break${b.breaks.length === 1 ? '' : 's'}` : null,
+                            rangeLabel(b, selectedDate),
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </span>
+                        {blockError && <p className="error">{blockError}</p>}
+                      </div>
+                      <button type="button" className="link" onClick={() => toggleExpanded(b.key)}>
+                        Edit
+                      </button>
+                    </div>
+                  )
+                }
+
                 return (
                   <div key={b.key} className="schedule-day-period">
+                    <div className="schedule-day-period-range">
+                      <span className="muted schedule-sidebar-note">{rangeLabel(b, selectedDate)}</span>
+                      <button type="button" className="link" onClick={() => toggleExpanded(b.key)}>
+                        Done
+                      </button>
+                    </div>
                     <div className="schedule-field-grid">
                       <label className="schedule-field-group">
                         <span className="field-label">Start</span>
@@ -366,7 +411,7 @@ export default function ScheduleMonthView({
                     {blockError && <p className="error">{blockError}</p>}
 
                     <div className="schedule-day-period-range">
-                      <span className="muted schedule-sidebar-note">{rangeLabel(b, selectedDate)}</span>
+                      <span className="muted schedule-sidebar-note">Dates</span>
                       <button type="button" className="link" onClick={() => toggleRangeEditing(b.key)}>
                         {editingRange ? 'Done' : 'Change dates…'}
                       </button>
@@ -473,24 +518,13 @@ export default function ScheduleMonthView({
             <>
               <div className="schedule-preview-heading">
                 <p className="muted schedule-sidebar-note" style={{ margin: 0 }}>
-                  Generated slots preview
+                  Generated Slots Preview
                 </p>
                 {overallDirty && <span className="draft-badge">Previewing unsaved changes</span>}
               </div>
-              {selectedSlots.length > 0 ? (
-                <div className="schedule-preview-slots">
-                  {selectedSlots.map((s, i) => (
-                    <span key={i} className="slot-chip-static">
-                      {s}
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <span className="muted schedule-sidebar-note">No slots</span>
-              )}
+              <SlotsTimeline segments={selectedTimeline} />
               <p className="muted schedule-sidebar-note">
-                Not a guarantee of real booking availability -- existing appointments and time off aren't excluded
-                here.
+                A draft preview -- existing appointments and time off aren't excluded here.
               </p>
             </>
           )}

@@ -535,6 +535,68 @@ export function templateDaySlots(
   return slotsForEntries(entries, durationMinutes, bufferMinutes)
 }
 
+export type TimelineSegmentType = 'slot' | 'break' | 'gap'
+
+export interface TimelineSegment {
+  type: TimelineSegmentType
+  start: string // HH:MM
+  end: string // HH:MM
+}
+
+// The same per-day slot generation as templateDaySlots (one pure walk
+// over each working sub-segment at durationMinutes+bufferMinutes steps),
+// but returning the whole day's shape instead of just the bookable
+// starts: explicit breaks, the leftover tail inside a period that
+// doesn't evenly divide into whole slots, and the gap between two
+// separate working periods all come back as their own segment, in
+// chronological order, so a timeline can render continuously from the
+// first period's start to the last period's end -- a split shift must
+// visibly show the doctor as unavailable in between, not look like one
+// continuous 9-5 availability window.
+export function timelineForBlocks(
+  blocksForDay: ScheduleBlock[],
+  durationMinutes: number,
+  bufferMinutes: number,
+): TimelineSegment[] {
+  const periods = [...blocksForDay].sort((a, b) => a.startTime.localeCompare(b.startTime))
+  const segments: TimelineSegment[] = []
+  let cursorEnd: string | null = null
+
+  for (const period of periods) {
+    if (cursorEnd !== null && cursorEnd < period.startTime) {
+      segments.push({ type: 'gap', start: cursorEnd, end: period.startTime })
+    }
+
+    const working = blockSegments(period.startTime, period.endTime, period.breaks)
+    const breaksSorted = [...period.breaks].sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0))
+
+    working.forEach((seg, i) => {
+      let cursor = toMinutesSinceMidnight(seg.start)
+      const segEnd = toMinutesSinceMidnight(seg.end)
+      while (cursor + durationMinutes <= segEnd) {
+        segments.push({ type: 'slot', start: minutesToHHMM(cursor), end: minutesToHHMM(cursor + durationMinutes) })
+        cursor += durationMinutes + bufferMinutes
+      }
+      if (cursor < segEnd) {
+        segments.push({ type: 'gap', start: minutesToHHMM(cursor), end: minutesToHHMM(segEnd) })
+      }
+      if (i < breaksSorted.length) {
+        segments.push({ type: 'break', start: breaksSorted[i].start, end: breaksSorted[i].end })
+      }
+    })
+
+    cursorEnd = period.endTime
+  }
+
+  return segments
+}
+
+export function countSlots(segments: TimelineSegment[]): { total: number; morning: number; afternoon: number } {
+  const slotStarts = segments.filter((s) => s.type === 'slot').map((s) => toMinutesSinceMidnight(s.start))
+  const morning = slotStarts.filter((m) => m < 12 * 60).length
+  return { total: slotStarts.length, morning, afternoon: slotStarts.length - morning }
+}
+
 // Strict overlap (unlike blocksOverlapOrTouch below): two blocks that
 // merely touch end-to-end are NOT a conflict for copyBlockToDay -- only
 // paint/erase treat touching as "the same drawn stroke".

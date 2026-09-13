@@ -2655,23 +2655,119 @@ a.link.danger {
   color: var(--color-text-muted);
 }
 
-.schedule-preview-slots {
-  width: 100%;
+/* Generated Slots Preview -- visual timeline (SlotsTimeline.tsx),
+   replacing the old flat wrap of slot-start chips. One row per segment
+   (bookable slot, break, or the dead time between working periods) in
+   chronological order, with a connecting line down the left so the
+   passage of time -- and where availability actually stops -- reads at
+   a glance instead of as a plain list of times. */
+.slots-timeline {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
   margin-top: var(--space-2);
 }
 
-.schedule-preview-slots .slot-chip-static {
-  padding: 4px 9px;
+.slots-timeline-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.slots-timeline-time {
+  flex-shrink: 0;
+  width: 4.6rem;
+  padding-top: 5px;
+  text-align: right;
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.slots-timeline-content {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  padding: 0 0 var(--space-2) var(--space-3);
+  border-left: 2px solid var(--color-border);
+}
+
+.slots-timeline-row:last-child .slots-timeline-content {
+  border-left-color: transparent;
+  padding-bottom: 0;
+}
+
+.slots-timeline-content::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-surface);
+}
+
+.slots-timeline-content.break::before {
+  background: var(--color-danger, #dc2626);
+}
+
+.slots-timeline-content.gap::before {
+  background: var(--color-border-strong);
+}
+
+.slots-timeline-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 4px 10px;
   border-radius: var(--radius-sm);
-  background: var(--color-surface);
-  border: 1px solid var(--color-primary-soft-strong);
   font-size: 0.78rem;
   font-weight: 600;
-  color: var(--color-primary-hover);
   font-variant-numeric: tabular-nums;
+}
+
+.slots-timeline-chip.slot {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-hover);
+}
+
+.slots-timeline-chip.break {
+  background: #fdecea;
+  color: #b3261e;
+}
+
+.slots-timeline-chip.gap {
+  background: transparent;
+  border: 1px dashed var(--color-border-strong);
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.slots-timeline-badge {
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.slots-timeline-empty {
+  padding: var(--space-3) 0;
+}
+
+.slots-timeline-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: var(--space-2) 0 0;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.slots-timeline-summary-check {
+  color: var(--color-success, var(--color-primary));
 }
 
 /* Schedule tab's two-column layout (working hours + copy/add form on
@@ -2815,206 +2911,6 @@ a.link.danger {
   }
 }
 
-/* ===========================================================
-   Schedule grid (ScheduleGrid.tsx) -- drag-to-block weekly editor
-   replacing the old Working Hours form. Reuses the same green/teal
-   accent, border, and radius tokens as the rest of the admin UI (no new
-   design system). */
-
-.schedule-grid-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: var(--space-4);
-  margin: var(--space-3) 0 var(--space-4);
-  padding: var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-}
-
-.schedule-merge-threshold {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.schedule-merge-threshold input {
-  width: 4.5rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border-strong);
-  background: var(--color-surface);
-  padding: 6px 8px;
-  font-size: 0.9rem;
-}
-
-.schedule-grid-wrap {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-  overflow: hidden;
-}
-
-.schedule-grid-header-row {
-  display: grid;
-  grid-template-columns: 56px repeat(7, minmax(96px, 1fr));
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-primary-soft);
-}
-
-.schedule-grid-day-header {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: var(--space-2) var(--space-2);
-  font-weight: 600;
-  font-size: 0.85rem;
-  color: var(--color-text);
-  border-left: 1px solid var(--color-border);
-}
-
-.schedule-range-pills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.schedule-range-pills button {
-  font-size: 0.68rem;
-  font-weight: 600;
-  padding: 2px 6px;
-  border-radius: 999px;
-  border: 1px solid var(--color-border-strong);
-  background: var(--color-surface);
-  color: var(--color-text-muted);
-  cursor: pointer;
-}
-
-.schedule-range-pills button.selected {
-  border-color: var(--color-primary);
-  background: var(--color-primary);
-  color: #fff;
-}
-
-.schedule-grid-scroll {
-  max-height: 560px;
-  overflow-y: auto;
-  overflow-x: auto;
-}
-
-.schedule-grid-body {
-  display: grid;
-  grid-template-columns: 56px repeat(7, minmax(96px, 1fr));
-  position: relative;
-}
-
-.schedule-grid-hour-gutter {
-  display: flex;
-  flex-direction: column;
-  border-right: 1px solid var(--color-border);
-  background: var(--color-surface);
-}
-
-.schedule-grid-hour-label {
-  display: flex;
-  align-items: flex-start;
-  justify-content: flex-end;
-  padding: 2px 8px 0 0;
-  font-size: 0.68rem;
-  color: var(--color-text-muted);
-  font-variant-numeric: tabular-nums;
-  transform: translateY(-0.5em);
-}
-
-.schedule-grid-day-col {
-  position: relative;
-  border-left: 1px solid var(--color-border);
-}
-
-.schedule-grid-cell {
-  display: block;
-  width: 100%;
-  padding: 0;
-  margin: 0;
-  border: none;
-  border-bottom: 1px solid var(--color-border);
-  background: transparent;
-  cursor: pointer;
-}
-
-.schedule-grid-cell:nth-child(odd) {
-  background: rgba(0, 0, 0, 0.012);
-}
-
-.schedule-grid-cell:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: -2px;
-  position: relative;
-  z-index: 3;
-}
-
-.schedule-drag-preview {
-  position: absolute;
-  left: 2px;
-  right: 2px;
-  background: var(--color-primary-soft-strong);
-  border: 1px dashed var(--color-primary);
-  border-radius: var(--radius-sm);
-  pointer-events: none;
-  z-index: 2;
-}
-
-.schedule-drag-preview.erase {
-  background: var(--color-danger-soft, rgba(220, 38, 38, 0.12));
-  border-color: var(--color-danger, #dc2626);
-}
-
-.schedule-block {
-  position: absolute;
-  left: 3px;
-  right: 3px;
-  background: var(--color-primary);
-  color: #fff;
-  border-radius: var(--radius-sm);
-  padding: 3px 6px;
-  overflow: hidden;
-  cursor: pointer;
-  z-index: 1;
-  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.15));
-}
-
-.schedule-block.selected {
-  outline: 2px solid var(--color-primary-hover);
-  outline-offset: 2px;
-}
-
-.schedule-block-label {
-  font-size: 0.7rem;
-  font-weight: 600;
-  line-height: 1.2;
-  white-space: normal;
-}
-
-.schedule-block-label .muted {
-  color: rgba(255, 255, 255, 0.85);
-  font-weight: 500;
-}
-
-.schedule-block-break {
-  position: absolute;
-  left: 0;
-  right: 0;
-  background: repeating-linear-gradient(
-    45deg,
-    rgba(255, 255, 255, 0.55),
-    rgba(255, 255, 255, 0.55) 4px,
-    rgba(255, 255, 255, 0.25) 4px,
-    rgba(255, 255, 255, 0.25) 8px
-  );
-  border-top: 1px solid rgba(255, 255, 255, 0.8);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.8);
-}
-
 .schedule-block-panel {
   margin-top: var(--space-4);
   padding: var(--space-4);
@@ -3066,13 +2962,6 @@ a.link.danger {
   white-space: nowrap;
 }
 
-@media (max-width: 700px) {
-  .schedule-grid-header-row,
-  .schedule-grid-body {
-    grid-template-columns: 44px repeat(7, minmax(64px, 1fr));
-  }
-}
-
 .schedule-header-actions {
   display: flex;
   flex-wrap: wrap;
@@ -3081,39 +2970,11 @@ a.link.danger {
   margin-bottom: var(--space-3);
 }
 
-/* Weekly/Monthly view toggle (ScheduleGrid.tsx) -- same pill-button
-   pattern as .day-multiselect, just two options instead of seven. */
-.schedule-view-toggle {
-  display: inline-flex;
-  gap: 4px;
-  padding: 3px;
-  border-radius: var(--radius-md);
-  background: var(--color-primary-soft);
-  flex-shrink: 0;
-}
-
-.schedule-view-toggle button {
-  padding: 6px 14px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-muted);
-  font-size: 0.85rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.schedule-view-toggle button.selected {
-  background: var(--color-primary);
-  color: #fff;
-}
-
 /* ===========================================================
-   Schedule monthly view (ScheduleMonthView.tsx) -- the primary Schedule
-   tab workspace: a calendar of the same doctor_schedule-backed blocks
-   the weekly grid edits, plus one-off Time off blocks for context, with
-   its own inline day-panel editor (start/end/department/breaks per
-   period) so normal editing never requires the weekly grid. */
+   Schedule monthly view (ScheduleMonthView.tsx) -- the only Schedule
+   tab workspace: a calendar of doctor_schedule-backed blocks plus
+   one-off Time off blocks for context, with its own inline day-panel
+   editor (start/end/department/breaks per period). */
 
 .schedule-month-filters {
   display: flex;
@@ -3288,11 +3149,13 @@ a.link.danger {
   }
 }
 
-/* Monthly day panel's per-period inline editor (ScheduleMonthView.tsx) --
-   the same start/end/department/breaks fields the weekly grid's own
-   per-block panel uses, repeated once per working period on the
-   selected date so every period is directly editable without switching
-   views. */
+/* Monthly day panel's per-period editor (ScheduleMonthView.tsx). Each
+   existing period shows as a compact one-line summary (time range,
+   department, break count, applies-to range) by default -- the full
+   start/end/department/breaks fields only appear once "Edit" is
+   clicked, mirroring the Configure Schedule modal's own
+   progressive-disclosure pattern instead of always exposing every
+   field for every period. */
 .schedule-day-period {
   padding: var(--space-3) 0;
   border-top: 1px solid var(--color-border);
@@ -3303,6 +3166,24 @@ a.link.danger {
 
 .schedule-day-period:first-of-type {
   border-top: none;
+}
+
+.schedule-day-period-summary {
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.schedule-day-period-summary-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.schedule-day-period-summary-time {
+  font-weight: 600;
+  color: var(--color-text);
 }
 
 .schedule-day-period-range {
@@ -3339,10 +3220,27 @@ a.link.danger {
   margin: 0;
 }
 
+/* Step 1's "which dates will this affect" callout -- deliberately styled
+   as an info banner (not a muted footnote) since the whole point of this
+   step is that recurrence must never be implicit: the admin should read
+   this before Next is ever clickable. */
 .schedule-scope-summary {
-  background: var(--color-surface);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  background: var(--color-primary-soft);
+  color: var(--color-primary-hover);
   border-radius: var(--radius-sm);
-  padding: var(--space-2);
+  padding: var(--space-3);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.schedule-scope-summary svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--color-primary);
 }
 
 /* Configure Schedule modal (ConfigureScheduleModal.tsx) -- a proper
@@ -3350,6 +3248,28 @@ a.link.danger {
    with three gated internal steps plus a success screen. */
 .schedule-modal-wide {
   max-width: 760px;
+}
+
+/* Full-screen drawer on mobile -- the same three-step workflow that's a
+   centered dialog on desktop, but at phone width a windowed modal with
+   margins on every side leaves too little room for Step 2's two-column
+   working-hours/timeline layout (already stacked to one column, see
+   .schedule-modal-review) to breathe. Scoped to this modal's own
+   overlay/panel classes rather than the shared .modal-overlay/
+   .modal-panel, so AddDoctorModal and friends are unaffected. */
+@media (max-width: 640px) {
+  .schedule-modal-overlay {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .schedule-modal-panel {
+    max-width: 100%;
+    width: 100%;
+    max-height: 100%;
+    height: 100%;
+    border-radius: 0;
+  }
 }
 
 .schedule-modal-header {
@@ -3381,6 +3301,15 @@ a.link.danger {
 
 .schedule-modal-footer-full {
   grid-column: 1 / -1;
+}
+
+/* Step 3's headline (ConfigureScheduleModal.tsx) -- the one line the
+   admin must read before Save is even clickable: exactly how many
+   dates this schedule touches. Spans both review columns, above the
+   Summary/Preview split. */
+.schedule-review-headline {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 .schedule-modal-review {
@@ -3699,6 +3628,30 @@ a.link.danger {
 }
 
 .day-multiselect button.selected {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+/* Read-only variant (ConfigureScheduleModal.tsx Step 2) -- a plain-text
+   recap of the weekdays this schedule applies to, resolved back in Step
+   1. Reuses the exact same pill look so "selected" reads identically in
+   both steps, but as <span>s (not buttons): which days apply is a Step 1
+   decision, not something Step 2 should let you silently re-open. */
+.day-multiselect.readonly span {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.day-multiselect.readonly span.selected {
   background: var(--color-primary);
   border-color: var(--color-primary);
   color: var(--color-on-primary);

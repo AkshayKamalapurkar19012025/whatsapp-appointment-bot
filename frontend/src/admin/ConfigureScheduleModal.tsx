@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { X } from '@phosphor-icons/react'
+import { Info, X } from '@phosphor-icons/react'
 import { ApiError, createDoctorSchedule } from '../api'
 import type { Department } from '../types'
 import { formatDate, formatTimeOfDay } from '../format'
 import { TimeCombobox } from '../components/ui/time-combobox'
 import AdminDatePicker from './AdminDatePicker'
+import SlotsTimeline from './SlotsTimeline'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,7 +26,7 @@ import {
   firstMatchingDate,
   newBlockKey,
   newPeriodDefaults,
-  templateDaySlots,
+  timelineForBlocks,
   validateBlockBreaks,
   type ScheduleBlock,
   type ScheduleBreak,
@@ -124,10 +125,53 @@ export default function ConfigureScheduleModal({
   const occurrenceCount =
     resolvedStartDate && resolvedEndDate ? countOccurrences(resolvedWeekdays, resolvedStartDate, resolvedEndDate) : null
   const weekdayList = resolvedWeekdays.map((d) => DAY_NAMES[d]).join(', ')
+  // Short form used in the Step 3 summary and the success screen, where
+  // space is tight and the scope was already confirmed back in Step 1.
   const scopeSummary =
+    scope === 'this_date'
+      ? formatDate(initialDate)
+      : occurrenceCount !== null
+        ? `${weekdayList}, ${formatDate(resolvedStartDate!)} – ${formatDate(resolvedEndDate!)} (${occurrenceCount} date${occurrenceCount === 1 ? '' : 's'})`
+        : `Every ${weekdayList}`
+
+  // A full sentence explaining exactly which dates this schedule will
+  // touch, shown in Step 1 before any hours are configured -- recurrence
+  // must never be implicit, so each scope gets its own explicit wording
+  // rather than one generic template. Null while the scope's own inputs
+  // (weekdays, date range) aren't complete enough to say anything yet.
+  const scopeExplanation: string | null =
+    scope === 'this_date'
+      ? `This schedule applies only to ${formatDate(initialDate)}.`
+      : scope === 'every_weekday'
+        ? `This schedule applies every ${DAY_NAMES[clickedWeekday]}, with no end date, until you edit or remove it.`
+        : scope === 'selected_days'
+          ? weekdays.length > 0
+            ? `This schedule applies every ${weekdayList}, with no end date, until you edit or remove it.`
+            : null
+          : scope === 'custom_range'
+            ? weekdays.length > 0 && rangeStart && rangeEnd && occurrenceCount !== null
+              ? `This schedule will apply to ${weekdayList} from ${formatDate(rangeStart)} to ${formatDate(rangeEnd)} (${occurrenceCount} date${occurrenceCount === 1 ? '' : 's'}).`
+              : null
+            : null
+
+  // Step 3's headline -- the one thing the admin must see before Save:
+  // exactly how many dates this touches, or (for an open-ended scope
+  // with no numeric count) exactly which weekdays it recurs on.
+  const reviewHeadline =
     occurrenceCount !== null
-      ? `${weekdayList}, ${formatDate(resolvedStartDate!)} – ${formatDate(resolvedEndDate!)} (${occurrenceCount} date${occurrenceCount === 1 ? '' : 's'})`
-      : `Every ${weekdayList}`
+      ? `This schedule will apply to ${occurrenceCount} date${occurrenceCount === 1 ? '' : 's'}.`
+      : `This schedule will apply every ${weekdayList}, with no end date.`
+
+  // Past-tense version shown on the success screen after Save actually
+  // persists -- same facts as reviewHeadline/scopeExplanation, phrased
+  // as something that already happened.
+  function pastTenseSummary(): string {
+    if (scope === 'this_date') return `The schedule has been applied to ${formatDate(initialDate)}.`
+    if (scope === 'custom_range' && resolvedStartDate && resolvedEndDate) {
+      return `The schedule has been applied from ${formatDate(resolvedStartDate)} to ${formatDate(resolvedEndDate)} (${weekdayList}).`
+    }
+    return `The schedule has been applied every ${weekdayList}.`
+  }
 
   const previewBlocks: ScheduleBlock[] = periods.map((p) => ({
     key: p.key,
@@ -140,7 +184,7 @@ export default function ConfigureScheduleModal({
     endDate: null,
     sourceIds: [],
   }))
-  const previewSlots = periodsError ? [] : templateDaySlots(previewBlocks, defaultDuration, bufferMinutes)
+  const previewSegments = periodsError ? [] : timelineForBlocks(previewBlocks, defaultDuration, bufferMinutes)
 
   function departmentName(id: string): string {
     if (!id) return 'All departments'
@@ -200,7 +244,7 @@ export default function ConfigureScheduleModal({
         await createDoctorSchedule(doctorId, payload)
         createdCount++
       }
-      setSavedSummary(`${weekdayList} – ${departmentName(departmentId)}`)
+      setSavedSummary(pastTenseSummary())
       onSaved()
       setStep('success')
     } catch (err) {
@@ -215,12 +259,12 @@ export default function ConfigureScheduleModal({
     }
   }
 
-  const wide = step === 3 || step === 'success'
+  const wide = step === 2 || step === 3 || step === 'success'
 
   return createPortal(
-    <div className="modal-overlay" onClick={requestClose}>
+    <div className="modal-overlay schedule-modal-overlay" onClick={requestClose}>
       <div
-        className={wide ? 'modal-panel schedule-modal-wide' : 'modal-panel'}
+        className={wide ? 'modal-panel schedule-modal-panel schedule-modal-wide' : 'modal-panel schedule-modal-panel'}
         role="dialog"
         aria-modal="true"
         aria-label="Configure Schedule"
@@ -312,9 +356,10 @@ export default function ConfigureScheduleModal({
                 </div>
               </div>
             )}
-            {scope && (
-              <p className="muted schedule-sidebar-note schedule-scope-summary">
-                This schedule will apply to: <strong>{scopeSummary}</strong>
+            {scopeExplanation && (
+              <p className="schedule-scope-summary">
+                <Info size={16} weight="fill" />
+                <span>{scopeExplanation}</span>
               </p>
             )}
 
@@ -330,7 +375,22 @@ export default function ConfigureScheduleModal({
         )}
 
         {step === 2 && (
-          <div className="schedule-modal-body">
+          <div className="schedule-modal-body schedule-modal-review">
+          <div className="schedule-review-summary">
+            <div className="schedule-field-group">
+              <span className="field-label">Working days</span>
+              <div className="day-multiselect readonly" role="group" aria-label="Working days for this schedule">
+                {DAY_NAMES.slice(1).map((name, i) => {
+                  const day = i + 1
+                  return (
+                    <span key={day} className={resolvedWeekdays.includes(day) ? 'selected' : ''}>
+                      {name.slice(0, 3)}
+                    </span>
+                  )
+                })}
+              </div>
+            </div>
+
             <span className="field-label">Working hours</span>
             {periods.map((p, i) => (
               <div key={p.key} className="schedule-day-period">
@@ -418,20 +478,44 @@ export default function ConfigureScheduleModal({
                 Optional -- leave as "All departments" if this schedule isn’t department-specific.
               </span>
             </label>
+          </div>
 
-            <div className="schedule-modal-footer">
-              <button type="button" className="btn-secondary btn btn-sm" onClick={() => setStep(1)}>
-                Back
-              </button>
-              <button type="button" className="btn btn-sm" disabled={!step2Valid} onClick={goToStep3}>
-                Next
-              </button>
+          <div className="schedule-review-preview">
+            <div className="schedule-preview-heading">
+              <p className="muted schedule-sidebar-note" style={{ margin: 0 }}>Generated Slots Preview</p>
             </div>
+            <p className="muted schedule-sidebar-note" style={{ margin: '0 0 8px' }}>
+              These are the appointment slots this schedule would create -- updates live as you change hours, breaks
+              or working days.
+            </p>
+            {periodsError ? (
+              <p className="muted schedule-sidebar-note">Fix the error above to see the preview.</p>
+            ) : (
+              <SlotsTimeline segments={previewSegments} />
+            )}
+            <p className="muted schedule-sidebar-note">
+              A draft preview, generated from working hours, breaks and the default appointment duration -- existing
+              appointments and time off are not excluded here.
+            </p>
+          </div>
+
+          <div className="schedule-modal-footer schedule-modal-footer-full">
+            <button type="button" className="btn-secondary btn btn-sm" onClick={() => setStep(1)}>
+              Back
+            </button>
+            <button type="button" className="btn btn-sm" disabled={!step2Valid} onClick={goToStep3}>
+              Next
+            </button>
+          </div>
           </div>
         )}
 
         {step === 3 && (
           <div className="schedule-modal-body schedule-modal-review">
+            <p className="schedule-scope-summary schedule-review-headline">
+              <Info size={16} weight="fill" />
+              <span>{reviewHeadline}</span>
+            </p>
             <div className="schedule-review-summary">
               <h4 style={{ margin: '0 0 8px' }}>Summary</h4>
               <dl className="schedule-summary-list">
@@ -459,31 +543,30 @@ export default function ConfigureScheduleModal({
             </div>
             <div className="schedule-review-preview">
               <div className="schedule-preview-heading">
-                <p className="muted schedule-sidebar-note" style={{ margin: 0 }}>Generated slots preview</p>
+                <p className="muted schedule-sidebar-note" style={{ margin: 0 }}>Generated Slots Preview</p>
               </div>
               {previewDate && (
                 <p className="muted schedule-sidebar-note">
                   Preview for {new Date(`${previewDate}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' })}
                 </p>
               )}
-              {previewSlots.length > 0 ? (
-                <div className="schedule-preview-slots">
-                  {previewSlots.map((s, i) => (
-                    <span key={i} className="slot-chip-static">{s}</span>
-                  ))}
-                </div>
-              ) : (
-                <span className="muted schedule-sidebar-note">No slots</span>
-              )}
+              {periodsError ? (
+              <p className="muted schedule-sidebar-note">Fix the error above to see the preview.</p>
+            ) : (
+              <SlotsTimeline segments={previewSegments} />
+            )}
               <p className="muted schedule-sidebar-note">
-                Slots are generated from working hours, breaks and appointment duration. Existing appointments and
-                time off are not included here.
+                A draft preview, generated from working hours, breaks and the default appointment duration --
+                existing appointments and time off are not excluded here.
               </p>
             </div>
 
             <div className="schedule-modal-footer schedule-modal-footer-full">
               <button type="button" className="btn-secondary btn btn-sm" onClick={() => setStep(2)} disabled={busy}>
                 Back
+              </button>
+              <button type="button" className="btn-secondary btn btn-sm" onClick={requestClose} disabled={busy}>
+                Cancel
               </button>
               <button type="button" className="btn btn-sm" onClick={handleSave} disabled={busy}>
                 {busy ? 'Saving…' : 'Save Schedule'}
@@ -497,7 +580,7 @@ export default function ConfigureScheduleModal({
             <div className="schedule-success-check" aria-hidden="true">{'✓'}</div>
             <h3 style={{ margin: '0 0 4px' }}>Schedule saved successfully!</h3>
             <p className="muted" style={{ margin: 0 }}>
-              Applied to {scopeSummary} — {savedSummary}
+              {savedSummary}
             </p>
             <div className="schedule-modal-footer">
               <button type="button" className="btn-secondary btn btn-sm" onClick={onClose}>
