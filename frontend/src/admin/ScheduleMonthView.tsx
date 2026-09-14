@@ -91,9 +91,13 @@ export default function ScheduleMonthView({
 
   // Department filter -- real (blocks are actually department_id-scoped
   // in doctor_schedule, migrations/0010), a view-only lens on the
-  // calendar; doesn't affect what a date click edits.
+  // calendar; doesn't affect what a date click edits. A block with no
+  // department (departmentId === null) applies regardless of
+  // department -- see doctorSchedule.ts's own note on this -- so it
+  // must still show up under any specific department filter, not just
+  // "All departments".
   const visibleBlocks = filterDepartmentId
-    ? blocks.filter((b) => b.departmentId === Number(filterDepartmentId))
+    ? blocks.filter((b) => b.departmentId === null || b.departmentId === Number(filterDepartmentId))
     : blocks
 
   function goPrevMonth() {
