@@ -96,11 +96,18 @@ export function TimeCombobox({
   onChange,
   durationMinutes,
   ariaLabel,
+  disabledOptions,
 }: {
   value: string
   onChange: (value: string) => void
   durationMinutes: number
   ariaLabel: string
+  // Optional, opt-in predicate for options that should show but not be
+  // selectable -- e.g. TimeOffModal disabling already-past times on
+  // today's date, or an "Until" field disabling anything at or before
+  // the chosen "From". Every other caller (Configure Schedule's own
+  // period/break fields) omits this and behaves exactly as before.
+  disabledOptions?: (value: string) => boolean
 }) {
   const [open, setOpen] = React.useState(false)
   const [query, setQuery] = React.useState('')
@@ -109,6 +116,7 @@ export function TimeCombobox({
 
   const options = timeOfDayOptions(durationMinutes, value)
   const filtered = open ? options.filter((o) => optionMatchesQuery(o, formatTimeOfDay(o), query)) : options
+  const isDisabled = (v: string) => disabledOptions?.(v) ?? false
 
   function openList() {
     setOpen(true)
@@ -117,6 +125,7 @@ export function TimeCombobox({
   }
 
   function selectOption(v: string) {
+    if (isDisabled(v)) return
     onChange(v)
     setOpen(false)
     setQuery('')
@@ -194,22 +203,27 @@ export function TimeCombobox({
           {filtered.length === 0 && (
             <div className="px-3 py-2 text-[0.85rem] text-[var(--color-text-muted)]">No match</div>
           )}
-          {filtered.map((v, i) => (
-            <button
-              key={v}
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => selectOption(v)}
-              className={cn(
-                'flex w-full cursor-pointer select-none items-center rounded-[var(--radius-sm)] px-3 py-2 text-left',
-                'text-[0.92rem] text-[var(--color-text)] outline-none',
-                i === highlightedIndex && 'bg-[var(--color-primary-soft)] text-[var(--color-primary-hover)]',
-                v === value && i !== highlightedIndex && 'font-semibold',
-              )}
-            >
-              {formatTimeOfDay(v)}
-            </button>
-          ))}
+          {filtered.map((v, i) => {
+            const disabled = isDisabled(v)
+            return (
+              <button
+                key={v}
+                type="button"
+                disabled={disabled}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => selectOption(v)}
+                className={cn(
+                  'flex w-full select-none items-center rounded-[var(--radius-sm)] px-3 py-2 text-left',
+                  'text-[0.92rem] text-[var(--color-text)] outline-none',
+                  disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer',
+                  !disabled && i === highlightedIndex && 'bg-[var(--color-primary-soft)] text-[var(--color-primary-hover)]',
+                  v === value && i !== highlightedIndex && 'font-semibold',
+                )}
+              >
+                {formatTimeOfDay(v)}
+              </button>
+            )
+          })}
         </PopoverPrimitive.Content>
       </PopoverPrimitive.Portal>
     </PopoverPrimitive.Root>
