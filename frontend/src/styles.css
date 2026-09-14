@@ -2937,8 +2937,7 @@ a.link.danger {
 }
 
 .schedule-legend-dot.partial {
-  background: var(--color-primary-soft-strong);
-  border: 1px solid var(--color-primary);
+  background: var(--color-warning, #a5680a);
 }
 
 .schedule-legend-dot.time_off {
@@ -3032,7 +3031,21 @@ a.link.danger {
 }
 
 .schedule-month-cell-period.partial {
-  color: var(--color-text-muted);
+  color: var(--color-primary-hover);
+}
+
+/* "Partial day" -- the small caption above a partial cell's available
+   time chips, colored to match the legend's own partial dot so the
+   cell and the legend read as the same status at a glance. */
+.schedule-month-cell-status {
+  font-size: 0.64rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.schedule-month-cell-status.partial {
+  color: var(--color-warning, #a5680a);
 }
 
 .schedule-month-cell-none {
@@ -6570,4 +6583,200 @@ a.link.danger {
 .schedule-conflict-stat-label {
   font-size: 0.7rem;
   color: var(--color-text-secondary);
+}
+
+/* Doctor Time Off redesign -- TimeOffModal.tsx / TimeOffSection.tsx.
+   Reuses the schedule-modal, schedule-month and schedule-scope-summary/
+   slots-timeline classes above verbatim for the modal shell, calendar
+   grid, and impact preview; only what's genuinely new to this feature
+   is defined here. */
+
+.timeoff-modal-panel {
+  max-height: 88vh;
+  overflow-y: auto;
+}
+
+.timeoff-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.timeoff-modal-section {
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.timeoff-modal-section:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.timeoff-section-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.timeoff-section-number {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
+}
+
+.timeoff-duration-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+@media (max-width: 600px) {
+  .timeoff-duration-cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+.timeoff-duration-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 10px);
+  background: var(--color-surface);
+  cursor: pointer;
+}
+
+.timeoff-duration-card.selected {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.timeoff-duration-card-title {
+  font-weight: 700;
+}
+
+.timeoff-duration-card-desc {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
+.timeoff-impact-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 10px);
+  padding: var(--space-3);
+  background: var(--color-surface-muted, #f8f9fb);
+}
+
+.timeoff-impact-date {
+  font-weight: 700;
+  margin-bottom: var(--space-2);
+}
+
+/* Time Off tab layout -- the monthly calendar is the primary surface,
+   full width; Upcoming Time Off is secondary and sits below it, never
+   competing side-by-side for attention. */
+.timeoff-layout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.timeoff-upcoming {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 10px);
+  padding: var(--space-3);
+  background: var(--color-surface);
+}
+
+.timeoff-upcoming-list {
+  list-style: none;
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.timeoff-upcoming-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.timeoff-upcoming-item:last-child {
+  border-bottom: none;
+}
+
+.timeoff-upcoming-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.timeoff-upcoming-date {
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.timeoff-upcoming-time {
+  font-size: 0.85rem;
+}
+
+.timeoff-upcoming-reason {
+  font-size: 0.78rem;
+}
+
+/* TimeOffModal's "manage" state -- shown when a date already has two
+   or more time-off blocks, listing each with inline Edit/Remove plus
+   "+ Add another time off", all inside the same modal (no separate
+   detail popup). */
+.timeoff-manage-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.timeoff-manage-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.timeoff-manage-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 10px);
+  background: var(--color-surface);
+}
+
+.timeoff-manage-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.timeoff-manage-card-time {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.timeoff-manage-card-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex: 0 0 auto;
 }

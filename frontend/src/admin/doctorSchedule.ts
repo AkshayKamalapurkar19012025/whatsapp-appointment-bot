@@ -854,3 +854,168 @@ export function mergeConflictChecks(results: ScheduleConflictCheck[]): ScheduleC
   }
   return { conflicts, conflictDates, totalDates }
 }
+
+// ===========================================================================
+// Time Off availability preview -- a display-only computation of what a
+// one-off block (doctor_blocks) does to a given calendar date's working
+// hours, used by the Time Off page's calendar and Add/Edit Time Off
+// modal. The backend's own availability_engine.py remains the sole
+// authority on real bookable slots (appointment type + duration/buffer +
+// existing appointments all factor in there); this only answers "does
+// this date read as Working / Partial / Time off / No schedule", the
+// same question ScheduleMonthView's calendar already answers for the
+// Schedule tab, just extended to distinguish a block that covers a
+// working day only PARTLY from one that covers it entirely.
+// ===========================================================================
+
+// Unlike doctor_schedule's own start_time/end_time (plain HH:MM with no
+// date/zone attached), doctor_blocks.start_at/end_at are TIMESTAMPTZ --
+// real instants -- and this backend serializes them back as UTC
+// ("...+00:00"), NOT in the +05:30 offset format.ts's formatTime
+// docstring assumes (verified live: POSTing a block with an explicit
+// +05:30 offset still comes back "+00:00" from GET .../blocks). Reading
+// digits straight out of the string like formatTime does would show
+// the doctor's UTC time as if it were their IST wall clock, off by 5.5
+// hours. This app has no doctor-timezone concept beyond "every doctor
+// is Asia/Kolkata" (see DoctorBlockEntry's own docstring in types.ts),
+// so converting is a fixed, always-correct +05:30 shift applied to the
+// real parsed instant, then read back via the UTC getters (never
+// `.getHours()`, which would reinterpret in the *viewer's* zone).
+const IST_OFFSET_MINUTES = 5 * 60 + 30
+
+function toIstParts(iso: string): { date: string; hhmm: string } {
+  const shifted = new Date(new Date(iso).getTime() + IST_OFFSET_MINUTES * 60_000)
+  const y = shifted.getUTCFullYear()
+  const m = String(shifted.getUTCMonth() + 1).padStart(2, '0')
+  const d = String(shifted.getUTCDate()).padStart(2, '0')
+  const hh = String(shifted.getUTCHours()).padStart(2, '0')
+  const mm = String(shifted.getUTCMinutes()).padStart(2, '0')
+  return { date: `${y}-${m}-${d}`, hhmm: `${hh}:${mm}` }
+}
+
+// The doctor's own IST wall-clock HH:MM for a doctor_blocks instant.
+export function instantToLocalHHMM(iso: string): string {
+  return toIstParts(iso).hhmm
+}
+
+// The doctor's own IST wall-clock YYYY-MM-DD for a doctor_blocks instant.
+export function instantToLocalDate(iso: string): string {
+  return toIstParts(iso).date
+}
+
+// The local start/end calendar dates a one-off block spans -- for the
+// Upcoming Time Off list's "Sep 25 – 27" grouping and the Edit modal's
+// date-range prefill. A single-day block has startDate === endDate.
+export function blockLocalDateRange(block: DoctorBlockEntry): { startDate: string; endDate: string } {
+  return { startDate: instantToLocalDate(block.start_at), endDate: instantToLocalDate(block.end_at) }
+}
+
+// Is this block, on this specific calendar date, exactly a "full day"
+// time off (00:00 through end-of-day)? Used to decide the Edit modal's
+// Full day/Specific hours default -- a block created via this UI's own
+// "Full day" option always saves 00:00-on-the-first-day through
+// 23:59-on-the-last-day (see TimeOffModal.tsx), so this only ever comes
+// back false for a block someone created with genuinely partial hours.
+export function blockIsFullDayOnDate(block: DoctorBlockEntry, dateStr: string): boolean {
+  const { startDate, endDate } = blockLocalDateRange(block)
+  if (dateStr < startDate || dateStr > endDate) return false
+  const startsAtMidnight = dateStr > startDate || instantToLocalHHMM(block.start_at) === '00:00'
+  const endsAtDayEnd = dateStr < endDate || instantToLocalHHMM(block.end_at) >= '23:00'
+  return startsAtMidnight && endsAtDayEnd
+}
+
+// This block's time-off window on one specific calendar date, clipped
+// to that date's own 00:00-23:59 span -- null if the block doesn't
+// reach this date at all. A block spanning several days (Sep 25-27)
+// reads as a full 00:00-23:59 window on every date strictly between its
+// own start and end date, and a partial window only on the start/end
+// date itself.
+function timeOffWindowForDate(block: DoctorBlockEntry, dateStr: string): { start: string; end: string } | null {
+  const { startDate, endDate } = blockLocalDateRange(block)
+  if (dateStr < startDate || dateStr > endDate) return null
+  const start = dateStr === startDate ? instantToLocalHHMM(block.start_at) : '00:00'
+  const end = dateStr === endDate ? instantToLocalHHMM(block.end_at) : '23:59'
+  return { start, end }
+}
+
+export type DayAvailabilityStatus = 'time_off' | 'working' | 'partial' | 'none'
+
+export interface DayAvailabilitySegment {
+  type: 'available' | 'time_off'
+  start: string
+  end: string
+}
+
+// The Time Off page's per-date read: this date's working hours (from
+// the recurring Doctor Schedule) with any active one-off blocks
+// subtracted out, as a chronological list of available/time_off
+// segments, plus the single status label the calendar cell shows.
+// `workingBlocks` is the date's own applicable ScheduleBlocks (schedule,
+// not time off), returned alongside so a caller can show the regular
+// schedule's own hours without a second lookup.
+export function dayAvailability(
+  dateStr: string,
+  blocks: ScheduleBlock[],
+  oneOffBlocks: DoctorBlockEntry[],
+): { status: DayAvailabilityStatus; segments: DayAvailabilitySegment[]; workingBlocks: ScheduleBlock[] } {
+  const workingBlocks = applicableBlocksForDate(blocks, dateStr)
+  const workingRanges = workingBlocks
+    .flatMap((b) => blockSegments(b.startTime, b.endTime, b.breaks))
+    .sort((a, b) => a.start.localeCompare(b.start))
+  const timeOffRanges = oneOffBlocks
+    .filter((b) => b.active)
+    .map((b) => timeOffWindowForDate(b, dateStr))
+    .filter((r): r is { start: string; end: string } => r !== null)
+    .sort((a, b) => a.start.localeCompare(b.start))
+
+  if (workingRanges.length === 0) {
+    return { status: timeOffRanges.length > 0 ? 'time_off' : 'none', segments: [], workingBlocks }
+  }
+  if (timeOffRanges.length === 0) {
+    return {
+      status: 'working',
+      segments: workingRanges.map((r) => ({ type: 'available' as const, ...r })),
+      workingBlocks,
+    }
+  }
+
+  const segments: DayAvailabilitySegment[] = []
+  for (const wr of workingRanges) {
+    let cursor = wr.start
+    const overlapping = timeOffRanges.filter((tr) => tr.start < wr.end && tr.end > wr.start)
+    for (const tr of overlapping) {
+      const clipStart = tr.start > wr.start ? tr.start : wr.start
+      const clipEnd = tr.end < wr.end ? tr.end : wr.end
+      if (cursor < clipStart) segments.push({ type: 'available', start: cursor, end: clipStart })
+      segments.push({ type: 'time_off', start: clipStart, end: clipEnd })
+      cursor = clipEnd > cursor ? clipEnd : cursor
+    }
+    if (cursor < wr.end) segments.push({ type: 'available', start: cursor, end: wr.end })
+  }
+
+  const hasAvailable = segments.some((s) => s.type === 'available')
+  const hasTimeOff = segments.some((s) => s.type === 'time_off')
+  const status: DayAvailabilityStatus = hasAvailable && hasTimeOff ? 'partial' : hasTimeOff ? 'time_off' : 'working'
+  return { status, segments, workingBlocks }
+}
+
+// Total minutes across a set of time_off segments -- the Add/Edit Time
+// Off modal's "This will block N hours of availability" line.
+export function blockedMinutes(segments: DayAvailabilitySegment[]): number {
+  return segments
+    .filter((s) => s.type === 'time_off')
+    .reduce((sum, s) => sum + (toMinutesSinceMidnight(s.end) - toMinutesSinceMidnight(s.start)), 0)
+}
+
+// "7 hours" / "45 minutes" / "1h 30m" -- shared by Configure Schedule's
+// Preview Summary and the Time Off modal's Availability Impact, so a
+// duration reads identically everywhere in this app rather than each
+// caller rolling its own pluralization.
+export function formatDurationHours(totalMinutes: number): string {
+  if (totalMinutes <= 0) return '0 hours'
+  const h = Math.floor(totalMinutes / 60)
+  const m = totalMinutes % 60
+  if (m === 0) return `${h} hour${h === 1 ? '' : 's'}`
+  if (h === 0) return `${m} minute${m === 1 ? '' : 's'}`
+  return `${h}h ${m}m`
+}

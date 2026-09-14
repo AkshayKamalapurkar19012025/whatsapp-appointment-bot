@@ -7,9 +7,6 @@ import {
   cancelAdminAppointment,
   completeAdminAppointment,
   confirmAdminAppointment,
-  createDoctorBlock,
-  deleteDoctorBlock,
-  getDoctorBlocks,
   getDoctorDepartments,
   listAdminAppointments,
   listAppointmentTypeCatalog,
@@ -31,7 +28,6 @@ import type {
   AppointmentTypeSummary,
   Department,
   Doctor,
-  DoctorBlockEntry,
   DoctorDepartmentAssignment,
   Slot,
 } from '../types'
@@ -39,7 +35,6 @@ import { describeArrival, formatDate, formatTime, doctorSummaryLine } from '../f
 import DoctorAvatar from '../DoctorAvatar'
 import DepartmentChip from '../DepartmentChip'
 import { departmentIcon } from '../departmentIcon'
-import AdminDatePicker from './AdminDatePicker'
 import AdminSlotPicker from './AdminSlotPicker'
 import {
   AlertDialog,
@@ -58,6 +53,7 @@ import AppointmentDetailsModal from './AppointmentDetailsModal'
 import { AppointmentActionButtons, buildAppointmentActions, type AppointmentActionHandlers } from './AppointmentActions'
 import { isoDateToday } from './doctorSchedule'
 import ScheduleGrid from './ScheduleGrid'
+import TimeOffSection from './TimeOffSection'
 
 const ALL_FILTER_VALUE = '__all__'
 
@@ -242,7 +238,7 @@ export default function DoctorWorkspace({
       )}
       {tab === 'appointments' && <DoctorAppointmentsTab doctor={doctor} isAdmin={isAdmin} />}
       {tab === 'schedule' && <ScheduleGrid doctor={doctor} isAdmin={isAdmin} />}
-      {tab === 'blocks' && <BlocksSection doctor={doctor} />}
+      {tab === 'blocks' && <TimeOffSection doctor={doctor} />}
       {tab === 'departments' && <DepartmentAssignment doctor={doctor} isAdmin={isAdmin} />}
       {tab === 'types' && <AppointmentTypeAssignment doctor={doctor} isAdmin={isAdmin} />}
       {tab === 'profile' && <DoctorProfileSection doctor={doctor} isAdmin={isAdmin} />}
@@ -928,139 +924,6 @@ function DepartmentAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmin: bo
             <AlertDialogTitle>Remove department?</AlertDialogTitle>
             <AlertDialogDescription>
               {removeTarget && `Remove ${doctor.name} from ${removeTarget.name}?`}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep it</AlertDialogCancel>
-            <AlertDialogAction variant="danger" onClick={confirmRemove}>
-              Remove
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
-  )
-}
-
-// -- Time off: one-off blocks (ADMIN or STAFF) --------------------------
-// Entered/shown in Asia/Kolkata terms -- see types.ts's DoctorBlockEntry
-// docstring for why (no API currently exposes/sets a doctor's timezone,
-// and every doctor created through this admin UI is Asia/Kolkata by the
-// doctors table's own column default).
-
-function BlocksSection({ doctor }: { doctor: Doctor }) {
-  const [blocks, setBlocks] = useState<DoctorBlockEntry[]>([])
-  const [date, setDate] = useState('')
-  const [startTime, setStartTime] = useState('09:00')
-  const [endTime, setEndTime] = useState('10:00')
-  const [reason, setReason] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [showForm, setShowForm] = useState(false)
-  const [removeTarget, setRemoveTarget] = useState<DoctorBlockEntry | null>(null)
-
-  function load() {
-    getDoctorBlocks(doctor.id)
-      .then(setBlocks)
-      .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load time off'))
-  }
-
-  useEffect(load, [doctor.id])
-
-  function resetForm() {
-    setDate('')
-    setStartTime('09:00')
-    setEndTime('10:00')
-    setReason('')
-    setShowForm(false)
-  }
-
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault()
-    setError(null)
-    // The date field is no longer a native <input required> (it's the
-    // calendar-panel AdminDatePicker below, which has no built-in HTML
-    // validation), so this guard replaces what `required` used to do.
-    if (!date) {
-      setError('Choose a date for this time off')
-      return
-    }
-    setBusy(true)
-    try {
-      await createDoctorBlock(doctor.id, `${date}T${startTime}:00+05:30`, `${date}T${endTime}:00+05:30`, reason)
-      resetForm()
-      load()
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not add time off')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function confirmRemove() {
-    if (!removeTarget) return
-    setError(null)
-    try {
-      await deleteDoctorBlock(doctor.id, removeTarget.id)
-      load()
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not remove time off')
-    } finally {
-      setRemoveTarget(null)
-    }
-  }
-
-  return (
-    <div>
-      <div className="admin-content-header">
-        <div>
-          <h4 style={{ margin: 0 }}>Time off</h4>
-          <p className="muted" style={{ margin: 0 }}>
-            One-off exceptions to the regular working hours (IST) -- these block appointment slots without touching
-            the recurring schedule.
-          </p>
-        </div>
-        <button type="button" className="btn btn-sm" onClick={() => setShowForm((v) => !v)}>
-          {showForm ? 'Cancel' : '+ Add time off'}
-        </button>
-      </div>
-      {error && <p className="error">{error}</p>}
-
-      <ul className="tag-list">
-        {blocks.map((b) => (
-          <li key={b.id}>
-            {formatDate(b.start_at)} {formatTime(b.start_at)} – {formatTime(b.end_at)}: {b.reason}
-            <span className="muted"> · Added {formatDate(b.created_at)}</span>
-            <button type="button" className="link" onClick={() => setRemoveTarget(b)}>
-              remove
-            </button>
-          </li>
-        ))}
-        {blocks.length === 0 && <li className="muted">No time off scheduled.</li>}
-      </ul>
-
-      {showForm && (
-        <form className="inline-form wrap" onSubmit={handleCreate}>
-          <AdminDatePicker value={date} onChange={setDate} placeholder="Select date" />
-          <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required />
-          <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required />
-          <input placeholder="Reason" value={reason} onChange={(e) => setReason(e.target.value)} required />
-          <button type="submit" disabled={busy}>
-            {busy ? 'Saving…' : 'Save'}
-          </button>
-          <button type="button" className="btn-secondary btn btn-sm" onClick={resetForm}>
-            Cancel
-          </button>
-        </form>
-      )}
-
-      <AlertDialog open={removeTarget !== null} onOpenChange={(open) => !open && setRemoveTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove this time off?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {removeTarget &&
-                `Remove the ${formatDate(removeTarget.start_at)} ${formatTime(removeTarget.start_at)}–${formatTime(removeTarget.end_at)} time off (${removeTarget.reason})? That time will become bookable again.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
