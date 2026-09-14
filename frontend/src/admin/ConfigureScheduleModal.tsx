@@ -47,6 +47,7 @@ import {
   dateToDayOfWeek,
   defaultBreakFor,
   firstMatchingDate,
+  formatDurationHours,
   groupIsAmbiguous,
   mergeConflictChecks,
   newBlockKey,
@@ -122,18 +123,6 @@ function formatDateRangeCompact(startStr: string, endStr: string): string {
   if (s.year === e.year && s.month === e.month) return `${s.month} ${s.day}–${e.day}, ${s.year}`
   if (s.year === e.year) return `${s.month} ${s.day} – ${e.month} ${e.day}, ${s.year}`
   return `${s.month} ${s.day}, ${s.year} – ${e.month} ${e.day}, ${e.year}`
-}
-
-// "7 hours" / "45 minutes" / "1h 30m" for Step 3's Preview Summary
-// "Available time" figure -- plain, no seconds-level precision needed
-// for a schedule preview.
-function formatDurationHours(totalMinutes: number): string {
-  if (totalMinutes <= 0) return '0 hours'
-  const h = Math.floor(totalMinutes / 60)
-  const m = totalMinutes % 60
-  if (m === 0) return `${h} hour${h === 1 ? '' : 's'}`
-  if (h === 0) return `${m} minute${m === 1 ? '' : 's'}`
-  return `${h}h ${m}m`
 }
 
 // Configure Schedule -- ONE popup for both creating a new schedule and
@@ -1302,8 +1291,8 @@ export default function ConfigureScheduleModal({
                 </ul>
               )}
               <p className="muted schedule-sidebar-note">
-                This is a schedule preview. Actual availability may also consider existing appointments, time off
-                and other booking rules.
+                <strong>Schedule preview.</strong> Shows slots generated from these working hours and breaks. Actual
+                bookable availability may differ based on appointments, time off, and booking rules.
               </p>
             </div>
 
@@ -1479,8 +1468,8 @@ export default function ConfigureScheduleModal({
             </div>
 
             <p className="muted schedule-sidebar-note" style={{ margin: 'var(--space-3) 0 0' }}>
-              Slots shown here are generated from the schedule configuration. Actual availability may also consider
-              appointments, time off and other booking rules.
+              <strong>Schedule preview.</strong> Shows slots generated from these working hours and breaks. Actual
+              bookable availability may differ based on appointments, time off, and booking rules.
             </p>
 
             <div className="schedule-modal-footer schedule-modal-footer-split">
@@ -1745,8 +1734,8 @@ export default function ConfigureScheduleModal({
             )}
 
             <p className="muted schedule-sidebar-note">
-              Slots shown here are generated from the schedule configuration. Actual availability may also consider
-              appointments, time off and other booking rules.
+              <strong>Schedule preview.</strong> Shows slots generated from these working hours and breaks. Actual
+              bookable availability may differ based on appointments, time off, and booking rules.
             </p>
 
             <div className="schedule-modal-footer schedule-modal-footer-split">

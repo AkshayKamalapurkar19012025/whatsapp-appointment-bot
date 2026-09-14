@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { CalendarBlank, Gear } from '@phosphor-icons/react'
 import type { Department, DoctorBlockEntry } from '../types'
 import { formatTimeOfDay } from '../format'
-import { blockCoversDate, dateInRange, dateToDayOfWeek, type ScheduleBlock } from './doctorSchedule'
+import { dayAvailability, type ScheduleBlock } from './doctorSchedule'
 import SlotSettingsFields from './SlotSettingsFields'
 
 const MONTH_NAMES = [
@@ -22,25 +22,6 @@ function firstWeekdayColumn(year: number, month: number): number {
 
 function isoDate(year: number, month: number, day: number): string {
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-}
-
-type DayStatus = 'time_off' | 'working' | 'partial' | 'none'
-
-function statusForDate(
-  dateStr: string,
-  dayOfWeek: number,
-  blocks: ScheduleBlock[],
-  oneOffBlocks: DoctorBlockEntry[],
-): { status: DayStatus; blocks: ScheduleBlock[] } {
-  const applicable = blocks
-    .filter((b) => b.day === dayOfWeek && dateInRange(dateStr, b.startDate, b.endDate))
-    .sort((a, b) => a.startTime.localeCompare(b.startTime))
-  if (oneOffBlocks.some((b) => blockCoversDate(b, dateStr))) {
-    return { status: 'time_off', blocks: applicable }
-  }
-  if (applicable.length === 0) return { status: 'none', blocks: [] }
-  if (applicable.length === 1 && applicable[0].breaks.length === 0) return { status: 'working', blocks: applicable }
-  return { status: 'partial', blocks: applicable }
 }
 
 // Monthly calendar for the Schedule tab -- a pure VIEW of the doctor's
@@ -232,10 +213,14 @@ export default function ScheduleMonthView({
         {cells.map((day, i) => {
           if (day === null) return <div key={i} className="schedule-month-cell empty" />
           const dateStr = isoDate(year, month, day)
-          const dayOfWeek = dateToDayOfWeek(dateStr)
-          const { status, blocks: dateBlocks } = statusForDate(dateStr, dayOfWeek, visibleBlocks, oneOffBlocks)
-          const isTimeOff = status === 'time_off'
-          const overflow = dateBlocks.length - 2
+          // Same day-status computation the Time Off tab's own calendar
+          // uses (dayAvailability, doctorSchedule.ts) -- one shared read
+          // of "what does this date look like", not a second
+          // implementation. Time off here is purely a display lens: it
+          // never touches what's actually bookable (availability_engine.py
+          // remains the sole authority on that).
+          const { status, segments, workingBlocks } = dayAvailability(dateStr, visibleBlocks, oneOffBlocks)
+          const availableSegments = segments.filter((s) => s.type === 'available')
           return (
             <button
               key={i}
@@ -244,19 +229,33 @@ export default function ScheduleMonthView({
               onClick={() => onDateClick(dateStr)}
             >
               <span className="schedule-month-cell-date">{day}</span>
-              {isTimeOff ? (
+              {status === 'time_off' ? (
                 <span className="schedule-month-cell-timeoff">Time off</span>
-              ) : dateBlocks.length > 0 ? (
+              ) : status === 'none' ? (
+                <span className="schedule-month-cell-none">No schedule</span>
+              ) : status === 'partial' ? (
                 <span className="schedule-month-cell-periods">
-                  {dateBlocks.slice(0, 2).map((b, bi) => (
-                    <span key={bi} className={`schedule-month-cell-period ${status}`}>
+                  <span className="schedule-month-cell-status partial">Partial day</span>
+                  {availableSegments.slice(0, 2).map((s, si) => (
+                    <span key={si} className="schedule-month-cell-period partial">
+                      {formatTimeOfDay(s.start)} – {formatTimeOfDay(s.end)}
+                    </span>
+                  ))}
+                  {availableSegments.length > 2 && (
+                    <span className="schedule-month-cell-more">+{availableSegments.length - 2} more</span>
+                  )}
+                </span>
+              ) : (
+                <span className="schedule-month-cell-periods">
+                  {workingBlocks.slice(0, 2).map((b, bi) => (
+                    <span key={bi} className="schedule-month-cell-period working">
                       {formatTimeOfDay(b.startTime)} – {formatTimeOfDay(b.endTime)}
                     </span>
                   ))}
-                  {overflow > 0 && <span className="schedule-month-cell-more">+{overflow} more</span>}
+                  {workingBlocks.length > 2 && (
+                    <span className="schedule-month-cell-more">+{workingBlocks.length - 2} more</span>
+                  )}
                 </span>
-              ) : (
-                <span className="schedule-month-cell-none">No schedule</span>
               )}
             </button>
           )

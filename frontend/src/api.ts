@@ -709,6 +709,20 @@ export function createDoctorBlock(
   })
 }
 
+export function updateDoctorBlock(
+  doctorId: number,
+  blockId: number,
+  startAt: string,
+  endAt: string,
+  reason: string,
+): Promise<DoctorBlockEntry> {
+  return request(`/doctors/${doctorId}/blocks/${blockId}`, {
+    method: 'PUT',
+    auth: 'staff',
+    body: { start_at: startAt, end_at: endAt, reason },
+  })
+}
+
 export function deleteDoctorBlock(
   doctorId: number,
   blockId: number,
