@@ -1041,7 +1041,7 @@ function BlocksSection({ doctor }: { doctor: Doctor }) {
 
       {showForm && (
         <form className="inline-form wrap" onSubmit={handleCreate}>
-          <AdminDatePicker value={date} onChange={setDate} label={date ? 'Change date' : 'Pick a date'} />
+          <AdminDatePicker value={date} onChange={setDate} placeholder="Select date" />
           <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} required />
           <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} required />
           <input placeholder="Reason" value={reason} onChange={(e) => setReason(e.target.value)} required />

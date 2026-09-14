@@ -14,7 +14,13 @@ import { countSlots, type TimelineSegment } from './doctorSchedule'
 // Explicitly a draft/template preview, not real booking availability --
 // existing appointments and time off aren't excluded here (see the
 // disclaimer this component renders below the summary).
-export default function SlotsTimeline({ segments }: { segments: TimelineSegment[] }) {
+export default function SlotsTimeline({
+  segments,
+  emptyReason,
+}: {
+  segments: TimelineSegment[]
+  emptyReason?: string | null
+}) {
   const { total, morning, afternoon } = countSlots(segments)
 
   if (segments.length === 0) {
@@ -26,6 +32,11 @@ export default function SlotsTimeline({ segments }: { segments: TimelineSegment[
         <p className="muted schedule-sidebar-note" style={{ margin: 0 }}>
           No appointment slots can be generated from this schedule.
         </p>
+        {emptyReason && (
+          <p className="muted schedule-sidebar-note" style={{ margin: 0 }}>
+            {emptyReason}
+          </p>
+        )}
       </div>
     )
   }

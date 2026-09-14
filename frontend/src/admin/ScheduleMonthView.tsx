@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { CalendarBlank, Gear } from '@phosphor-icons/react'
 import type { Department, DoctorBlockEntry } from '../types'
 import { formatTimeOfDay } from '../format'
-import { DURATION_OPTIONS, blockCoversDate, dateInRange, dateToDayOfWeek, type ScheduleBlock } from './doctorSchedule'
+import { blockCoversDate, dateInRange, dateToDayOfWeek, type ScheduleBlock } from './doctorSchedule'
+import SlotSettingsFields from './SlotSettingsFields'
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -74,11 +75,19 @@ export default function ScheduleMonthView({
   onChangeBuffer: (minutes: number) => void
 }) {
   const today = new Date()
+  const todayIso = isoDate(today.getFullYear(), today.getMonth() + 1, today.getDate())
   const [year, setYear] = useState(today.getFullYear())
   const [month, setMonth] = useState(today.getMonth() + 1)
   const [jumpOpen, setJumpOpen] = useState(false)
   const [slotSettingsOpen, setSlotSettingsOpen] = useState(false)
   const [filterDepartmentId, setFilterDepartmentId] = useState('')
+  // Briefly rings today's cell after "Today" is clicked, so jumping back
+  // to the current month makes it immediately obvious which date that
+  // is -- not a persistent selection state (this calendar doesn't have
+  // one anymore; clicking a date opens the Configure Schedule popup
+  // straight away), just a momentary visual confirmation.
+  const [highlightedDate, setHighlightedDate] = useState<string | null>(null)
+  const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Department filter -- real (blocks are actually department_id-scoped
   // in doctor_schedule, migrations/0010), a view-only lens on the
@@ -96,6 +105,9 @@ export default function ScheduleMonthView({
   function goToday() {
     setYear(today.getFullYear())
     setMonth(today.getMonth() + 1)
+    if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current)
+    setHighlightedDate(todayIso)
+    highlightTimeoutRef.current = setTimeout(() => setHighlightedDate(null), 2000)
   }
 
   const yearOptions = Array.from({ length: 6 }, (_, i) => today.getFullYear() - 2 + i)
@@ -183,36 +195,12 @@ export default function ScheduleMonthView({
             </button>
             {slotSettingsOpen && (
               <div className="schedule-month-jump-popover schedule-slot-settings-popover">
-                <p className="muted schedule-sidebar-note" style={{ margin: '0 0 8px' }}>
-                  Doctor-level settings -- apply to every schedule for this doctor, not just one date.
-                </p>
-                <label className="inline-label">
-                  Preview interval
-                  <select value={defaultDuration} onChange={(e) => onChangeDuration(Number(e.target.value))}>
-                    {DURATION_OPTIONS.map((d) => (
-                      <option key={d} value={d}>
-                        {d} minutes
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <p className="muted schedule-sidebar-note">
-                  Used for the Generated Slots Preview only -- actual appointment lengths are set per appointment
-                  type (Appointment Types tab).
-                </p>
-                <label className="inline-label">
-                  Buffer between appointments
-                  <select value={bufferMinutes} onChange={(e) => onChangeBuffer(Number(e.target.value))}>
-                    {[0, 5, 10, 15, 20, 30].map((b) => (
-                      <option key={b} value={b}>
-                        {b === 0 ? 'No buffer' : `${b} minutes`}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <p className="muted schedule-sidebar-note">
-                  Applied for real between generated appointment slots.
-                </p>
+                <SlotSettingsFields
+                  defaultDuration={defaultDuration}
+                  bufferMinutes={bufferMinutes}
+                  onChangeDuration={onChangeDuration}
+                  onChangeBuffer={onChangeBuffer}
+                />
               </div>
             )}
           </div>
@@ -248,7 +236,7 @@ export default function ScheduleMonthView({
             <button
               key={i}
               type="button"
-              className="schedule-month-cell"
+              className={`schedule-month-cell${dateStr === highlightedDate ? ' highlighted' : ''}`}
               onClick={() => onDateClick(dateStr)}
             >
               <span className="schedule-month-cell-date">{day}</span>

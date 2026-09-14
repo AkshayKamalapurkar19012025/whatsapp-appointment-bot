@@ -3,6 +3,8 @@ import { ApiError, getDoctorBlocks, getDoctorDepartments, getDoctorScheduleAdmin
 import type { Department, Doctor, DoctorBlockEntry, DoctorScheduleEntry } from '../types'
 import ScheduleMonthView from './ScheduleMonthView'
 import ConfigureScheduleModal from './ConfigureScheduleModal'
+import DuplicateScheduleModal from './DuplicateScheduleModal'
+import RemoveScheduleModal from './RemoveScheduleModal'
 import { DEFAULT_MERGE_GAP_MINUTES, editGroupForDate, mergeEntriesIntoBlocks, type ScheduleBlock } from './doctorSchedule'
 
 // The Schedule tab -- a calendar WORKSPACE, not a configuration form.
@@ -35,6 +37,17 @@ export default function ScheduleGrid({ doctor, isAdmin }: { doctor: Doctor; isAd
   // create-from-scratch). null = popup closed.
   const [configureDate, setConfigureDate] = useState<string | null>(null)
   const [configureEditingGroup, setConfigureEditingGroup] = useState<ScheduleBlock[]>([])
+
+  // Duplicate Schedule -- opened from Configure Schedule's edit-mode
+  // "Schedule actions" menu, never from the calendar directly. The two
+  // popups are mutually exclusive (Duplicate closes Configure first),
+  // so there's no need to track more than one source at a time.
+  const [duplicateSource, setDuplicateSource] = useState<{ date: string; group: ScheduleBlock[] } | null>(null)
+
+  // Remove Schedule -- same pattern as Duplicate: opened from Configure
+  // Schedule's edit-mode "Schedule actions" menu or its own footer
+  // Remove Schedule buttons, mutually exclusive with Configure itself.
+  const [removeSource, setRemoveSource] = useState<{ date: string; group: ScheduleBlock[] } | null>(null)
 
   const blocks = mergeEntriesIntoBlocks(entries, DEFAULT_MERGE_GAP_MINUTES)
 
@@ -87,6 +100,26 @@ export default function ScheduleGrid({ doctor, isAdmin }: { doctor: Doctor; isAd
     setConfigureEditingGroup([])
   }
 
+  function openDuplicate() {
+    if (!configureDate) return
+    setDuplicateSource({ date: configureDate, group: configureEditingGroup })
+    closeConfigure()
+  }
+
+  function closeDuplicate() {
+    setDuplicateSource(null)
+  }
+
+  function openRemove() {
+    if (!configureDate) return
+    setRemoveSource({ date: configureDate, group: configureEditingGroup })
+    closeConfigure()
+  }
+
+  function closeRemove() {
+    setRemoveSource(null)
+  }
+
   return (
     <div>
       {error && <p className="error">{error}</p>}
@@ -108,11 +141,41 @@ export default function ScheduleGrid({ doctor, isAdmin }: { doctor: Doctor; isAd
         <ConfigureScheduleModal
           doctorId={doctor.id}
           departments={departments}
+          blocks={blocks}
           defaultDuration={defaultDuration}
           bufferMinutes={bufferMinutes}
           initialDate={configureDate}
           editingGroup={configureEditingGroup}
           onClose={closeConfigure}
+          onSaved={load}
+          onChangeDuration={handleChangeDuration}
+          onChangeBuffer={handleChangeBuffer}
+          onDuplicate={openDuplicate}
+          onRemove={openRemove}
+        />
+      )}
+
+      {duplicateSource && (
+        <DuplicateScheduleModal
+          doctorId={doctor.id}
+          departments={departments}
+          sourceGroup={duplicateSource.group}
+          sourceDate={duplicateSource.date}
+          blocks={blocks}
+          defaultDuration={defaultDuration}
+          bufferMinutes={bufferMinutes}
+          onClose={closeDuplicate}
+          onSaved={load}
+        />
+      )}
+
+      {removeSource && (
+        <RemoveScheduleModal
+          doctorId={doctor.id}
+          departments={departments}
+          editingGroup={removeSource.group}
+          initialDate={removeSource.date}
+          onClose={closeRemove}
           onSaved={load}
         />
       )}

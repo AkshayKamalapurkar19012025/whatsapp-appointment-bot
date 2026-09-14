@@ -245,16 +245,26 @@ export function shiftDateStr(dateStr: string, deltaDays: number): string {
 // give); callers show "every <weekday(s)>" instead in that case.
 export function countOccurrences(weekdays: number[], startDate: string | null, endDate: string | null): number | null {
   if (!startDate || !endDate) return null
+  return enumerateOccurrences(weekdays, startDate, endDate).length
+}
+
+// The actual calendar dates (not just the count) a set of weekdays
+// lands on within [startDate, endDate] -- Duplicate Schedule's own
+// per-date conflict check and affected-dates list need the dates
+// themselves, not just how many there are.
+export function enumerateOccurrences(weekdays: number[], startDate: string, endDate: string): string[] {
   const wanted = new Set(weekdays)
-  let count = 0
+  const dates: string[] = []
   const cursor = new Date(`${startDate}T00:00:00`)
   const end = new Date(`${endDate}T00:00:00`)
   while (cursor <= end) {
     const jsDay = cursor.getDay() === 0 ? 7 : cursor.getDay()
-    if (wanted.has(jsDay)) count++
+    if (wanted.has(jsDay)) {
+      dates.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`)
+    }
     cursor.setDate(cursor.getDate() + 1)
   }
-  return count
+  return dates
 }
 
 // First real calendar date on/after `fromDate` (and not after `endDate`,
@@ -449,6 +459,29 @@ export function validateBlockBreaks(startTime: string, endTime: string, breaks: 
   return null
 }
 
+// Configure Schedule Step 2's full validation for a day's working
+// periods -- each period's own start/end/breaks (reusing
+// validateBlockBreaks, so there's still exactly one "is this a legal
+// break" rule), plus a check the old per-period reduce didn't do: two
+// working periods (split shifts) must not overlap each other. Named per
+// period ("Period 2 overlaps Period 1") so the message is useful without
+// the admin having to guess which one is the problem.
+export function validatePeriods(periods: { startTime: string; endTime: string; breaks: ScheduleBreak[] }[]): string | null {
+  for (let i = 0; i < periods.length; i++) {
+    const p = periods[i]
+    if (!(p.startTime < p.endTime)) return `Period ${i + 1}’s end time must be after its start time`
+    const breaksError = validateBlockBreaks(p.startTime, p.endTime, p.breaks)
+    if (breaksError) return `Period ${i + 1}: ${breaksError}`
+  }
+  const byStart = periods.map((p, i) => ({ ...p, i })).sort((a, b) => (a.startTime < b.startTime ? -1 : a.startTime > b.startTime ? 1 : 0))
+  for (let k = 1; k < byStart.length; k++) {
+    if (byStart[k].startTime < byStart[k - 1].endTime) {
+      return `Period ${byStart[k].i + 1} overlaps Period ${byStart[k - 1].i + 1}`
+    }
+  }
+  return null
+}
+
 // A block's working hours split around zero or more sorted,
 // non-overlapping breaks -- e.g. 09:00-17:00 with breaks at 11:00-11:15
 // and 13:00-14:00 becomes [09:00-11:00, 11:15-13:00, 14:00-17:00]. With
@@ -592,13 +625,16 @@ export interface TimelineSegment {
 // The same per-day slot generation as templateDaySlots (one pure walk
 // over each working sub-segment at durationMinutes+bufferMinutes steps),
 // but returning the whole day's shape instead of just the bookable
-// starts: explicit breaks, the leftover tail inside a period that
-// doesn't evenly divide into whole slots, and the gap between two
-// separate working periods all come back as their own segment, in
-// chronological order, so a timeline can render continuously from the
-// first period's start to the last period's end -- a split shift must
-// visibly show the doctor as unavailable in between, not look like one
-// continuous 9-5 availability window.
+// starts: explicit breaks and the gap between two separate working
+// periods both come back as their own segment, in chronological order,
+// so a timeline can render continuously from the first period's start
+// to the last period's end -- a split shift must visibly show the
+// doctor as unavailable in between, not look like one continuous 9-5
+// availability window. A trailing few minutes inside one working
+// sub-segment that don't add up to a whole extra slot are dropped
+// silently (not surfaced as their own "not available" segment) -- that
+// leftover is a rounding artifact of the chosen duration/buffer, not
+// meaningful schedule information the admin needs to see.
 export function timelineForBlocks(
   blocksForDay: ScheduleBlock[],
   durationMinutes: number,
@@ -623,9 +659,6 @@ export function timelineForBlocks(
         segments.push({ type: 'slot', start: minutesToHHMM(cursor), end: minutesToHHMM(cursor + durationMinutes) })
         cursor += durationMinutes + bufferMinutes
       }
-      if (cursor < segEnd) {
-        segments.push({ type: 'gap', start: minutesToHHMM(cursor), end: minutesToHHMM(segEnd) })
-      }
       if (i < breaksSorted.length) {
         segments.push({ type: 'break', start: breaksSorted[i].start, end: breaksSorted[i].end })
       }
@@ -637,8 +670,187 @@ export function timelineForBlocks(
   return segments
 }
 
+// Step 2's own "what does a day shaped like this look like" preview --
+// deliberately NOT slot generation (that's timelineForBlocks/Step 3's
+// job, which needs a duration+buffer to walk): just the working periods
+// and breaks the admin has entered so far, in chronological order, plus
+// the gap between two separate working periods (a split shift) -- reuses
+// TimelineSegment's own vocabulary ('slot' standing in for "working"
+// here, 'break', 'gap') so this needs no new segment type, just a
+// different label in whatever renders it.
+export function dailyOverview(periods: { startTime: string; endTime: string; breaks: ScheduleBreak[] }[]): TimelineSegment[] {
+  const sorted = [...periods].sort((a, b) => a.startTime.localeCompare(b.startTime))
+  const segments: TimelineSegment[] = []
+  let cursorEnd: string | null = null
+  for (const period of sorted) {
+    if (cursorEnd !== null && cursorEnd < period.startTime) {
+      segments.push({ type: 'gap', start: cursorEnd, end: period.startTime })
+    }
+    const breaksSorted = [...period.breaks].sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0))
+    let cursor = period.startTime
+    for (const br of breaksSorted) {
+      segments.push({ type: 'slot', start: cursor, end: br.start })
+      segments.push({ type: 'break', start: br.start, end: br.end })
+      cursor = br.end
+    }
+    segments.push({ type: 'slot', start: cursor, end: period.endTime })
+    cursorEnd = period.endTime
+  }
+  return segments
+}
+
 export function countSlots(segments: TimelineSegment[]): { total: number; morning: number; afternoon: number } {
   const slotStarts = segments.filter((s) => s.type === 'slot').map((s) => toMinutesSinceMidnight(s.start))
   const morning = slotStarts.filter((m) => m < 12 * 60).length
   return { total: slotStarts.length, morning, afternoon: slotStarts.length - morning }
+}
+
+// ===========================================================================
+// Schedule conflict / overlap detection -- a frontend-side mirror of the
+// backend's own schedule_overlaps() (app/api/doctor_schedule.py): two rows
+// conflict only when BOTH their time range and their date range overlap,
+// department-agnostic (a doctor can only be in one place at a time). This
+// gives Add/Edit/Duplicate Schedule immediate feedback before Save; the
+// backend re-checks the same rule authoritatively at persist time.
+// ===========================================================================
+
+// Null-aware date-range overlap, matching schedule_overlaps()'s own SQL:
+// a NULL start/end is unbounded on that side.
+function dateRangesOverlapNullable(
+  aStart: string | null,
+  aEnd: string | null,
+  bStart: string | null,
+  bEnd: string | null,
+): boolean {
+  const startsBeforeBEnds = aStart === null || bEnd === null || aStart <= bEnd
+  const endsAfterBStarts = aEnd === null || bStart === null || aEnd >= bStart
+  return startsBeforeBEnds && endsAfterBStarts
+}
+
+function timeRangesOverlap(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean {
+  return aStart < bEnd && aEnd > bStart
+}
+
+export interface ScheduleConflictDetail {
+  // The real calendar date this conflict was found on, or null when the
+  // candidate's own date range is unbounded (no finite date list exists
+  // to enumerate -- see checkScheduleConflicts).
+  date: string | null
+  existingStart: string
+  existingEnd: string
+  newStart: string
+  newEnd: string
+  overlapStart: string
+  overlapEnd: string
+  existingDepartmentId: number | null
+}
+
+export interface ScheduleConflictCheck {
+  conflicts: ScheduleConflictDetail[]
+  conflictDates: Set<string>
+  // Total real calendar dates the candidate would occupy, or null when
+  // the candidate's own range is unbounded (recurring, no end date).
+  totalDates: number | null
+}
+
+// Checks one day-of-week's candidate time segments (already split around
+// their own breaks, same shape blockSegments/blocksToRowPayloads
+// produce) against every OTHER persisted block on that same weekday.
+// `excludeSourceIds` is the set of persisted row ids about to be deleted
+// as part of this same save (an edit replacing its own group) -- those
+// rows are not a real conflict with the thing that's about to replace
+// them.
+//
+// When the candidate's own [startDate, endDate] is fully bounded, every
+// real calendar date it lands on is checked individually (so a
+// multi-date scope can report exactly which dates conflict and which
+// don't). When it's open-ended on either side, there's no finite date
+// list -- falls back to the same date-RANGE overlap test the backend
+// itself uses, so a recurring schedule still gets a real, if less
+// granular, conflict result.
+export function checkScheduleConflicts(
+  existingBlocks: ScheduleBlock[],
+  excludeSourceIds: number[],
+  day: number,
+  segments: { start: string; end: string }[],
+  startDate: string | null,
+  endDate: string | null,
+): ScheduleConflictCheck {
+  const candidates = existingBlocks.filter(
+    (b) => b.day === day && !b.sourceIds.some((id) => excludeSourceIds.includes(id)),
+  )
+  const conflicts: ScheduleConflictDetail[] = []
+  const conflictDates = new Set<string>()
+
+  // A ScheduleBlock's own startTime/endTime span a break as if it were
+  // scheduled -- the break itself is never actually bookable, so the
+  // real "existing schedule" time ranges to compare against are its
+  // break-split segments (the same shape blockSegments produces for
+  // persistence), not the block's raw span.
+  function existingSegmentsFor(block: ScheduleBlock): { start: string; end: string }[] {
+    return blockSegments(block.startTime, block.endTime, block.breaks)
+  }
+
+  function record(
+    date: string | null,
+    seg: { start: string; end: string },
+    existingSeg: { start: string; end: string },
+    existingBlock: ScheduleBlock,
+  ) {
+    conflicts.push({
+      date,
+      existingStart: existingSeg.start,
+      existingEnd: existingSeg.end,
+      newStart: seg.start,
+      newEnd: seg.end,
+      overlapStart: seg.start > existingSeg.start ? seg.start : existingSeg.start,
+      overlapEnd: seg.end < existingSeg.end ? seg.end : existingSeg.end,
+      existingDepartmentId: existingBlock.departmentId,
+    })
+    if (date) conflictDates.add(date)
+  }
+
+  if (startDate && endDate) {
+    const dates = enumerateOccurrences([day], startDate, endDate)
+    for (const date of dates) {
+      const applicable = candidates.filter((b) => dateInRange(date, b.startDate, b.endDate))
+      for (const seg of segments) {
+        for (const existing of applicable) {
+          for (const existingSeg of existingSegmentsFor(existing)) {
+            if (timeRangesOverlap(seg.start, seg.end, existingSeg.start, existingSeg.end)) {
+              record(date, seg, existingSeg, existing)
+            }
+          }
+        }
+      }
+    }
+    return { conflicts, conflictDates, totalDates: dates.length }
+  }
+
+  const applicable = candidates.filter((b) => dateRangesOverlapNullable(startDate, endDate, b.startDate, b.endDate))
+  for (const seg of segments) {
+    for (const existing of applicable) {
+      for (const existingSeg of existingSegmentsFor(existing)) {
+        if (timeRangesOverlap(seg.start, seg.end, existingSeg.start, existingSeg.end)) {
+          record(null, seg, existingSeg, existing)
+        }
+      }
+    }
+  }
+  return { conflicts, conflictDates, totalDates: null }
+}
+
+// Combines several per-weekday checkScheduleConflicts results (a scope
+// spanning more than one weekday) into one -- totalDates stays finite
+// only when every underlying check was itself finite.
+export function mergeConflictChecks(results: ScheduleConflictCheck[]): ScheduleConflictCheck {
+  const conflicts = results.flatMap((r) => r.conflicts)
+  const conflictDates = new Set<string>()
+  let totalDates: number | null = 0
+  for (const r of results) {
+    for (const d of r.conflictDates) conflictDates.add(d)
+    if (r.totalDates === null) totalDates = null
+    else if (totalDates !== null) totalDates += r.totalDates
+  }
+  return { conflicts, conflictDates, totalDates }
 }

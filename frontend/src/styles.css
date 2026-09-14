@@ -2887,6 +2887,29 @@ a.link.danger {
   width: 15rem;
 }
 
+/* Edit Schedule header's "⋮ Schedule actions" menu (Duplicate/Remove)
+   -- a short vertical list of link-styled buttons, same floating-panel
+   look as the other .schedule-month-jump-popover variants. */
+.schedule-actions-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 11rem;
+}
+
+.schedule-actions-popover .link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.schedule-actions-popover .link:hover {
+  background: var(--color-bg-subtle);
+}
+
 .schedule-month-legend {
   display: flex;
   align-items: center;
@@ -2962,9 +2985,33 @@ a.link.danger {
   cursor: default;
 }
 
-.schedule-month-cell.selected {
-  outline: 2px solid var(--color-primary);
-  outline-offset: -2px;
+/* Briefly rings today's cell after "Today" is clicked (ScheduleMonthView.tsx
+   clears the highlight itself after ~2s) -- a fading pulse rather than a
+   static outline, so it reads as "you just jumped here" instead of a
+   persistent selection state (this calendar doesn't have one; clicking
+   a date opens Configure Schedule immediately). Same treatment is meant
+   to apply to a future "This Week" button, highlighting each cell in
+   the current week the same way. */
+.schedule-month-cell.highlighted {
+  animation: schedule-cell-pulse 2s ease-out;
+}
+
+@keyframes schedule-cell-pulse {
+  0% {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -2px;
+    background: var(--color-primary-soft);
+  }
+  70% {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -2px;
+    background: var(--color-primary-soft);
+  }
+  100% {
+    outline: 2px solid transparent;
+    outline-offset: -2px;
+    background: var(--color-surface);
+  }
 }
 
 .schedule-month-cell-date {
@@ -3032,31 +3079,132 @@ a.link.danger {
   border-top: none;
 }
 
-/* Configure Schedule modal's Step 1 (ConfigureScheduleModal.tsx) -- an
-   explicit, mandatory scope choice before any hours are configured.
-   Styled as a plain vertical radio list rather than pill buttons so it
-   doesn't compete visually with the day-multiselect pills used
-   elsewhere (Copy schedule, the modal's own "Which days?" step). */
-.schedule-scope-choices {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.schedule-scope-option {
+/* One working period's start/end fields + remove button on a single
+   row (Step 2) -- Period N | [start] – [end] | 🗑, instead of two
+   stacked labeled fields, so a split shift's periods read as compact
+   rows rather than a small form each. */
+.schedule-period-row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-size: 0.92rem;
-  font-weight: 400;
-  color: var(--color-text);
-  margin-bottom: 0;
-  cursor: pointer;
+  flex-wrap: wrap;
 }
 
-.schedule-scope-option input[type='radio'] {
-  width: auto;
+.schedule-period-label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+}
+
+/* TimeCombobox's own input renders at a fixed 7.5rem (see
+   time-combobox.tsx), but the app's global `input { width: 100% }`
+   overrides that the moment it sits in a flex row rather than a grid
+   cell with its own fixed track -- without this it stretches to fill
+   the whole row and pushes every other field in the row onto its own
+   line. Scoped to just these two rows (Step 2's period and break rows)
+   rather than changed globally. */
+.schedule-period-row input,
+.schedule-break-row input {
+  width: 7.5rem;
+  min-width: 0;
+  margin-bottom: 0;
+  flex: 0 0 auto;
+}
+
+/* Configure Schedule modal's Step 1 (ConfigureScheduleModal.tsx, create
+   mode) -- title/supporting text above the four scope cards. */
+.schedule-step1-title {
+  margin: 0 0 2px;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--color-text);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.schedule-step1-subtitle {
+  margin: 0 0 var(--space-3);
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+/* Step 1's scope choice -- four selectable cards (icon + title +
+   description) instead of a plain radio list, so "when should this
+   apply" reads as a small set of distinct choices rather than a form
+   field. Edit mode's own this-date/this-and-future/entire-schedule
+   chooser reuses the same card styling (.edit below stacks them in one
+   column instead of two, since it's only ever three options and reads
+   better as a short vertical list next to the current-schedule preview
+   column). */
+.schedule-scope-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-2);
+}
+
+.schedule-scope-cards.edit {
+  grid-template-columns: 1fr;
+}
+
+@media (max-width: 480px) {
+  .schedule-scope-cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+.schedule-scope-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+}
+
+.schedule-scope-card:hover {
+  border-color: var(--color-primary);
+}
+
+.schedule-scope-card svg {
+  color: var(--color-text-muted);
+}
+
+.schedule-scope-card.selected {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+.schedule-scope-card.selected svg {
+  color: var(--color-primary);
+}
+
+.schedule-scope-card-title {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.schedule-scope-card-desc {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  line-height: 1.35;
+}
+
+/* Step 1's inline validation feedback -- shown instead of a silently
+   disabled Next, right above the footer where the admin is about to
+   click it. */
+.schedule-scope-validation {
   margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-danger);
 }
 
 /* Step 1's "which dates will this affect" callout -- deliberately styled
@@ -3082,11 +3230,159 @@ a.link.danger {
   color: var(--color-primary);
 }
 
+.schedule-scope-summary + .schedule-scope-summary {
+  margin-top: var(--space-2);
+}
+
+/* Existing-appointments caution (edit mode Step 1/4) -- amber, not the
+   same green/blue "here's what will happen" tone as the rest of the
+   scope summaries, since this one is a caution rather than plain
+   information. */
+.schedule-scope-summary.warning {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.schedule-scope-summary.warning svg {
+  color: var(--color-warning);
+}
+
 /* Configure Schedule modal (ConfigureScheduleModal.tsx) -- a proper
    modal (same .modal-overlay/.modal-panel shell as AddDoctorModal.tsx)
    with three gated internal steps plus a success screen. */
-.schedule-modal-wide {
+/* Doubled-up with .schedule-modal-panel (always present alongside
+   these two) so this reliably beats .modal-panel's own `max-width:
+   640px` -- a single-class selector has the same specificity as that
+   one and would otherwise lose to it purely by appearing earlier in
+   the file, capping every "wide" step back down to 640px regardless
+   of this rule. */
+.schedule-modal-panel.schedule-modal-wide {
   max-width: 760px;
+}
+
+/* Edit mode's Step 3 (Preview Changes) -- a three-column before/after/
+   change-summary comparison needs more room than the usual two-column
+   review steps. */
+.schedule-modal-panel.schedule-modal-wide-3col {
+  max-width: 1020px;
+}
+
+/* Edit mode Step 3's Current/Updated/Change Summary comparison --
+   three columns on desktop, stacking to one on narrower screens rather
+   than scrolling horizontally. */
+.schedule-compare-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+/* Step 4 (edit mode)'s Current/Updated schedule cards -- just the two,
+   no Change Summary column (that's its own section below, shared with
+   Step 3 via changeSummaryFields). */
+.schedule-compare-grid.two-col {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+@media (max-width: 900px) {
+  .schedule-compare-grid,
+  .schedule-compare-grid.two-col {
+    grid-template-columns: 1fr;
+  }
+}
+
+.schedule-compare-column {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+}
+
+.schedule-compare-column.updated {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+/* Remove Schedule Step 2's "After" column -- a destructive-tinted
+   variant of the same compare column, since "After" there is always
+   "No schedule". */
+.schedule-compare-column.warning-column {
+  border-color: var(--color-danger);
+  background: var(--color-danger-soft);
+}
+
+.schedule-compare-stats {
+  display: flex;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.schedule-compare-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Change Summary column's per-field diff -- one of these per tracked
+   field (working hours, breaks, department, total slots), each either
+   an old-arrow-new row or a single value tagged "No change". */
+.schedule-changesummary-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: var(--space-3);
+}
+
+.schedule-nochange-tag {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  background: var(--color-bg-subtle);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+/* Step 4 (edit mode)'s top banner -- "Applies to: X" + the scope's own
+   detail sentence, with one Edit button back to Step 1. Full width,
+   ahead of the Current/Updated comparison, so scope is never in
+   question before reading the before/after. */
+.schedule-scope-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-md);
+  background: var(--color-primary-soft);
+  margin-bottom: var(--space-3);
+}
+
+.schedule-scope-banner > svg {
+  flex-shrink: 0;
+  color: var(--color-primary);
+}
+
+.schedule-scope-banner-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.schedule-scope-banner-label {
+  font-weight: 700;
+  color: var(--color-primary-hover);
+}
+
+/* Step 4 (edit mode)'s "Changes" section -- the same changeSummaryFields
+   Step 3's Change Summary column renders, just full-width here instead
+   of in its own column. */
+.schedule-changesummary-block {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
 }
 
 /* Full-screen drawer on mobile -- the same three-step workflow that's a
@@ -3113,16 +3409,120 @@ a.link.danger {
 
 .schedule-modal-header {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-2);
+  flex-direction: column;
+  gap: 4px;
   margin-bottom: var(--space-3);
+  /* .modal-close (shared across every modal in this app) is absolutely
+     positioned within .modal-panel's own padding box, top-right --
+     without this, the header's own content sits directly underneath/
+     behind it. */
+  padding-right: 2.5rem;
+}
+
+.schedule-modal-header-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Edit mode's "Existing schedule" pill, next to the "Edit Schedule"
+   title -- a quiet reminder this popup is pre-filled from something
+   already saved, not a blank form. */
+.schedule-modal-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary-hover);
+  font-size: 0.72rem;
+  font-weight: 600;
 }
 
 .schedule-modal-step {
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--color-text-muted);
+}
+
+.schedule-modal-subtitle {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+/* Step progress indicator (replaces a plain "Step X of Y" line) -- a
+   row of numbered dots connected by a line, the current step
+   highlighted and completed steps checked off, so the whole four-step
+   workflow (Scope -> Working Hours -> Preview Slots -> Review & Save)
+   stays visible while configuring any one of them. */
+.schedule-modal-stepper {
+  display: flex;
+  align-items: center;
+  margin-top: 2px;
+}
+
+.schedule-stepper-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.schedule-stepper-item:last-child {
+  flex: 0 0 auto;
+}
+
+.schedule-stepper-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+
+.schedule-stepper-item.done .schedule-stepper-dot,
+.schedule-stepper-item.current .schedule-stepper-dot {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
+}
+
+.schedule-stepper-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.schedule-stepper-item.current .schedule-stepper-label {
+  color: var(--color-primary);
+}
+
+.schedule-stepper-item.done .schedule-stepper-label {
+  color: var(--color-text);
+}
+
+.schedule-stepper-line {
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
+  margin: 0 6px;
+}
+
+@media (max-width: 480px) {
+  .schedule-stepper-label {
+    display: none;
+  }
 }
 
 .schedule-modal-body {
@@ -3142,6 +3542,42 @@ a.link.danger {
   grid-column: 1 / -1;
 }
 
+/* Step 2 (edit mode)'s footer -- Remove Schedule sits on its own at the
+   left, clearly separated from the Back/Cancel/Next group on the
+   right, so it never reads as a fourth peer action in that group. */
+.schedule-modal-footer-split {
+  justify-content: space-between;
+}
+
+.schedule-modal-footer-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.btn-danger-outline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--color-surface);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+}
+
+.btn-danger-outline:hover {
+  background: var(--color-danger-soft);
+}
+
+/* Step 2 (edit mode)'s read-only "before" comparison -- a distinctly
+   boxed-off block so it's never mistaken for another editable section;
+   nothing inside it is interactive. */
+.schedule-current-before {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle);
+}
+
 /* Step 4's headline (ConfigureScheduleModal.tsx) -- the one line the
    admin must read before Save is even clickable: exactly how many
    dates this schedule touches. Spans both review columns, above the
@@ -3157,13 +3593,63 @@ a.link.danger {
   gap: var(--space-4);
 }
 
-/* Step 3 (Generated Slots Preview) is its own step, with nothing but
-   the timeline -- reuses .schedule-modal-review's grid/gap so the
-   footer's schedule-modal-footer-full still spans correctly, but the
-   preview itself spans both columns since there's no summary column
-   beside it here. */
-.schedule-review-preview-full {
-  grid-column: 1 / -1;
+/* Step 3's own controls row (the weekday picker, shown only when the
+   scope spans more than one weekday, plus the timeline/list toggle) --
+   sits between the preview's supporting text and the timeline itself. */
+.schedule-preview-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.schedule-preview-weekday select {
+  width: auto;
+  margin-bottom: 0;
+}
+
+.schedule-preview-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Step 3's "View as list" alternative to the visual timeline -- the
+   same segments (slot/break/gap), one per row, no connecting line --
+   for a more compact/accessible read of the same data. */
+.schedule-preview-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.schedule-preview-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+}
+
+.schedule-preview-list li.slot {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-hover);
+}
+
+.schedule-preview-list li.break {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.schedule-preview-list li.gap {
+  background: transparent;
+  color: var(--color-text-muted);
 }
 
 @media (max-width: 640px) {
@@ -3192,6 +3678,98 @@ a.link.danger {
   color: var(--color-text);
 }
 
+/* Step 4 (Review & Save) -- "Schedule Summary" title above the card
+   list. Reset against the global bare `h4` rule (uppercase, primary
+   color, letter-spacing) the same way schedule-step1-title is, since
+   this is meant to read as a calm section heading, not a loud one. */
+.schedule-review-summary-title {
+  margin: 0 0 2px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+/* Step 4's review cards -- one per configured section (applies to,
+   working hours, breaks, department, slot settings), each with its own
+   "Edit" button that jumps back to the step that owns that section
+   without losing any entered values. Deliberately not a form: nothing
+   here is directly editable, Edit is the only way to change something. */
+/* Step 4 (edit mode)'s before/after working-hours diff -- a quick
+   "here's what you actually changed" check above the full summary,
+   since the summary alone only shows the new values. */
+.schedule-changed-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 var(--space-3);
+}
+
+.schedule-changed-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.88rem;
+}
+
+.schedule-changed-old {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.schedule-changed-new {
+  color: var(--color-primary-hover);
+  font-weight: 600;
+}
+
+.schedule-summary-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+}
+
+.schedule-summary-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.schedule-summary-card > svg {
+  flex-shrink: 0;
+  color: var(--color-primary);
+  background: var(--color-primary-soft);
+  border-radius: var(--radius-sm);
+  padding: 6px;
+  width: 30px;
+  height: 30px;
+  box-sizing: border-box;
+}
+
+.schedule-summary-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.schedule-summary-card-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.schedule-summary-card-value {
+  font-size: 0.88rem;
+  color: var(--color-text);
+}
+
 .schedule-modal-success {
   align-items: center;
   text-align: center;
@@ -3215,6 +3793,32 @@ a.link.danger {
 .schedule-modal-success .schedule-modal-footer {
   justify-content: center;
   margin-top: var(--space-4);
+}
+
+/* Success screen's own card/detail list -- .schedule-modal-success
+   centers everything by default (its own icon+heading want that), but
+   these two blocks read as left-aligned content of their own width,
+   the same way they do in Step 4. */
+.schedule-modal-success .schedule-summary-card,
+.schedule-success-details {
+  width: 100%;
+  max-width: 420px;
+  text-align: left;
+}
+
+.schedule-summary-card.success {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+}
+
+.schedule-summary-card.success > svg {
+  background: var(--color-surface);
+}
+
+.schedule-success-headline {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--color-primary-hover);
 }
 
 /* ===========================================================
@@ -3503,6 +4107,16 @@ a.link.danger {
   background: var(--color-primary);
   border-color: var(--color-primary);
   color: var(--color-on-primary);
+}
+
+/* Duplicate Schedule Step 2's affected-dates chip list -- a conflicting
+   date reads as a warning color instead of the usual selected green,
+   so the admin can spot which of the affected dates need attention
+   without reading the text list above it twice. */
+.day-multiselect.readonly span.conflict {
+  background: var(--color-warning-soft);
+  border-color: var(--color-warning);
+  color: var(--color-warning);
 }
 
 /* ===========================================================
@@ -5249,47 +5863,75 @@ a.link.danger {
 
 .admin-date-picker {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  display: inline-flex;
+  align-items: center;
   gap: 4px;
 }
 
-.admin-date-picker-value {
-  font-size: 0.8rem;
+/* Styled as a proper interactive date field -- icon + value inside a
+   bordered button with hover/focus states -- rather than a plain text
+   link, so it reads the same as a real input even though the actual
+   picking happens in the popover panel below. */
+.admin-date-picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.4rem 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
 
-/* Positioned absolutely (floating over the page) rather than in normal
-   flow: this sits inside a `.inline-form.wrap` flex row with
-   `align-items: flex-end`, and an in-flow panel taller than its
-   siblings dragged every other field in that row down to match its
-   height when opened -- a real layout bug, not a styling nitpick. As a
-   popover it can never disturb sibling alignment, matching how any
-   other date/select popover in this app behaves. */
+.admin-date-picker-trigger.has-value {
+  color: var(--color-text);
+}
+
+.admin-date-picker-trigger:hover {
+  border-color: var(--color-primary);
+}
+
+.admin-date-picker-trigger:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-soft);
+}
+
+.admin-date-picker-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.admin-date-picker-clear:hover {
+  color: var(--color-text);
+  background: var(--color-bg-subtle);
+}
+
+/* Portaled to document.body via Radix Popover (see AdminDatePicker.tsx)
+   rather than positioned in normal flow or as a plain `position:
+   absolute` child -- an in-flow panel taller than its siblings used to
+   drag every other field in the same row down to match its height when
+   opened, and a plain absolute panel gets clipped by any scrollable
+   ancestor (e.g. Configure Schedule's own .modal-panel). Portaling
+   floats it over the whole page regardless of where it's opened from. */
 .admin-date-picker-panel {
-  position: absolute;
-  top: calc(100% + var(--space-2));
-  left: 0;
-  z-index: 20;
+  z-index: 1100;
   padding: var(--space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface);
   box-shadow: var(--shadow-md);
   width: 280px;
-  /* Not `max-width: 100%` -- for an absolutely positioned element,
-     that percentage resolves against its containing block, which is
-     .admin-date-picker itself (the nearest `position: relative`
-     ancestor). Inside `.inline-form.wrap`, that's a shrink-to-fit flex
-     item barely wider than its own "Pick a date" link text (~100px,
-     confirmed via getBoundingClientRect), so `max-width: 100%` was
-     silently clamping this 280px panel down to ~100px -- narrow enough
-     that the calendar grid inside it overflowed the shrunken box, with
-     "+ Add working hours"/"+ Add time off" (later in the same row)
-     painting over that overflow instead of staying below it. Capped to
-     the viewport instead, which is what this max-width is actually
-     protecting against (a narrow phone screen), not the width of an
-     unrelated sibling field. */
   max-width: calc(100vw - 2 * var(--space-4));
 }
 
@@ -5716,4 +6358,216 @@ a.link.danger {
   .drawer-panel {
     width: 100%;
   }
+}
+
+/* Schedule conflict / overlap detection panel -- shared by Add/Edit
+   Schedule (ConfigureScheduleModal) and Duplicate Schedule
+   (DuplicateScheduleModal) via ScheduleConflictPanel.tsx. Deliberately
+   warning-toned (amber/orange), never full-screen red -- destructive
+   styling stays reserved for actual destructive actions elsewhere. */
+.schedule-conflict-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.schedule-conflict-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.schedule-conflict-header-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.schedule-conflict-title {
+  margin: 0 0 2px;
+}
+
+.schedule-conflict-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md, 10px);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.schedule-conflict-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .schedule-conflict-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.schedule-conflict-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.schedule-conflict-detail-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 10px);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.schedule-conflict-detail-date {
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.schedule-conflict-detail-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  font-size: 0.85rem;
+}
+
+.schedule-conflict-detail-row > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.schedule-conflict-overlap-time {
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+@media (max-width: 600px) {
+  .schedule-conflict-detail-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.conflict-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: var(--space-2);
+}
+
+.conflict-timeline-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.conflict-timeline-label {
+  flex: 0 0 60px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.conflict-timeline-label.existing {
+  color: #2563eb;
+}
+
+.conflict-timeline-label.new {
+  color: #059669;
+}
+
+.conflict-timeline-label.overlap {
+  color: var(--color-danger);
+}
+
+.conflict-timeline-track {
+  position: relative;
+  flex: 1;
+  height: 22px;
+  background: var(--color-surface-muted, #f1f3f5);
+  border-radius: 6px;
+}
+
+.conflict-timeline-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  font-size: 0.7rem;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.conflict-timeline-bar.existing {
+  background: #2563eb;
+}
+
+.conflict-timeline-bar.new {
+  background: #059669;
+}
+
+.conflict-timeline-bar.overlap {
+  background: var(--color-danger);
+}
+
+.schedule-conflict-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.schedule-conflict-stats {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 10px);
+  padding: var(--space-3);
+  background: var(--color-surface-muted, #f8f9fb);
+}
+
+.schedule-conflict-stats-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.schedule-conflict-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.schedule-conflict-stat-value {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.schedule-conflict-stat-value.ok {
+  color: #059669;
+}
+
+.schedule-conflict-stat-value.danger {
+  color: var(--color-danger);
+}
+
+.schedule-conflict-stat-label {
+  font-size: 0.7rem;
+  color: var(--color-text-secondary);
 }
