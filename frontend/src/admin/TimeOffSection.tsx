@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { DotsThree } from '@phosphor-icons/react'
 import { ApiError, deleteDoctorBlock, getDoctorBlocks, getDoctorScheduleAdmin } from '../api'
 import type { Doctor, DoctorBlockEntry, DoctorScheduleEntry } from '../types'
@@ -77,6 +77,14 @@ export default function TimeOffSection({ doctor }: { doctor: Doctor }) {
   const [removeBusy, setRemoveBusy] = useState(false)
   const [showAll, setShowAll] = useState(false)
 
+  // Briefly rings today's cell after "Today" is clicked -- same pulse
+  // pattern as the Schedule tab's own calendar (ScheduleMonthView.tsx),
+  // not a persistent "this is today" marker (that read the same on
+  // every render, so its CSS pulse animation had already finished and
+  // faded to nothing by the time anyone looked at it).
+  const [highlightedDate, setHighlightedDate] = useState<string | null>(null)
+  const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   function load() {
     Promise.all([getDoctorScheduleAdmin(doctor.id), getDoctorBlocks(doctor.id)])
       .then(([schedule, blocks]) => {
@@ -99,6 +107,9 @@ export default function TimeOffSection({ doctor }: { doctor: Doctor }) {
   function goToday() {
     setYear(today.getFullYear())
     setMonth(today.getMonth() + 1)
+    if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current)
+    setHighlightedDate(todayIso)
+    highlightTimeoutRef.current = setTimeout(() => setHighlightedDate(null), 2000)
   }
 
   // Clicking a date always opens the SAME TimeOffModal (never a second,
@@ -202,7 +213,7 @@ export default function TimeOffSection({ doctor }: { doctor: Doctor }) {
                 <button
                   key={i}
                   type="button"
-                  className={`schedule-month-cell${dateStr === todayIso ? ' highlighted' : ''}`}
+                  className={`schedule-month-cell${dateStr === highlightedDate ? ' highlighted' : ''}`}
                   onClick={() => openForDate(dateStr)}
                 >
                   <span className="schedule-month-cell-date">{day}</span>
