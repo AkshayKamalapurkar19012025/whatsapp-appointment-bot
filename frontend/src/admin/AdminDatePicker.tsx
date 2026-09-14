@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import * as PopoverPrimitive from '@radix-ui/react-popover'
+import { CalendarBlank, X } from '@phosphor-icons/react'
 import MonthGrid from '../MonthGrid'
 import { formatDate, isoDateOnly } from '../format'
 
@@ -15,14 +17,22 @@ function daysInMonth(year: number, month: number): number {
 // calendar day is this rule for". Past dates are greyed out (via the
 // same `dates` unavailable styling MonthGrid already has) since none of
 // these fields can meaningfully apply to a day that's already gone.
+//
+// The calendar panel is a Radix Popover portaled to document.body (same
+// pattern TimeCombobox already uses), not an in-flow/absolutely-
+// positioned child -- when this picker sits inside a scrollable
+// container with a capped height (e.g. Configure Schedule's own
+// .modal-panel), a plain `position: absolute` panel gets clipped at
+// that container's overflow boundary instead of floating freely over
+// the rest of the page.
 export default function AdminDatePicker({
   value,
   onChange,
-  label = 'Pick from calendar',
+  placeholder = 'Select date',
 }: {
   value: string
   onChange: (isoDate: string) => void
-  label?: string
+  placeholder?: string
 }) {
   const today = new Date()
   const todayIso = isoDateOnly(today.getFullYear(), today.getMonth() + 1, today.getDate())
@@ -54,28 +64,53 @@ export default function AdminDatePicker({
 
   return (
     <div className="admin-date-picker">
-      <button type="button" className="link" onClick={() => setOpen((v) => !v)}>
-        {open ? 'Close calendar' : label}
-      </button>
-      {value && <span className="muted admin-date-picker-value">{formatDate(value)}</span>}
-      {open && (
-        <div className="admin-date-picker-panel">
-          <MonthGrid
-            year={year}
-            month={month}
-            dates={dates}
-            onSelectDate={(iso) => {
-              onChange(iso)
-              setOpen(false)
-            }}
-            onPrevMonth={goPrev}
-            onNextMonth={goNext}
-            prevDisabled={isCurrentMonth}
-            nextDisabled={false}
-            showLegend={false}
-          />
-        </div>
-      )}
+      <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
+        <PopoverPrimitive.Anchor asChild>
+          <button
+            type="button"
+            className={`admin-date-picker-trigger${value ? ' has-value' : ''}`}
+            onClick={() => setOpen((v) => !v)}
+            aria-label={value ? `${placeholder}, currently ${formatDate(value)}` : placeholder}
+          >
+            <CalendarBlank size={16} />
+            <span>{value ? formatDate(value) : placeholder}</span>
+          </button>
+        </PopoverPrimitive.Anchor>
+        {value && (
+          <button
+            type="button"
+            className="admin-date-picker-clear"
+            aria-label="Clear date"
+            onClick={(e) => { e.stopPropagation(); onChange('') }}
+          >
+            <X size={14} />
+          </button>
+        )}
+        <PopoverPrimitive.Portal>
+          <PopoverPrimitive.Content
+            side="bottom"
+            align="start"
+            sideOffset={4}
+            onOpenAutoFocus={(e) => e.preventDefault()}
+            className="admin-date-picker-panel"
+          >
+            <MonthGrid
+              year={year}
+              month={month}
+              dates={dates}
+              onSelectDate={(iso) => {
+                onChange(iso)
+                setOpen(false)
+              }}
+              onPrevMonth={goPrev}
+              onNextMonth={goNext}
+              prevDisabled={isCurrentMonth}
+              nextDisabled={false}
+              showLegend={false}
+            />
+          </PopoverPrimitive.Content>
+        </PopoverPrimitive.Portal>
+      </PopoverPrimitive.Root>
     </div>
   )
 }
