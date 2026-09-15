@@ -21,8 +21,12 @@ export default function SlotSettingsFields({
       <p className="muted schedule-sidebar-note" style={{ margin: '0 0 8px' }}>
         Doctor-level settings -- apply to every schedule for this doctor, not just one date.
       </p>
+      <p className="muted schedule-sidebar-note">
+        Grid size for this preview only -- actual appointment lengths are set per appointment type
+        (Appointment Types tab) and are unaffected by this setting.
+      </p>
       <label className="inline-label">
-        Preview interval
+        Calendar preview grid
         <select value={defaultDuration} onChange={(e) => onChangeDuration(Number(e.target.value))}>
           {DURATION_OPTIONS.map((d) => (
             <option key={d} value={d}>
@@ -31,10 +35,6 @@ export default function SlotSettingsFields({
           ))}
         </select>
       </label>
-      <p className="muted schedule-sidebar-note">
-        Used for the Generated Slots Preview only -- actual appointment lengths are set per appointment type
-        (Appointment Types tab).
-      </p>
       <label className="inline-label">
         Buffer between appointments
         <select value={bufferMinutes} onChange={(e) => onChangeBuffer(Number(e.target.value))}>
