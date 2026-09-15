@@ -693,8 +693,8 @@ export default function ConfigureScheduleModal({
   const extraWide = step === 3 && mode === 'edit'
   const displayStep = typeof step === 'number' ? (showScopeStep ? step : step - 1) : step === 'conflict' ? (showScopeStep ? 2 : 1) : step
   const stepLabels = showScopeStep
-    ? [mode === 'edit' ? 'Update Scope' : 'Schedule Scope', 'Working Hours', 'Preview Slots', 'Review & Save']
-    : ['Working Hours', 'Preview Slots', 'Review & Save']
+    ? [mode === 'edit' ? 'Update Scope' : 'Schedule Scope', 'Working Hours', 'Preview', 'Review & Save']
+    : ['Working Hours', 'Preview', 'Review & Save']
   const panelClassName = [
     'modal-panel',
     'schedule-modal-panel',
@@ -1245,10 +1245,11 @@ export default function ConfigureScheduleModal({
           <div className="schedule-modal-body schedule-modal-review">
             <div className="schedule-review-preview">
               <div className="schedule-preview-heading">
-                <p className="muted schedule-sidebar-note" style={{ margin: 0 }}>Generated Slots Preview</p>
+                <p className="muted schedule-sidebar-note" style={{ margin: 0 }}>Working-Hours Preview</p>
               </div>
               <p className="muted schedule-sidebar-note" style={{ margin: '0 0 8px' }}>
-                This is a preview of the appointment slots that will be created based on your configuration.
+                This chops your working hours at the preview grid interval below -- it is not the real appointment
+                length, which is set per appointment type.
               </p>
 
               <div className="schedule-preview-controls">
@@ -1372,9 +1373,10 @@ export default function ConfigureScheduleModal({
 
         {step === 3 && mode === 'edit' && (
           <div className="schedule-modal-body">
-            <h4 className="schedule-review-summary-title">Generated Slots Preview</h4>
+            <h4 className="schedule-review-summary-title">Working-Hours Preview</h4>
             <p className="muted schedule-sidebar-note" style={{ margin: '0 0 8px' }}>
-              Compare the current schedule with your updated schedule before saving.
+              Compare the current schedule with your updated schedule before saving. This chops working hours at the
+              preview grid interval -- it is not the real appointment length, which is set per appointment type.
             </p>
             {previewWeekdayOptions && (
               <label className="inline-label schedule-preview-weekday" style={{ marginBottom: 'var(--space-2)' }}>
@@ -1394,7 +1396,7 @@ export default function ConfigureScheduleModal({
               <div className="schedule-compare-column">
                 <div className="schedule-preview-heading">
                   <CalendarBlank size={16} />
-                  <p className="muted schedule-sidebar-note" style={{ margin: 0 }}>Current Slots (Before changes)</p>
+                  <p className="muted schedule-sidebar-note" style={{ margin: 0 }}>Current Working Hours (Before changes)</p>
                 </div>
                 <p className="muted schedule-sidebar-note" style={{ margin: '0 0 8px' }}>
                   Based on the existing saved schedule.
@@ -1415,7 +1417,7 @@ export default function ConfigureScheduleModal({
               <div className="schedule-compare-column updated">
                 <div className="schedule-preview-heading">
                   <CalendarBlank size={16} />
-                  <p className="muted schedule-sidebar-note" style={{ margin: 0 }}>Updated Slots (After changes)</p>
+                  <p className="muted schedule-sidebar-note" style={{ margin: 0 }}>Updated Working Hours (After changes)</p>
                 </div>
                 <p className="muted schedule-sidebar-note" style={{ margin: '0 0 8px' }}>
                   Based on your current changes.
@@ -1564,9 +1566,9 @@ export default function ConfigureScheduleModal({
                 <div className="schedule-summary-card">
                   <Gear size={18} />
                   <div className="schedule-summary-card-body">
-                    <span className="schedule-summary-card-label">Slot settings (preview)</span>
+                    <span className="schedule-summary-card-label">Slot settings</span>
                     <span className="schedule-summary-card-value">
-                      <div>Appointment duration: {defaultDuration} minutes</div>
+                      <div>Preview grid: {defaultDuration} minutes</div>
                       <div>Buffer: {bufferMinutes === 0 ? 'No buffer' : `${bufferMinutes} minutes`}</div>
                     </span>
                   </div>
