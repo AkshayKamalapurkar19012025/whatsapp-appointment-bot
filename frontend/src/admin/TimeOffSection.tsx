@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { DotsThree } from '@phosphor-icons/react'
 import { ApiError, deleteDoctorBlock, getDoctorBlocks, getDoctorScheduleAdmin } from '../api'
 import type { Doctor, DoctorBlockEntry, DoctorScheduleEntry } from '../types'
@@ -14,6 +14,7 @@ import {
   AlertDialogTitle,
 } from '../components/ui/alert-dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu'
+import MonthCalendar, { isoDate } from './MonthCalendar'
 import TimeOffModal from './TimeOffModal'
 import {
   DEFAULT_MERGE_GAP_MINUTES,
@@ -24,22 +25,6 @@ import {
   mergeEntriesIntoBlocks,
   type ScheduleBlock,
 } from './doctorSchedule'
-
-const MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-]
-
-function daysInMonth(year: number, month: number): number {
-  return new Date(year, month, 0).getDate()
-}
-function firstWeekdayColumn(year: number, month: number): number {
-  const jsDay = new Date(year, month - 1, 1).getDay()
-  return (jsDay + 6) % 7
-}
-function isoDate(year: number, month: number, day: number): string {
-  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-}
 
 // "17 Sep" or "25 – 27 Sep" -- the Upcoming Time Off list's compact
 // date label, single date vs multi-day range.
@@ -65,8 +50,6 @@ export default function TimeOffSection({ doctor }: { doctor: Doctor }) {
 
   const today = new Date()
   const todayIso = isoDate(today.getFullYear(), today.getMonth() + 1, today.getDate())
-  const [year, setYear] = useState(today.getFullYear())
-  const [month, setMonth] = useState(today.getMonth() + 1)
 
   const [modalState, setModalState] = useState<{
     date: string
@@ -76,14 +59,6 @@ export default function TimeOffSection({ doctor }: { doctor: Doctor }) {
   const [removeTarget, setRemoveTarget] = useState<DoctorBlockEntry | null>(null)
   const [removeBusy, setRemoveBusy] = useState(false)
   const [showAll, setShowAll] = useState(false)
-
-  // Briefly rings today's cell after "Today" is clicked -- same pulse
-  // pattern as the Schedule tab's own calendar (ScheduleMonthView.tsx),
-  // not a persistent "this is today" marker (that read the same on
-  // every render, so its CSS pulse animation had already finished and
-  // faded to nothing by the time anyone looked at it).
-  const [highlightedDate, setHighlightedDate] = useState<string | null>(null)
-  const highlightTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   function load() {
     Promise.all([getDoctorScheduleAdmin(doctor.id), getDoctorBlocks(doctor.id)])
@@ -97,20 +72,6 @@ export default function TimeOffSection({ doctor }: { doctor: Doctor }) {
 
   const blocks: ScheduleBlock[] = mergeEntriesIntoBlocks(scheduleEntries, DEFAULT_MERGE_GAP_MINUTES)
   const activeOneOff = oneOffBlocks.filter((b) => b.active)
-
-  function goPrevMonth() {
-    setMonth((m) => (m === 1 ? (setYear((y) => y - 1), 12) : m - 1))
-  }
-  function goNextMonth() {
-    setMonth((m) => (m === 12 ? (setYear((y) => y + 1), 1) : m + 1))
-  }
-  function goToday() {
-    setYear(today.getFullYear())
-    setMonth(today.getMonth() + 1)
-    if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current)
-    setHighlightedDate(todayIso)
-    highlightTimeoutRef.current = setTimeout(() => setHighlightedDate(null), 2000)
-  }
 
   // Clicking a date always opens the SAME TimeOffModal (never a second,
   // in-calendar popup) -- it decides for itself, from how many blocks
@@ -153,14 +114,6 @@ export default function TimeOffSection({ doctor }: { doctor: Doctor }) {
     }
   }
 
-  const totalDays = daysInMonth(year, month)
-  const leadingBlanks = firstWeekdayColumn(year, month)
-  const cells: (number | null)[] = [
-    ...Array.from({ length: leadingBlanks }, () => null),
-    ...Array.from({ length: totalDays }, (_, i) => i + 1),
-  ]
-  while (cells.length % 7 !== 0) cells.push(null)
-
   const upcomingAll = [...activeOneOff].sort((a, b) => a.start_at.localeCompare(b.start_at))
   const upcomingFuture = upcomingAll.filter((b) => blockLocalDateRange(b).endDate >= todayIso)
   const visibleUpcoming = showAll ? upcomingAll : upcomingFuture.slice(0, 6)
@@ -181,73 +134,44 @@ export default function TimeOffSection({ doctor }: { doctor: Doctor }) {
       {error && <p className="error">{error}</p>}
 
       <div className="timeoff-layout">
-        <div className="schedule-month-main">
-          <div className="schedule-month-toolbar">
-            <button type="button" className="btn-secondary btn btn-sm" onClick={goPrevMonth} aria-label="Previous month">
-              {'‹'}
-            </button>
-            <span className="schedule-month-title">{MONTH_NAMES[month - 1]} {year}</span>
-            <button type="button" className="btn-secondary btn btn-sm" onClick={goNextMonth} aria-label="Next month">
-              {'›'}
-            </button>
-            <div className="schedule-month-toolbar-spacer" />
-            <button type="button" className="btn-secondary btn btn-sm" onClick={goToday}>Today</button>
-          </div>
-
-          <div className="schedule-month-legend">
-            <span className="schedule-legend-dot working" /> Working day
-            <span className="schedule-legend-dot partial" /> Partial time off
-            <span className="schedule-legend-dot time_off" /> Time off
-            <span className="schedule-legend-dot none" /> No schedule
-          </div>
-
-          <div className="schedule-month-grid">
-            {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((name) => (
-              <div key={name} className="schedule-month-weekday">{name.slice(0, 3)}</div>
-            ))}
-            {cells.map((day, i) => {
-              if (day === null) return <div key={i} className="schedule-month-cell empty" />
-              const dateStr = isoDate(year, month, day)
-              const { status, segments, workingBlocks } = dayAvailability(dateStr, blocks, activeOneOff)
+        <MonthCalendar
+          legendPartialLabel="Partial time off"
+          onDateClick={openForDate}
+          renderCellContent={(dateStr) => {
+            const { status, segments, workingBlocks } = dayAvailability(dateStr, blocks, activeOneOff)
+            if (status === 'none') {
+              return <span className="schedule-month-cell-none">No schedule</span>
+            }
+            if (status === 'time_off') {
+              return <span className="schedule-month-cell-timeoff">Time off</span>
+            }
+            if (status === 'working') {
               return (
-                <button
-                  key={i}
-                  type="button"
-                  className={`schedule-month-cell${dateStr === highlightedDate ? ' highlighted' : ''}`}
-                  onClick={() => openForDate(dateStr)}
-                >
-                  <span className="schedule-month-cell-date">{day}</span>
-                  {status === 'none' ? (
-                    <span className="schedule-month-cell-none">No schedule</span>
-                  ) : status === 'time_off' ? (
-                    <span className="schedule-month-cell-timeoff">Time off</span>
-                  ) : status === 'working' ? (
-                    <span className="schedule-month-cell-periods">
-                      {workingBlocks.slice(0, 2).map((b, bi) => (
-                        <span key={bi} className="schedule-month-cell-period working">
-                          {formatTimeOfDay(b.startTime)} – {formatTimeOfDay(b.endTime)}
-                        </span>
-                      ))}
-                      {workingBlocks.length > 2 && (
-                        <span className="schedule-month-cell-more">+{workingBlocks.length - 2} more</span>
-                      )}
+                <span className="schedule-month-cell-periods">
+                  {workingBlocks.slice(0, 2).map((b, bi) => (
+                    <span key={bi} className="schedule-month-cell-period working">
+                      {formatTimeOfDay(b.startTime)} – {formatTimeOfDay(b.endTime)}
                     </span>
-                  ) : (
-                    <span className="schedule-month-cell-periods">
-                      <span className="schedule-month-cell-status partial">Partial time off</span>
-                      {segments.slice(0, 2).map((s, si) => (
-                        <span key={si} className={`schedule-month-cell-period ${s.type === 'time_off' ? 'time_off' : 'working'}`}>
-                          {formatTimeOfDay(s.start)} – {formatTimeOfDay(s.end)}
-                        </span>
-                      ))}
-                      {segments.length > 2 && <span className="schedule-month-cell-more">+{segments.length - 2} more</span>}
-                    </span>
+                  ))}
+                  {workingBlocks.length > 2 && (
+                    <span className="schedule-month-cell-more">+{workingBlocks.length - 2} more</span>
                   )}
-                </button>
+                </span>
               )
-            })}
-          </div>
-        </div>
+            }
+            return (
+              <span className="schedule-month-cell-periods">
+                <span className="schedule-month-cell-status partial">Partial time off</span>
+                {segments.slice(0, 2).map((s, si) => (
+                  <span key={si} className={`schedule-month-cell-period ${s.type === 'time_off' ? 'time_off' : 'working'}`}>
+                    {formatTimeOfDay(s.start)} – {formatTimeOfDay(s.end)}
+                  </span>
+                ))}
+                {segments.length > 2 && <span className="schedule-month-cell-more">+{segments.length - 2} more</span>}
+              </span>
+            )
+          }}
+        />
 
         <div className="timeoff-upcoming">
           <h4 style={{ margin: '0 0 var(--space-2)' }}>Upcoming Time Off</h4>
