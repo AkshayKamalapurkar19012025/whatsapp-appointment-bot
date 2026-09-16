@@ -61,6 +61,13 @@ reschedule already didn't validate against *any* schedule row, ranged
 or permanent. Not fixed in this phase — out of scope, and fixing it here
 would touch reschedule behavior for reasons unrelated to date ranges.
 
+**Update (2026-09-16): closed.** `reschedule_appointment_service` now
+re-checks `doctor_schedule` for the new slot (raising
+`OutsideDoctorSchedule`, wired to a 409 in `appointments.py` and
+`patient_scheduling.py`, and surfaced as a retry prompt in
+`scheduling.py`'s WhatsApp flow), tested in
+`tests/test_reschedule_service.py`.
+
 ## IMPLEMENT
 
 **`migrations/0006_doctor_schedule_date_range.sql`** — `ALTER TABLE
@@ -158,6 +165,13 @@ overlap validation — not just one of the three.
   check at all (a pre-existing characteristic, not a P7 regression) —
   flagged above, not fixed, since it's unrelated to date ranges
   specifically and out of this phase's scope.
+
+  **Update (2026-09-16): closed.** `reschedule_appointment_service` now
+  re-checks `doctor_schedule` for the new slot (raising
+  `OutsideDoctorSchedule`, wired to a 409 in `appointments.py` and
+  `patient_scheduling.py`, and surfaced as a retry prompt in
+  `scheduling.py`'s WhatsApp flow), tested in
+  `tests/test_reschedule_service.py`.
 - Any admin-facing frontend for managing date-ranged schedules — this
   phase is REST-only, consistent with WEB P5's and P6's own scope
   (frontend work for the admin surface remains a later phase, per
