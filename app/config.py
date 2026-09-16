@@ -82,6 +82,35 @@ MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", str(Path(__file__).resolve().pare
 # patient's current OTP code.
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "development")
 
+# Phase A (deployment hardening): a handful of the defaults above exist
+# purely so a fresh clone works with zero configuration for local dev
+# (DB_USER falling back to the original author's own unix username,
+# DEFAULT_TIMEZONE assuming this clinic's own timezone, DB_HOST assuming
+# a local unix socket). None of those are safe to inherit silently in a
+# real deployment -- ENVIRONMENT=production must be paired with every one
+# of them set explicitly, or the app refuses to start rather than come up
+# quietly misconfigured (e.g. pointed at nothing, or the wrong timezone).
+# DATABASE_URL is an accepted substitute for the individual DB_* parts
+# (see _build_default_database_url above) -- it already fully specifies
+# the connection with no dev fallback involved.
+if ENVIRONMENT == "production":
+    _missing = []
+    if not os.environ.get("DATABASE_URL"):
+        for _var in ("DB_USER", "DB_PASSWORD", "DB_HOST", "DB_NAME"):
+            if not os.environ.get(_var):
+                _missing.append(f"{_var} (or set DATABASE_URL instead)")
+    if not os.environ.get("DEFAULT_TIMEZONE"):
+        _missing.append("DEFAULT_TIMEZONE")
+    if not os.environ.get("MEDIA_ROOT"):
+        _missing.append("MEDIA_ROOT")
+    if _missing:
+        raise RuntimeError(
+            "ENVIRONMENT=production but required variable(s) are not set: "
+            + ", ".join(_missing)
+            + ". Refusing to start with local-dev defaults in production "
+            "-- see .env.production.example."
+        )
+
 # WEB P10 (security pass): cross-origin allowlist for the browser
 # frontend(s), used by app/main.py's CORSMiddleware. Empty by default --
 # a deployment where FastAPI serves the frontend same-origin (or a local

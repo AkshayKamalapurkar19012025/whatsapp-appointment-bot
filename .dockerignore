@@ -1,0 +1,28 @@
+# Keeps the build context small and avoids ever baking secrets or local
+# state into an image layer. Applies to both this Dockerfile (app) and
+# docker/nginx/Dockerfile (frontend build stage), which both build from
+# the repo root as context.
+.git/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.coverage
+htmlcov/
+*.sqlite
+*.sqlite3
+*.db
+media/
+db_dump.txt
+docs/
+tests/
+
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+frontend/node_modules/
+frontend/dist/
