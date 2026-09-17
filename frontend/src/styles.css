@@ -6318,6 +6318,22 @@ a.link.danger {
    .education-card (DoctorProfileSection.tsx's Education & Credentials
    list) instead, the nearest sibling tab with the same "short list of
    assigned things, each with an icon/meta/actions" shape. */
+/* The "Add department" / "Add appointment type" assign-forms below
+   each of those lists (DoctorWorkspace.tsx) -- previously a bare
+   .inline-form with no visual container (one had no button class at
+   all, rendering as an unstyled native <button>), so it read as a
+   leftover dev form sitting under the styled card/chip list above it.
+   Wrapped in the same bordered shell used elsewhere for an
+   optional/secondary action area, dashed to read as "add", not
+   "existing item". */
+.assign-form-card {
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  margin: var(--space-3) 0 0;
+  background: var(--color-bg-subtle);
+}
+
 .appointment-type-card-list {
   display: flex;
   flex-direction: column;

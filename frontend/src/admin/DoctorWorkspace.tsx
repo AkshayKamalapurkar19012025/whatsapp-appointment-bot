@@ -912,7 +912,7 @@ function DepartmentAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmin: bo
         <p className="muted">Not assigned to any department.</p>
       )}
       {isAdmin && unassigned.length > 0 && (
-        <form className="inline-form wrap" onSubmit={handleAssign}>
+        <form className="inline-form wrap assign-form-card" onSubmit={handleAssign}>
           <select value={selected} onChange={(e) => setSelected(e.target.value)} required>
             <option value="">Add department…</option>
             {unassigned.map((d) => (
@@ -921,9 +921,11 @@ function DepartmentAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmin: bo
               </option>
             ))}
           </select>
-          <button type="submit">+ Add department</button>
+          <button type="submit" className="btn btn-sm">
+            + Add department
+          </button>
           {selected && (
-            <button type="button" className="link" onClick={() => setSelected('')}>
+            <button type="button" className="btn-secondary btn btn-sm" onClick={() => setSelected('')}>
               Cancel
             </button>
           )}
@@ -1144,7 +1146,7 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
       )}
 
       {isAdmin && showForm && unassigned.length > 0 && (
-        <form className="inline-form wrap" onSubmit={handleAssign}>
+        <form className="inline-form wrap assign-form-card" onSubmit={handleAssign}>
           <select value={selected} onChange={(e) => setSelected(e.target.value)} required>
             <option value="">Add appointment type…</option>
             {unassigned.map((c) => (
@@ -1171,7 +1173,7 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
             <input type="number" min={0} step="1" placeholder="0" value={fee} onChange={(e) => setFee(e.target.value)} />
           </label>
 
-          <button type="submit" className="btn-sm">
+          <button type="submit" className="btn btn-sm">
             Save
           </button>
           <button type="button" className="btn-secondary btn btn-sm" onClick={resetAssignForm}>

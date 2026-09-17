@@ -49,6 +49,17 @@ export default function AdminApp() {
   const [staff, setStaff] = useState<Staff | null>(null)
   const [checkingSession, setCheckingSession] = useState(true)
   const [section, setSection] = useState<Section>('dashboard')
+  // Bumped on every goTo(), including clicking a sidebar item that's
+  // already active. Several panels keep their own "drill-in" state
+  // (DoctorsPanel's selectedDoctor swaps the whole panel for
+  // DoctorWorkspace; AppointmentTypesPanel's view drawer, various
+  // modals) that setSection(target) alone can't reset when target ===
+  // section -- clicking "Doctors" while already inside a doctor's
+  // workspace was a no-op, so there was no way back to the directory
+  // except browser back. Keying each panel by this counter forces a
+  // clean remount on every nav click, same as switching sections
+  // already does naturally.
+  const [navResetKey, setNavResetKey] = useState(0)
 
   useEffect(() => {
     if (!getStaffToken()) {
@@ -76,6 +87,7 @@ export default function AdminApp() {
 
   function goTo(target: Section) {
     setSection(target)
+    setNavResetKey((n) => n + 1)
   }
 
   if (checkingSession) {
@@ -216,6 +228,7 @@ export default function AdminApp() {
 
           {section === 'dashboard' && (
             <DashboardPanel
+              key={navResetKey}
               staffName={staff.username}
               onBookAppointment={() => goTo('book-appointment')}
               onGoToDoctors={() => goTo('doctors')}
@@ -223,14 +236,15 @@ export default function AdminApp() {
             />
           )}
           {section === 'appointments' && (
-            <AppointmentsPanel onBookAppointment={() => goTo('book-appointment')} isAdmin={isAdmin} />
+            <AppointmentsPanel key={navResetKey} onBookAppointment={() => goTo('book-appointment')} isAdmin={isAdmin} />
           )}
           {section === 'book-appointment' && (
-            <BookAppointmentPanel onViewAppointments={() => goTo('appointments')} />
+            <BookAppointmentPanel key={navResetKey} onViewAppointments={() => goTo('appointments')} />
           )}
-          {section === 'queue' && <QueuePanel />}
+          {section === 'queue' && <QueuePanel key={navResetKey} />}
           {section === 'doctors' && (
             <DoctorsPanel
+              key={navResetKey}
               isAdmin={isAdmin}
               onGoToQueue={(doctorId) => {
                 try {
@@ -242,10 +256,10 @@ export default function AdminApp() {
               }}
             />
           )}
-          {section === 'departments' && <DepartmentsPanel isAdmin={isAdmin} />}
-          {section === 'appointment-types' && <AppointmentTypesPanel isAdmin={isAdmin} />}
-          {section === 'patients' && <PatientsPanel />}
-          {section === 'staff-accounts' && isAdmin && <StaffAccountsPanel />}
+          {section === 'departments' && <DepartmentsPanel key={navResetKey} isAdmin={isAdmin} />}
+          {section === 'appointment-types' && <AppointmentTypesPanel key={navResetKey} isAdmin={isAdmin} />}
+          {section === 'patients' && <PatientsPanel key={navResetKey} />}
+          {section === 'staff-accounts' && isAdmin && <StaffAccountsPanel key={navResetKey} />}
         </main>
       </div>
     </div>
