@@ -1,18 +1,35 @@
-# Local development PostgreSQL only -- the FastAPI app itself is not
-# containerized here (it still runs directly via the venv/uvicorn workflow
-# described in SETUP.md). This just gives every developer a reproducible,
-# disposable Postgres 16 instance instead of hand-run `psql` commands.
+# Phase A deployment topology: same-origin, single VM/VPS. Three
+# containers on one Docker network:
+#   - postgres -- unchanged from before this phase.
+#   - app      -- the FastAPI app (./Dockerfile), reached ONLY from the
+#                 nginx container (no host port published), never
+#                 directly by the browser.
+#   - nginx    -- the one public entrypoint (docker/nginx/). Serves the
+#                 built frontend (frontend/'s single Vite project --
+#                 patient app + admin app, see frontend/src/main.tsx) as
+#                 static files and reverse-proxies /api and /media to
+#                 app:8000. Because the browser only ever talks to this
+#                 one origin, ALLOWED_ORIGINS (app/config.py) stays unset
+#                 -- see .env.production.example.
 #
 # Usage:
-#   1. cp .env.example .env
-#   2. Set DB_PASSWORD in .env (required -- no default is committed here)
-#   3. docker compose up -d
-#   4. Set DB_HOST=localhost (and DB_PORT if you changed it) in .env, since
-#      the container is only reachable over TCP, not the local unix socket
-#      the app's zero-config default assumes.
+#   1. cp .env.production.example .env
+#   2. Fill in every required value (docker compose up refuses to start
+#      without them -- see each ${VAR:?...} below).
+#   3. docker compose up -d --build
+#   4. python scripts/migrate.py, run from the host against the
+#      Postgres port this file publishes (see SETUP.md) -- deliberately
+#      not run automatically on container start, same reasoning as
+#      app/main.py's lifespan docstring.
 #
-# Data persists in the named volume below across `docker compose down` /
-# `up`. It is only destroyed by an explicit `docker compose down -v`.
+# For local development, docker-compose.yml still works exactly as
+# before if you only ever run the `postgres` service directly
+# (`docker compose up -d postgres`) alongside `uvicorn --reload` on the
+# host -- nothing about that workflow changed. `docker compose up -d`
+# with no service name now also builds and starts app + nginx.
+#
+# Data persists in the named volumes below across `docker compose down` /
+# `up`. Only an explicit `docker compose down -v` destroys them.
 
 services:
   postgres:
@@ -20,10 +37,12 @@ services:
     container_name: whatsapp_appointment_bot_postgres
     restart: unless-stopped
     environment:
-      # Same variable names and defaults as app/config.py, so the app and
-      # this container agree with no extra configuration beyond DB_PASSWORD.
-      POSTGRES_DB: ${DB_NAME:-appointment_bot}
-      POSTGRES_USER: ${DB_USER:-akshaykumar}
+      # No dev-username fallback here (unlike app/config.py's own
+      # DB_USER/DB_NAME defaults, which stay for a bare `uvicorn`
+      # workflow with zero config) -- a real deployment states these
+      # explicitly, same reasoning as DB_PASSWORD already required below.
+      POSTGRES_DB: ${DB_NAME:?Set DB_NAME in .env}
+      POSTGRES_USER: ${DB_USER:?Set DB_USER in .env}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env before running docker compose up}
     ports:
       - "${DB_PORT:-5432}:5432"
@@ -33,11 +52,60 @@ services:
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U ${DB_USER:-akshaykumar} -d ${DB_NAME:-appointment_bot}",
+          "pg_isready -U ${DB_USER:?Set DB_USER in .env} -d ${DB_NAME:?Set DB_NAME in .env}",
         ]
       interval: 5s
       timeout: 5s
       retries: 10
 
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: whatsapp_appointment_bot_app
+    restart: unless-stopped
+    env_file:
+      # Everything NOT overridden below (DB_PASSWORD, DEFAULT_TIMEZONE,
+      # AUTHKEY_*, DB_POOL_*, ...) comes from here, so this file doesn't
+      # have to repeat every variable app/config.py knows about.
+      - .env
+    environment:
+      # Always the Postgres container's service name on the compose
+      # network, never .env's own DB_HOST (that's for reaching this same
+      # Postgres from the HOST, e.g. running scripts/migrate.py outside
+      # Docker -- see the usage note above).
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:?Set DB_USER in .env}
+      DB_NAME: ${DB_NAME:?Set DB_NAME in .env}
+      # Gates dev-only endpoints (app/config.py's ENVIRONMENT docstring)
+      # and app/config.py's own production startup guard below --
+      # overridable in .env only if you deliberately want a non-production
+      # environment name for this compose stack (e.g. a staging VM).
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      # Matches the volume mount below -- overrides app/config.py's
+      # "media/ next to the project root" dev default, which would be
+      # inside the container's throwaway filesystem otherwise.
+      MEDIA_ROOT: /app/media
+    volumes:
+      - media_data:/app/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "8000"
+
+  nginx:
+    build:
+      context: .
+      dockerfile: docker/nginx/Dockerfile
+    container_name: whatsapp_appointment_bot_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - app
+
 volumes:
   postgres_data:
+  media_data:

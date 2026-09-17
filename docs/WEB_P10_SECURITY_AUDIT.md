@@ -84,6 +84,13 @@ Compiled the audit's scope from three sources, not invented fresh:
   Left flagged for whichever future phase actually owns booking-rule
   correctness.
 
+  **Update (2026-09-16): closed.** `reschedule_appointment_service` now
+  re-checks `doctor_schedule` for the new slot (raising
+  `OutsideDoctorSchedule`, wired to a 409 in `appointments.py` and
+  `patient_scheduling.py`, and surfaced as a retry prompt in
+  `scheduling.py`'s WhatsApp flow), tested in
+  `tests/test_reschedule_service.py`.
+
 ## IMPLEMENT
 
 **CORS** (`app/config.py`, `app/main.py`, `.env.example`):
@@ -218,6 +225,13 @@ previously wouldn't have for up to 24 hours.
 - `reschedule_appointment_service`'s missing `doctor_schedule` check —
   a booking-correctness gap, not a security one; still flagged from WEB
   P7, still not this phase's to fix.
+
+  **Update (2026-09-16): closed.** `reschedule_appointment_service` now
+  re-checks `doctor_schedule` for the new slot (raising
+  `OutsideDoctorSchedule`, wired to a 409 in `appointments.py` and
+  `patient_scheduling.py`, and surfaced as a retry prompt in
+  `scheduling.py`'s WhatsApp flow), tested in
+  `tests/test_reschedule_service.py`.
 - Any admin-facing frontend UI for security settings (session policy,
   CORS) — this phase is backend/config-only, matching every other
   admin-surface phase's own precedent before a frontend existed for it.
