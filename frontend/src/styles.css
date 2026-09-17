@@ -5743,6 +5743,30 @@ a.link.danger {
   background: var(--color-bg-subtle);
 }
 
+/* OPD Today's own table (AppointmentsPanel.tsx) grew to 10 columns to
+   fit everything the redesign asks for -- wider than a laptop viewport
+   at the sizes this data needs, so .data-table-wrap's existing
+   overflow-x:auto kicks in. Without this, the single most important
+   column (Actions, always last) scrolled out of view with no visible
+   scrollbar hint, so a reader had no way to know the primary action
+   button was there at all. Pinning it to the right edge, the standard
+   fix for this, means it's always reachable regardless of horizontal
+   scroll position -- the table scrolls underneath it, not it with the
+   table. Needs its own explicit background (both states) since a
+   sticky cell doesn't inherit the scrolling content behind it. Scoped
+   to .opd-table, not every .data-table in the app, since this is the
+   one table wide enough to need it. */
+.opd-table .opd-actions-cell {
+  position: sticky;
+  right: 0;
+  background: var(--color-surface);
+  box-shadow: -6px 0 8px -6px rgb(0 0 0 / 12%);
+}
+
+.opd-table tbody tr:hover .opd-actions-cell {
+  background: var(--color-bg-subtle);
+}
+
 .appointment-row {
   cursor: pointer;
 }

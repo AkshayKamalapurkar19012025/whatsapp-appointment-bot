@@ -967,7 +967,7 @@ export default function AppointmentsPanel({
                   <th>Payment</th>
                   <th>Status</th>
                   <th>Token</th>
-                  <th>Actions</th>
+                  <th className="opd-actions-cell">Actions</th>
                 </tr>
               </thead>
               <tbody ref={tbodyRef}>
@@ -1000,7 +1000,7 @@ export default function AppointmentsPanel({
                         <td>{paymentCell(a)}</td>
                         <td>{statusPill(a, queuePosition, isTodayScope)}</td>
                         <td>{a.token_number !== null ? <span className="pill token-pill">#{a.token_number}</span> : <span className="muted">—</span>}</td>
-                        <td onClick={(e) => e.stopPropagation()}>
+                        <td className="opd-actions-cell" onClick={(e) => e.stopPropagation()}>
                           <AppointmentActionButtons actions={actions} busy={busy} compact />
                         </td>
                       </tr>
