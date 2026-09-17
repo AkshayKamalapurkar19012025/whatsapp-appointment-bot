@@ -195,7 +195,13 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
   // review card, so the two can never drift out of sync.
   function missingSelectionMessage(): string | null {
     if (!selectedPatient) return 'Search for or register a patient to continue.'
-    if (!doctorId) return 'Select a doctor to continue.'
+    // Checks selectedDoctor, not just doctorId -- handleSubmit below
+    // requires selectedDoctor too (it reads selectedDoctor.name for the
+    // confirmation screen), so if doctorId ever doesn't resolve to an
+    // entry in `doctors` (e.g. this component held a stale selection
+    // across a doctors-list refresh), the Book button must stay
+    // disabled rather than appear clickable and silently no-op.
+    if (!doctorId || !selectedDoctor) return 'Select a doctor to continue.'
     if (!appointmentTypeId) return 'Select an appointment type to continue.'
     if (!selectedSlot) return 'Pick an available date and time slot to continue.'
     return null
@@ -216,7 +222,15 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
   }
 
   async function handleSubmit() {
-    if (!selectedPatient || !doctorId || !appointmentTypeId || !selectedSlot || !selectedDoctor) return
+    // The Book button is disabled whenever missingSelectionMessage() is
+    // non-null (same fields checked there), so this should be
+    // unreachable in normal use -- kept as a guard, not silently, so a
+    // click that somehow gets through with an incomplete selection
+    // surfaces an actual error instead of doing nothing.
+    if (!selectedPatient || !doctorId || !appointmentTypeId || !selectedSlot || !selectedDoctor) {
+      setError('Some required fields are missing. Please review your selection and try again.')
+      return
+    }
     setError(null)
     setBusy(true)
     try {
