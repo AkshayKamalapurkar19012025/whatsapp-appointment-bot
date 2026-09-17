@@ -1,40 +1,38 @@
-import { DURATION_OPTIONS } from './doctorSchedule'
-
-// The doctor-level "Preview interval"/"Buffer between appointments"
-// fields -- shared by ScheduleMonthView's toolbar popover and Configure
-// Schedule Step 3's "Change slot settings" link, so there is exactly
-// one place these two fields (and their explanatory copy) are defined,
-// even though they're opened from two different spots in the UI.
+// The doctor-level "Buffer between appointments" field -- shared by
+// ScheduleMonthView's toolbar popover and Configure Schedule Step 3's
+// "Change slot settings" link, so there is exactly one place this field
+// (and its explanatory copy) is defined, even though it's opened from
+// two different spots in the UI.
+//
+// There used to be a second, editable "Calendar preview grid" duration
+// here too -- a doctor-level default_duration_minutes with no
+// connection to any real appointment type, so the Working-Hours Preview
+// it drove could (and did) show slot boundaries that didn't match any
+// actually-bookable start time. Removed: the preview now always uses a
+// real appointment type's own duration (previewDurationLabel says
+// which one), so there is nothing left here to independently edit.
 export default function SlotSettingsFields({
-  defaultDuration,
   bufferMinutes,
-  onChangeDuration,
+  previewDurationLabel,
   onChangeBuffer,
 }: {
-  defaultDuration: number
   bufferMinutes: number
-  onChangeDuration: (minutes: number) => void
+  // e.g. "30 minutes (Consultation)", or null if this doctor has no
+  // appointment types assigned yet -- see ScheduleGrid.tsx's own
+  // previewDurationMinutes/previewDurationLabel computation.
+  previewDurationLabel: string | null
   onChangeBuffer: (minutes: number) => void
 }) {
   return (
     <>
       <p className="muted schedule-sidebar-note" style={{ margin: '0 0 8px' }}>
-        Doctor-level settings -- apply to every schedule for this doctor, not just one date.
+        Doctor-level setting -- applies to every schedule for this doctor, not just one date.
       </p>
       <p className="muted schedule-sidebar-note">
-        Grid size for this preview only -- actual appointment lengths are set per appointment type
-        (Appointment Types tab) and are unaffected by this setting.
+        {previewDurationLabel
+          ? `Preview grid: ${previewDurationLabel} -- the doctor's own real appointment length, so preview slot times match what's actually bookable.`
+          : 'Preview grid: assign an appointment type to this doctor (Appointment Types tab) to see real slot times here.'}
       </p>
-      <label className="inline-label">
-        Calendar preview grid
-        <select value={defaultDuration} onChange={(e) => onChangeDuration(Number(e.target.value))}>
-          {DURATION_OPTIONS.map((d) => (
-            <option key={d} value={d}>
-              {d} minutes
-            </option>
-          ))}
-        </select>
-      </label>
       <label className="inline-label">
         Buffer between appointments
         <select value={bufferMinutes} onChange={(e) => onChangeBuffer(Number(e.target.value))}>

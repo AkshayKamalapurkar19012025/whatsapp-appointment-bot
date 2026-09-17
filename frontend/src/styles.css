@@ -6312,6 +6312,57 @@ a.link.danger {
   margin: var(--space-2) 0 0;
 }
 
+/* Doctor workspace's own "Appointment types" tab (DoctorWorkspace.tsx's
+   AppointmentTypeAssignment) -- a short per-doctor list, so full
+   .data-table machinery above would be overkill; styled after
+   .education-card (DoctorProfileSection.tsx's Education & Credentials
+   list) instead, the nearest sibling tab with the same "short list of
+   assigned things, each with an icon/meta/actions" shape. */
+.appointment-type-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+}
+
+.appointment-type-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.appointment-type-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 6px;
+}
+
+.appointment-type-card-body strong {
+  padding-top: 0;
+}
+
+.appointment-type-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+/* The edit-in-place form replaces the body's static meta line with
+   Duration/Fee inputs, same card shell -- so editing never disrupts
+   the surrounding list's layout the way swapping the whole row for an
+   inline-flex form used to. */
+.appointment-type-card-editing .appointment-type-card-body .inline-form {
+  margin-top: 4px;
+}
+
 /* Right-side detail drawer (the "View" action) -- same overlay
    backdrop as .modal-overlay, but anchored to the right edge and full
    height instead of centered, so it reads as a slide-in panel rather

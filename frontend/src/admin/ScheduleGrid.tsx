@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react'
-import { ApiError, getDoctorBlocks, getDoctorDepartments, getDoctorScheduleAdmin, updateDoctorSlotSettings } from '../api'
-import type { Department, Doctor, DoctorBlockEntry, DoctorScheduleEntry } from '../types'
+import {
+  ApiError,
+  getDoctorBlocks,
+  getDoctorDepartments,
+  getDoctorScheduleAdmin,
+  listAppointmentTypesForDoctor,
+  updateDoctorSlotSettings,
+} from '../api'
+import type { AppointmentType, Department, Doctor, DoctorBlockEntry, DoctorScheduleEntry } from '../types'
 import ScheduleMonthView from './ScheduleMonthView'
 import ConfigureScheduleModal from './ConfigureScheduleModal'
 import DuplicateScheduleModal from './DuplicateScheduleModal'
@@ -27,10 +34,28 @@ export default function ScheduleGrid({ doctor, isAdmin }: { doctor: Doctor; isAd
   // One-off blocks (Time off tab) -- read-only context for the calendar's
   // "Time off" status, never edited from here.
   const [oneOffBlocks, setOneOffBlocks] = useState<DoctorBlockEntry[]>([])
+  const [appointmentTypes, setAppointmentTypes] = useState<AppointmentType[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  const [defaultDuration, setDefaultDuration] = useState(doctor.default_duration_minutes)
   const [bufferMinutes, setBufferMinutes] = useState(doctor.buffer_minutes)
+
+  // Every "Working-Hours Preview" (ScheduleMonthView's calendar cells,
+  // Configure/Duplicate Schedule's preview grids) needs SOME duration to
+  // chop working hours into slot-sized chunks. This used to be
+  // doctor.default_duration_minutes -- an admin-editable value with no
+  // connection to any real appointment type, so the preview could (and
+  // did) show slot boundaries that didn't match any actually-bookable
+  // start time (see the "6:15 PM" confusion this replaced). Now it's
+  // always a real appointment type's own duration_minutes -- the first
+  // one in the doctor's assigned list (alphabetical, per
+  // GET /doctors/{id}/appointment-types) -- so every boundary the
+  // preview shows is one a patient could actually book, for at least
+  // that appointment type. Falls back to doctor.default_duration_minutes
+  // (still stored, no longer user-editable) only when no appointment
+  // type is assigned yet, so the calendar still renders something
+  // before that setup step is done.
+  const previewDurationMinutes = appointmentTypes[0]?.duration_minutes ?? doctor.default_duration_minutes
+  const previewDurationLabel = appointmentTypes[0] ? `${appointmentTypes[0].duration_minutes} minutes (${appointmentTypes[0].name})` : null
 
   // Which date the Configure Schedule popup is open for, and its
   // pre-fill (the date's existing schedule, if any -- empty means
@@ -52,35 +77,37 @@ export default function ScheduleGrid({ doctor, isAdmin }: { doctor: Doctor; isAd
   const blocks = mergeEntriesIntoBlocks(entries, DEFAULT_MERGE_GAP_MINUTES)
 
   function load() {
-    Promise.all([getDoctorScheduleAdmin(doctor.id), getDoctorDepartments(doctor.id), getDoctorBlocks(doctor.id)])
-      .then(([schedule, depts, blocksResult]) => {
+    Promise.all([
+      getDoctorScheduleAdmin(doctor.id),
+      getDoctorDepartments(doctor.id),
+      getDoctorBlocks(doctor.id),
+      listAppointmentTypesForDoctor(doctor.id),
+    ])
+      .then(([schedule, depts, blocksResult, types]) => {
         setEntries(schedule)
         setDepartments(depts)
         setOneOffBlocks(blocksResult)
+        setAppointmentTypes(types)
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load schedule'))
   }
   useEffect(load, [doctor.id])
 
-  async function persistSlotSettings(nextDuration: number, nextBuffer: number) {
+  // default_duration_minutes is still a required field on this endpoint
+  // (see app/api/doctors.py's DoctorSlotSettingsUpdate) even though
+  // nothing in the UI edits it anymore -- kept in sync with
+  // previewDurationMinutes on every save so the stored value never goes
+  // stale relative to whichever appointment type is currently first.
+  async function handleChangeBuffer(minutes: number) {
+    setBufferMinutes(minutes)
     try {
       await updateDoctorSlotSettings(doctor.id, {
-        default_duration_minutes: nextDuration,
-        buffer_minutes: nextBuffer,
+        default_duration_minutes: previewDurationMinutes,
+        buffer_minutes: minutes,
       })
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not save slot settings')
     }
-  }
-
-  function handleChangeDuration(minutes: number) {
-    setDefaultDuration(minutes)
-    persistSlotSettings(minutes, bufferMinutes)
-  }
-
-  function handleChangeBuffer(minutes: number) {
-    setBufferMinutes(minutes)
-    persistSlotSettings(defaultDuration, minutes)
   }
 
   function openConfigureFor(dateStr: string) {
@@ -128,12 +155,12 @@ export default function ScheduleGrid({ doctor, isAdmin }: { doctor: Doctor; isAd
         blocks={blocks}
         oneOffBlocks={oneOffBlocks}
         departments={departments}
-        defaultDuration={defaultDuration}
+        previewDurationMinutes={previewDurationMinutes}
+        previewDurationLabel={previewDurationLabel}
         bufferMinutes={bufferMinutes}
         isAdmin={isAdmin}
         onDateClick={openConfigureFor}
         onAddSchedule={openAddSchedule}
-        onChangeDuration={handleChangeDuration}
         onChangeBuffer={handleChangeBuffer}
       />
 
@@ -142,13 +169,13 @@ export default function ScheduleGrid({ doctor, isAdmin }: { doctor: Doctor; isAd
           doctorId={doctor.id}
           departments={departments}
           blocks={blocks}
-          defaultDuration={defaultDuration}
+          defaultDuration={previewDurationMinutes}
+          previewDurationLabel={previewDurationLabel}
           bufferMinutes={bufferMinutes}
           initialDate={configureDate}
           editingGroup={configureEditingGroup}
           onClose={closeConfigure}
           onSaved={load}
-          onChangeDuration={handleChangeDuration}
           onChangeBuffer={handleChangeBuffer}
           onDuplicate={openDuplicate}
           onRemove={openRemove}
@@ -162,7 +189,7 @@ export default function ScheduleGrid({ doctor, isAdmin }: { doctor: Doctor; isAd
           sourceGroup={duplicateSource.group}
           sourceDate={duplicateSource.date}
           blocks={blocks}
-          defaultDuration={defaultDuration}
+          defaultDuration={previewDurationMinutes}
           bufferMinutes={bufferMinutes}
           onClose={closeDuplicate}
           onSaved={load}

@@ -157,12 +157,12 @@ export default function ConfigureScheduleModal({
   departments,
   blocks,
   defaultDuration,
+  previewDurationLabel,
   bufferMinutes,
   initialDate,
   editingGroup,
   onClose,
   onSaved,
-  onChangeDuration,
   onChangeBuffer,
   onDuplicate,
   onRemove,
@@ -174,13 +174,16 @@ export default function ConfigureScheduleModal({
   // ELSE already on the calendar (checkScheduleConflicts). Not just
   // editingGroup: that's only the one group being edited/removed.
   blocks: ScheduleBlock[]
+  // A real appointment type's duration_minutes (ScheduleGrid's own
+  // previewDurationMinutes), not an independently-editable setting --
+  // see SlotSettingsFields.tsx's own comment for why.
   defaultDuration: number
+  previewDurationLabel: string | null
   bufferMinutes: number
   initialDate: string
   editingGroup: ScheduleBlock[]
   onClose: () => void
   onSaved: () => void
-  onChangeDuration: (minutes: number) => void
   onChangeBuffer: (minutes: number) => void
   onDuplicate: () => void
   onRemove: () => void
@@ -1353,9 +1356,8 @@ export default function ConfigureScheduleModal({
                 {slotSettingsOpen && (
                   <div className="schedule-month-jump-popover schedule-slot-settings-popover">
                     <SlotSettingsFields
-                      defaultDuration={defaultDuration}
                       bufferMinutes={bufferMinutes}
-                      onChangeDuration={onChangeDuration}
+                      previewDurationLabel={previewDurationLabel}
                       onChangeBuffer={onChangeBuffer}
                     />
                   </div>
@@ -1382,8 +1384,9 @@ export default function ConfigureScheduleModal({
           <div className="schedule-modal-body">
             <h4 className="schedule-review-summary-title">Working-Hours Preview</h4>
             <p className="muted schedule-sidebar-note" style={{ margin: '0 0 8px' }}>
-              Compare the current schedule with your updated schedule before saving. This chops working hours at the
-              preview grid interval -- it is not the real appointment length, which is set per appointment type.
+              Compare the current schedule with your updated schedule before saving. Shown using
+              {previewDurationLabel ? ` ${previewDurationLabel}` : ' this doctor’s appointment length'} --
+              a real, bookable appointment length, so every slot boundary below is one a patient could actually book.
             </p>
             {previewWeekdayOptions && (
               <label className="inline-label schedule-preview-weekday" style={{ marginBottom: 'var(--space-2)' }}>
@@ -1575,7 +1578,7 @@ export default function ConfigureScheduleModal({
                   <div className="schedule-summary-card-body">
                     <span className="schedule-summary-card-label">Slot settings</span>
                     <span className="schedule-summary-card-value">
-                      <div>Preview grid: {defaultDuration} minutes</div>
+                      <div>Appointment length: {previewDurationLabel ?? `${defaultDuration} minutes`}</div>
                       <div>Buffer: {bufferMinutes === 0 ? 'No buffer' : `${bufferMinutes} minutes`}</div>
                     </span>
                   </div>
@@ -1589,9 +1592,8 @@ export default function ConfigureScheduleModal({
                     {slotSettingsOpen && (
                       <div className="schedule-month-jump-popover schedule-slot-settings-popover">
                         <SlotSettingsFields
-                          defaultDuration={defaultDuration}
                           bufferMinutes={bufferMinutes}
-                          onChangeDuration={onChangeDuration}
+                          previewDurationLabel={previewDurationLabel}
                           onChangeBuffer={onChangeBuffer}
                         />
                       </div>

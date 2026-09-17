@@ -1,5 +1,15 @@
 import { Fragment, useEffect, useState } from 'react'
-import { ArrowLeft, Buildings, CaretDown, DotsThree, Tag, UserCircle } from '@phosphor-icons/react'
+import {
+  ArrowLeft,
+  Buildings,
+  CaretDown,
+  DotsThree,
+  DotsThreeVertical,
+  PencilSimple,
+  Tag,
+  Trash,
+  UserCircle,
+} from '@phosphor-icons/react'
 import {
   ApiError,
   assignAppointmentTypeToDoctor,
@@ -35,6 +45,8 @@ import { describeArrival, formatDate, formatTime, doctorSummaryLine } from '../f
 import DoctorAvatar from '../DoctorAvatar'
 import DepartmentChip from '../DepartmentChip'
 import { departmentIcon } from '../departmentIcon'
+import { appointmentTypeIcon } from '../appointmentTypeIcon'
+import { accentClassFor } from '../cardAccent'
 import AdminSlotPicker from './AdminSlotPicker'
 import {
   AlertDialog,
@@ -1044,57 +1056,92 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
       </div>
       {error && <p className="error">{error}</p>}
 
-      <ul className="tag-list">
-        {assigned.map((a) =>
-          editingId === a.id ? (
-            <li key={a.id}>
-              <form className="inline-form" onSubmit={saveEdit} style={{ display: 'inline-flex', gap: 8 }}>
-                <span>{a.name}</span>
-                <input
-                  type="number"
-                  min={5}
-                  max={240}
-                  value={editDuration}
-                  onChange={(e) => setEditDuration(Number(e.target.value))}
-                  style={{ width: 70 }}
-                  aria-label="Duration (minutes)"
-                  required
-                />
-                <span className="muted">min · ₹</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={editFee}
-                  onChange={(e) => setEditFee(e.target.value)}
-                  style={{ width: 80 }}
-                  aria-label="Consultation fee"
-                />
-                <button type="submit" className="link" disabled={editBusy}>
-                  {editBusy ? 'Saving…' : 'Save'}
-                </button>
-                <button type="button" className="link" onClick={() => setEditingId(null)}>
-                  Cancel
-                </button>
+      {assigned.length === 0 ? (
+        <p className="muted">No appointment types assigned yet.</p>
+      ) : (
+        <div className="appointment-type-card-list">
+          {assigned.map((a) => {
+            const Icon = appointmentTypeIcon(a.name)
+            return editingId === a.id ? (
+              <form
+                key={a.id}
+                className="appointment-type-card appointment-type-card-editing"
+                onSubmit={saveEdit}
+              >
+                <span className={`department-card-icon ${accentClassFor(a.name)}`} aria-hidden="true">
+                  <Icon size={18} weight="duotone" />
+                </span>
+                <div className="appointment-type-card-body">
+                  <strong>{a.name}</strong>
+                  <div className="inline-form">
+                    <label className="inline-label">
+                      Duration
+                      <input
+                        type="number"
+                        min={5}
+                        max={240}
+                        value={editDuration}
+                        onChange={(e) => setEditDuration(Number(e.target.value))}
+                        style={{ width: 80 }}
+                        aria-label="Duration (minutes)"
+                        required
+                      />
+                    </label>
+                    <label className="inline-label">
+                      Fee (₹)
+                      <input
+                        type="number"
+                        min={0}
+                        value={editFee}
+                        onChange={(e) => setEditFee(e.target.value)}
+                        style={{ width: 90 }}
+                        aria-label="Consultation fee"
+                      />
+                    </label>
+                  </div>
+                </div>
+                <div className="appointment-type-card-actions">
+                  <button type="submit" className="btn btn-sm" disabled={editBusy}>
+                    {editBusy ? 'Saving…' : 'Save'}
+                  </button>
+                  <button type="button" className="btn-secondary btn btn-sm" onClick={() => setEditingId(null)}>
+                    Cancel
+                  </button>
+                </div>
               </form>
-            </li>
-          ) : (
-            <li key={a.id}>
-              {a.name} ({a.duration_minutes} min · ₹{a.consultation_fee})
-              {isAdmin && (
-                <>
-                  <button type="button" className="link" onClick={() => startEdit(a)}>
-                    Edit
-                  </button>
-                  <button type="button" className="link" onClick={() => setRemoveTarget(a)}>
-                    remove
-                  </button>
-                </>
-              )}
-            </li>
-          ),
-        )}
-        {assigned.length === 0 && <li className="muted">No appointment types assigned.</li>}
-      </ul>
+            ) : (
+              <div key={a.id} className="appointment-type-card">
+                <span className={`department-card-icon ${accentClassFor(a.name)}`} aria-hidden="true">
+                  <Icon size={18} weight="duotone" />
+                </span>
+                <div className="appointment-type-card-body">
+                  <strong>{a.name}</strong>
+                  <span className="muted">
+                    {a.duration_minutes} min · {a.consultation_fee > 0 ? `₹${a.consultation_fee}` : 'No fee set'}
+                  </span>
+                </div>
+                {isAdmin && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button type="button" className="overflow-menu-trigger" aria-label={`Actions for ${a.name}`}>
+                        <DotsThreeVertical size={18} weight="bold" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onSelect={() => startEdit(a)}>
+                        <PencilSimple size={15} /> Edit
+                      </DropdownMenuItem>
+                      <DropdownMenuItem variant="danger" onSelect={() => setRemoveTarget(a)}>
+                        <Trash size={15} /> Remove
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {isAdmin && showForm && unassigned.length > 0 && (
         <form className="inline-form wrap" onSubmit={handleAssign}>

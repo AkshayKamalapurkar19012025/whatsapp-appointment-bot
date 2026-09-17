@@ -190,8 +190,6 @@ export function dayOfWeekOccursInRange(dayOfWeek: number, startDate: string, end
   return false
 }
 
-export const DURATION_OPTIONS = [15, 20, 30, 45, 60, 90]
-
 // Default "fold this gap into a break rather than two separate blocks"
 // cutoff for mergeEntriesIntoBlocks, used the first time the grid loads
 // for a doctor with no saved preference yet (see ScheduleGrid's own
