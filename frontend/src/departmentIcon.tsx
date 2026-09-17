@@ -1,25 +1,14 @@
+import { Buildings } from '@phosphor-icons/react'
 import type { Icon } from '@phosphor-icons/react'
-import { Baby, Bone, Brain, Ear, Eye, FirstAidKit, Heart, Stethoscope, Tooth } from '@phosphor-icons/react'
 
-// Departments are a free-form admin-managed list (see DepartmentsPanel.tsx)
-// with no icon/description field of their own -- adding one would be a
-// data-model change, not a visual one. This is a purely presentational,
-// best-effort keyword match against the department's existing name so the
-// department-selection cards can show a relevant icon without inventing
-// any new data; anything that doesn't match a keyword below falls back to
-// a generic Stethoscope rather than guessing.
-const KEYWORD_ICONS: Array<[RegExp, Icon]> = [
-  [/cardio|heart/i, Heart],
-  [/dental|dentist|tooth/i, Tooth],
-  [/ortho|bone|joint/i, Bone],
-  [/pediatr|paediatr|child/i, Baby],
-  [/neuro|brain/i, Brain],
-  [/ent\b|ear|nose|throat/i, Ear],
-  [/ophthal|eye|vision/i, Eye],
-  [/emergency|trauma|urgent/i, FirstAidKit],
-]
-
-export function departmentIcon(departmentName: string): Icon {
-  const match = KEYWORD_ICONS.find(([pattern]) => pattern.test(departmentName))
-  return match ? match[1] : Stethoscope
+// One fixed icon for every department, everywhere a department is shown
+// (DepartmentsPanel.tsx, the Doctors directory/workspace, DepartmentChip,
+// SchedulingFlow.tsx) -- Buildings, the same icon already used for the
+// concept of "department" in DepartmentsPanel's and DoctorsPanel's own
+// stat cards. Kept as a function (not a bare constant import at each call
+// site) so every existing `departmentIcon(d.name)` call site keeps
+// working unchanged, and so a newly created department gets the exact
+// same icon automatically -- there is no per-department data to go stale.
+export function departmentIcon(_departmentName: string): Icon {
+  return Buildings
 }
