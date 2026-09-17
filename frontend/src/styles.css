@@ -59,11 +59,35 @@
   --color-on-primary: #ffffff;
 
   --color-danger: #b3261e;
+  --color-danger-hover: #8f1f19;
   --color-danger-soft: #fbe9e7;
   --color-success: #1f7a4d;
   --color-success-soft: #e4f5ea;
   --color-warning: #a5680a;
   --color-warning-soft: #fdf2df;
+  /* Info -- was previously only ever written as the literal #2f6fed/
+     #e3edfc, always with this exact meaning (a cool, non-primary blue
+     for "active workflow state" / informational context: the
+     Date-First booking mode card, the categorical accent-blue icon
+     tint). Named and centralized here rather than left as a repeated
+     literal, so it's a real fourth semantic family alongside success/
+     warning/danger -- see docs/design-system.md. */
+  --color-info: #2f6fed;
+  --color-info-soft: #e3edfc;
+
+  /* Categorical accents (cardAccent.ts) -- NOT semantic/status colors.
+     Deterministically hashed per department/appointment-type name
+     purely to make a list of category icons individually
+     distinguishable; never used to mean "warning" or "info" the way
+     the tokens above do. --color-accent-teal/-amber reuse the real
+     primary/warning tokens (same hue serves double duty there);
+     purple and rose have no semantic equivalent, so they get their
+     own pair, named accent- rather than color- to keep that
+     distinction obvious at the call site. */
+  --color-accent-purple: #7c4fd8;
+  --color-accent-purple-soft: #ece4fb;
+  --color-accent-rose: #c34a7c;
+  --color-accent-rose-soft: #fbe4ee;
 
   --radius-sm: 8px;
   --radius-md: 14px;
@@ -497,7 +521,7 @@ p {
 
 /* Marks a required field's label; unmarked labels are optional. */
 .required-mark {
-  color: var(--color-danger, #c0392b);
+  color: var(--color-danger);
   margin-left: 2px;
 }
 
@@ -639,7 +663,7 @@ button[type='submit']:disabled,
 }
 
 .btn-danger:hover {
-  background: #8f1f19;
+  background: var(--color-danger-hover);
 }
 
 /* Compact inline button size (form actions inside admin panels, table row
@@ -814,7 +838,7 @@ a.link.danger {
   height: 16px;
   border-radius: 50%;
   background: var(--color-danger);
-  color: #fff;
+  color: var(--color-on-primary);
   font-size: 0.72rem;
   font-weight: 700;
   flex-shrink: 0;
@@ -1340,17 +1364,17 @@ a.link.danger {
    a Doctor", a cool blue for "Find by Date") so the pair is
    immediately distinguishable rather than two identical mint cards. */
 .choice-card-date .choice-card-icon {
-  background: #e3edfc;
-  color: #2f6fed;
+  background: var(--color-info-soft);
+  color: var(--color-info);
 }
 
 .choice-card-date:hover {
-  border-color: #2f6fed;
-  background: #f2f7fe;
+  border-color: var(--color-info);
+  background: var(--color-info-soft);
 }
 
 .choice-card-date:hover .choice-card-arrow {
-  color: #2f6fed;
+  color: var(--color-info);
 }
 
 .choice-step-subtitle {
@@ -1462,13 +1486,13 @@ a.link.danger {
 }
 
 .accent-blue {
-  background: #e3edfc;
-  color: #2f6fed;
+  background: var(--color-info-soft);
+  color: var(--color-info);
 }
 
 .accent-purple {
-  background: #ece4fb;
-  color: #7c4fd8;
+  background: var(--color-accent-purple-soft);
+  color: var(--color-accent-purple);
 }
 
 .accent-amber {
@@ -1477,8 +1501,8 @@ a.link.danger {
 }
 
 .accent-rose {
-  background: #fbe4ee;
-  color: #c34a7c;
+  background: var(--color-accent-rose-soft);
+  color: var(--color-accent-rose);
 }
 
 /* DepartmentChip.tsx -- a department name shown anywhere as a small
@@ -2535,6 +2559,34 @@ a.link.danger {
   color: var(--color-primary);
 }
 
+/* Semantic tone modifiers for .stat-icon -- shared by every stat-card
+   row in the app (Dashboard, OPD Today) so a "this number is a bad
+   thing" (cancelled/rejected/no-show) icon never looks identical to a
+   "this number is a good thing" (confirmed/completed) one just
+   because both happen to sit in the same card shell. Plain .stat-icon
+   (no modifier) stays the default primary teal for neutral/volume
+   counts (Total Visits, Today's Appointments) that don't carry a
+   good/bad meaning of their own. */
+.stat-icon.tone-success {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.stat-icon.tone-warning {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.stat-icon.tone-danger {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+
+.stat-icon.tone-info {
+  background: var(--color-info-soft);
+  color: var(--color-info);
+}
+
 .stat-body {
   display: flex;
   flex-direction: column;
@@ -2566,44 +2618,6 @@ a.link.danger {
   font-size: 0.72rem;
   color: var(--color-text-muted);
   margin-top: 2px;
-}
-
-/* Each OPD Today KPI card's icon badge -- colors sampled directly from
-   the reference mockup screenshot (pale tint bg + a darker, saturated
-   version of the same hue for the icon), not this app's own
-   --color-* tokens, so this card row reads exactly as pictured. Kept
-   scoped to these six classes rather than changing --color-warning-
-   soft/--color-danger-soft/etc. themselves, which are shared by pills
-   and cards on every other admin page -- retinting those globally
-   would shift colors well beyond this one screen. */
-.opd-icon-total {
-  background: #e3f6f0;
-  color: #0c7057;
-}
-
-.opd-icon-waiting {
-  background: #fdf2df;
-  color: #a5680a;
-}
-
-.opd-icon-consultation {
-  background: #e5f3fe;
-  color: #0f54b5;
-}
-
-.opd-icon-completed {
-  background: #e5f6ee;
-  color: #0c7057;
-}
-
-.opd-icon-noshow {
-  background: #fce0e3;
-  color: #b3121d;
-}
-
-.opd-icon-collected {
-  background: #daf3e8;
-  color: #0c7057;
 }
 
 /* -- OPD Today header (AppointmentsPanel.tsx) --------------------- */
@@ -2813,7 +2827,7 @@ a.link.danger {
 }
 
 .slots-timeline-content.break::before {
-  background: var(--color-danger, #dc2626);
+  background: var(--color-danger);
 }
 
 .slots-timeline-content.gap::before {
@@ -2838,8 +2852,8 @@ a.link.danger {
 }
 
 .slots-timeline-chip.break {
-  background: #fdecea;
-  color: #b3261e;
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
 }
 
 .slots-timeline-chip.gap {
@@ -3042,11 +3056,11 @@ a.link.danger {
 }
 
 .schedule-legend-dot.partial {
-  background: var(--color-warning, #a5680a);
+  background: var(--color-warning);
 }
 
 .schedule-legend-dot.time_off {
-  background: var(--color-danger, #dc2626);
+  background: var(--color-danger);
 }
 
 .schedule-legend-dot.none {
@@ -3085,7 +3099,7 @@ a.link.danger {
 }
 
 .schedule-month-cell.empty {
-  background: var(--color-canvas, var(--color-surface));
+  background: var(--color-surface);
   cursor: default;
 }
 
@@ -3150,7 +3164,7 @@ a.link.danger {
 }
 
 .schedule-month-cell-status.partial {
-  color: var(--color-warning, #a5680a);
+  color: var(--color-warning);
 }
 
 .schedule-month-cell-none {
@@ -3161,7 +3175,7 @@ a.link.danger {
 .schedule-month-cell-timeoff {
   font-size: 0.68rem;
   font-weight: 700;
-  color: var(--color-danger, #dc2626);
+  color: var(--color-danger);
 }
 
 .schedule-month-cell-timeoff.standalone {
@@ -3609,7 +3623,7 @@ a.link.danger {
 .schedule-stepper-item.done .schedule-stepper-dot,
 .schedule-stepper-item.current .schedule-stepper-dot {
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-on-primary);
   border-color: var(--color-primary);
 }
 
@@ -4780,21 +4794,24 @@ a.link.danger {
 /* OPD Today's own WAITING/IN_CONSULTATION buckets (opdStatus in
    AppointmentsPanel.tsx) -- the two states the pre-existing
    .status-checked_in/.status-queued/.status-arrived pills never had to
-   distinguish before this redesign, so unlike those there's no shared,
-   used-elsewhere class to reuse or risk drifting by retinting. Colors
-   here are sampled directly from the reference OPD Today mockup
-   (peach/brown for Waiting, lavender/indigo for In Consultation) --
-   .status-in-consultation in particular needed its own hue since
-   nothing in the existing palette (all teal/green/amber/red) covers
-   purple. */
+   distinguish before this redesign. Mapped onto the app-wide semantic
+   families (docs/design-system.md), not left as one-off colors:
+   WAITING = Warning ("needs attention, not yet actioned"), same
+   family as .status-pending. IN_CONSULTATION = Info ("an active
+   workflow state in progress"), same family as .status-arrived and
+   the schedule conflict timeline's "existing appointment" bar --
+   deliberately NOT the purple the reference OPD Today mockup used,
+   since purple isn't one of this app's semantic families and a
+   one-off hue used nowhere else is exactly what the design-system
+   pass this is part of set out to remove. */
 .pill.status-waiting {
-  background: #fee9ce;
-  color: #92400e;
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
 }
 
 .pill.status-in-consultation {
-  background: #eae6fe;
-  color: #3730a3;
+  background: var(--color-info-soft);
+  color: var(--color-info);
 }
 
 /* AppointmentsPanel.tsx's Payment column -- amount and status shown
@@ -6764,11 +6781,11 @@ a.link.danger {
 }
 
 .conflict-timeline-label.existing {
-  color: #2563eb;
+  color: var(--color-info);
 }
 
 .conflict-timeline-label.new {
-  color: #059669;
+  color: var(--color-success);
 }
 
 .conflict-timeline-label.overlap {
@@ -6779,7 +6796,7 @@ a.link.danger {
   position: relative;
   flex: 1;
   height: 22px;
-  background: var(--color-surface-muted, #f1f3f5);
+  background: var(--color-bg-subtle);
   border-radius: 6px;
 }
 
@@ -6792,17 +6809,17 @@ a.link.danger {
   align-items: center;
   padding: 0 6px;
   font-size: 0.7rem;
-  color: #fff;
+  color: var(--color-on-primary);
   white-space: nowrap;
   overflow: hidden;
 }
 
 .conflict-timeline-bar.existing {
-  background: #2563eb;
+  background: var(--color-info);
 }
 
 .conflict-timeline-bar.new {
-  background: #059669;
+  background: var(--color-success);
 }
 
 .conflict-timeline-bar.overlap {
@@ -6819,7 +6836,7 @@ a.link.danger {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md, 10px);
   padding: var(--space-3);
-  background: var(--color-surface-muted, #f8f9fb);
+  background: var(--color-bg-subtle);
 }
 
 .schedule-conflict-stats-row {
@@ -6843,7 +6860,7 @@ a.link.danger {
 }
 
 .schedule-conflict-stat-value.ok {
-  color: #059669;
+  color: var(--color-success);
 }
 
 .schedule-conflict-stat-value.danger {
@@ -6891,7 +6908,7 @@ a.link.danger {
 
 .timeoff-section-number {
   background: var(--color-primary);
-  color: #fff;
+  color: var(--color-on-primary);
   border-color: var(--color-primary);
 }
 
@@ -6937,7 +6954,7 @@ a.link.danger {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md, 10px);
   padding: var(--space-3);
-  background: var(--color-surface-muted, #f8f9fb);
+  background: var(--color-bg-subtle);
 }
 
 .timeoff-impact-date {

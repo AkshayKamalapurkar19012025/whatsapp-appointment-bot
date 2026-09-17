@@ -741,7 +741,7 @@ export default function AppointmentsPanel({
 
       <div className="dashboard-grid dashboard-grid-6 opd-kpi-grid">
         <div className="stat-card">
-          <span className="stat-icon opd-icon-total" aria-hidden="true">
+          <span className="stat-icon" aria-hidden="true">
             <CalendarCheck size={20} weight="bold" />
           </span>
           <div className="stat-body">
@@ -753,7 +753,7 @@ export default function AppointmentsPanel({
           </div>
         </div>
         <div className="stat-card">
-          <span className="stat-icon opd-icon-waiting" aria-hidden="true">
+          <span className="stat-icon tone-warning" aria-hidden="true">
             <HourglassMedium size={20} weight="bold" />
           </span>
           <div className="stat-body">
@@ -765,7 +765,7 @@ export default function AppointmentsPanel({
           </div>
         </div>
         <div className="stat-card">
-          <span className="stat-icon opd-icon-consultation" aria-hidden="true">
+          <span className="stat-icon tone-info" aria-hidden="true">
             <UsersThree size={20} weight="bold" />
           </span>
           <div className="stat-body">
@@ -774,7 +774,7 @@ export default function AppointmentsPanel({
           </div>
         </div>
         <div className="stat-card">
-          <span className="stat-icon opd-icon-completed" aria-hidden="true">
+          <span className="stat-icon tone-success" aria-hidden="true">
             <CheckCircle size={20} weight="bold" />
           </span>
           <div className="stat-body">
@@ -784,7 +784,7 @@ export default function AppointmentsPanel({
           </div>
         </div>
         <div className="stat-card">
-          <span className="stat-icon opd-icon-noshow" aria-hidden="true">
+          <span className="stat-icon tone-danger" aria-hidden="true">
             <XCircle size={20} weight="bold" />
           </span>
           <div className="stat-body">
@@ -794,7 +794,7 @@ export default function AppointmentsPanel({
           </div>
         </div>
         <div className="stat-card">
-          <span className="stat-icon opd-icon-collected" aria-hidden="true">
+          <span className="stat-icon" aria-hidden="true">
             <Wallet size={20} weight="bold" />
           </span>
           <div className="stat-body">
