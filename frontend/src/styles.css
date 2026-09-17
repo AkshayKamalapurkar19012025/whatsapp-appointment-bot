@@ -1958,6 +1958,225 @@ a.link.danger {
   margin-top: var(--space-1);
 }
 
+/* Add Doctor wizard (AddDoctorModal.tsx) -- a two-column stepper +
+   content layout on top of the shared .modal-overlay/.modal-panel
+   shell, same pattern as .schedule-modal-panel but wider and with a
+   left VERTICAL step nav instead of a top horizontal one (the wizard's
+   own reference layout calls for this, and nothing else in the app
+   currently needs it -- .doctor-wizard-* rather than overloading
+   .schedule-stepper-* for an unrelated shape). */
+.doctor-wizard-panel {
+  max-width: 880px;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  max-height: 88vh;
+}
+
+.doctor-wizard-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  width: 100%;
+}
+
+.doctor-wizard-stepper {
+  background: var(--color-bg-subtle);
+  border-right: 1px solid var(--color-border);
+  padding: var(--space-5) var(--space-4);
+  display: flex;
+  flex-direction: column;
+}
+
+.doctor-wizard-title {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.doctor-wizard-subtitle {
+  margin: 2px 0 var(--space-4);
+  font-size: 0.85rem;
+}
+
+.doctor-wizard-stepper ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.doctor-wizard-step-btn {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  width: 100%;
+  background: none;
+  border: none;
+  padding: var(--space-2) 0;
+  text-align: left;
+  cursor: pointer;
+  position: relative;
+}
+
+.doctor-wizard-step-btn:disabled {
+  cursor: default;
+}
+
+/* Connecting line between step dots -- same idea as
+   .schedule-stepper-line, drawn per-item rather than one absolutely
+   positioned rail, so it naturally stops after the last step. */
+.doctor-wizard-step:not(:last-child) .doctor-wizard-step-btn::after {
+  content: '';
+  position: absolute;
+  left: 13px;
+  top: 32px;
+  bottom: -8px;
+  width: 2px;
+  background: var(--color-border-strong);
+}
+
+.doctor-wizard-step.done .doctor-wizard-step-btn::after {
+  background: var(--color-success);
+}
+
+.doctor-wizard-step-dot {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  border: 2px solid var(--color-border-strong);
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  z-index: 1;
+}
+
+.doctor-wizard-step.current .doctor-wizard-step-dot {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+.doctor-wizard-step.done .doctor-wizard-step-dot {
+  background: var(--color-success);
+  border-color: var(--color-success);
+  color: var(--color-on-primary);
+}
+
+.doctor-wizard-step-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.doctor-wizard-step-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--color-text);
+}
+
+.doctor-wizard-step.upcoming .doctor-wizard-step-label {
+  color: var(--color-text-muted);
+}
+
+.doctor-wizard-step-sublabel {
+  font-size: 0.78rem;
+}
+
+.doctor-wizard-note {
+  margin-top: auto;
+  padding-top: var(--space-4);
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+  background: var(--color-primary-soft);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+}
+
+.doctor-wizard-content {
+  padding: var(--space-5);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.doctor-wizard-content-heading {
+  margin: 0 0 2px;
+}
+
+.doctor-wizard-content-subtitle {
+  margin: 0 0 var(--space-4);
+}
+
+.doctor-wizard-footer {
+  margin-top: auto;
+  padding-top: var(--space-4);
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.doctor-wizard-review-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.doctor-wizard-review-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  margin-bottom: var(--space-2);
+}
+
+.doctor-wizard-review-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.doctor-wizard-review-list dt {
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.doctor-wizard-review-list dd {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 720px) {
+  .doctor-wizard-panel {
+    max-height: 92vh;
+  }
+  .doctor-wizard-layout {
+    grid-template-columns: 1fr;
+  }
+  .doctor-wizard-stepper {
+    border-right: none;
+    border-bottom: 1px solid var(--color-border);
+    padding: var(--space-4);
+  }
+  .doctor-wizard-stepper ol {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
+  .doctor-wizard-step:not(:last-child) .doctor-wizard-step-btn::after {
+    display: none;
+  }
+  .doctor-wizard-note {
+    display: none;
+  }
+}
+
 /* Admin doctor workspace "Profile" page (DoctorProfileSection.tsx):
    a left sub-nav (Profile / Education & Credentials) next to the
    section content -- stacks above the content below 720px. */
