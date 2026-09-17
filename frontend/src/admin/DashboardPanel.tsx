@@ -30,6 +30,13 @@ interface StatCardDef {
   icon: React.ReactElement
   // Grid width in the 4-column dashboard-grid -- default 1.
   span?: 1 | 2
+  // Semantic tone for the icon badge (.stat-icon.tone-*, styles.css) --
+  // omitted means the plain default primary teal, for neutral volume
+  // counts that aren't themselves a good/bad signal (today's/upcoming
+  // appointments). A status this genuinely represents good/bad news
+  // always gets a matching tone, so e.g. Cancelled/Rejected don't sit
+  // in the same teal badge as Confirmed/Completed.
+  tone?: 'success' | 'warning' | 'danger' | 'info'
 }
 
 const OVERVIEW_CARDS: StatCardDef[] = [
@@ -38,21 +45,33 @@ const OVERVIEW_CARDS: StatCardDef[] = [
 ]
 
 const REVIEW_CARDS: StatCardDef[] = [
-  { key: 'pending_appointments', label: 'Pending Appointments', icon: <HourglassMedium size={22} weight="regular" />, span: 2 },
-  { key: 'confirmed_appointments', label: 'Confirmed Appointments', icon: <UserCheck size={22} weight="regular" />, span: 2 },
+  {
+    key: 'pending_appointments',
+    label: 'Pending Appointments',
+    icon: <HourglassMedium size={22} weight="regular" />,
+    span: 2,
+    tone: 'warning',
+  },
+  {
+    key: 'confirmed_appointments',
+    label: 'Confirmed Appointments',
+    icon: <UserCheck size={22} weight="regular" />,
+    span: 2,
+    tone: 'success',
+  },
 ]
 
 const STATUS_CARDS: StatCardDef[] = [
-  { key: 'cancelled_appointments', label: 'Cancelled Appointments', icon: <XCircle size={22} weight="regular" /> },
-  { key: 'rejected_appointments', label: 'Rejected Appointments', icon: <XCircle size={22} weight="regular" /> },
-  { key: 'completed_appointments', label: 'Completed Appointments', icon: <CheckCircle size={22} weight="regular" /> },
-  { key: 'visited_appointments', label: 'Visited Appointments', icon: <CalendarBlank size={22} weight="regular" /> },
+  { key: 'cancelled_appointments', label: 'Cancelled Appointments', icon: <XCircle size={22} weight="regular" />, tone: 'danger' },
+  { key: 'rejected_appointments', label: 'Rejected Appointments', icon: <XCircle size={22} weight="regular" />, tone: 'danger' },
+  { key: 'completed_appointments', label: 'Completed Appointments', icon: <CheckCircle size={22} weight="regular" />, tone: 'success' },
+  { key: 'visited_appointments', label: 'Visited Appointments', icon: <CalendarBlank size={22} weight="regular" />, tone: 'success' },
 ]
 
 function StatCard({ def, value }: { def: StatCardDef; value: number }) {
   return (
     <div className={`stat-card${def.span === 2 ? ' stat-card--wide' : ''}`}>
-      <span className="stat-icon" aria-hidden="true">
+      <span className={`stat-icon${def.tone ? ` tone-${def.tone}` : ''}`} aria-hidden="true">
         {def.icon}
       </span>
       <div className="stat-body">
@@ -172,7 +191,7 @@ export default function DashboardPanel({
                   labelFormatter={(value) => String(value)}
                   contentStyle={{ borderRadius: 8, border: '1px solid var(--color-border)', fontSize: 13 }}
                 />
-                <Line type="monotone" dataKey="count" stroke="#1f7a63" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="count" stroke="var(--color-primary)" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -193,7 +212,7 @@ export default function DashboardPanel({
                   labelFormatter={(value) => String(value)}
                   contentStyle={{ borderRadius: 8, border: '1px solid var(--color-border)', fontSize: 13 }}
                 />
-                <Line type="monotone" dataKey="count" stroke="#9bcddc" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="count" stroke="var(--color-info)" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>

@@ -23,7 +23,27 @@ export interface AppointmentActionHandlers {
   // one-click version of either from the row.
   onCollectPayment: (a: AdminAppointment) => void
   onWaiveCharge: (a: AdminAppointment) => void
+  // Navigates to this doctor's live queue (QueuePanel/QueueSection --
+  // reused, not reimplemented). Optional: only OPD Today
+  // (AppointmentsPanel.tsx) currently tracks queue position well
+  // enough to offer this as a row action; every other caller of
+  // buildAppointmentActions omits it and keeps the pre-existing
+  // CHECKED_IN behavior below (queuePosition stays undefined for
+  // them).
+  onOpenQueue?: (a: AdminAppointment) => void
 }
+
+// Whether this CHECKED_IN-and-paid/waived appointment is the doctor's
+// current "now serving" token or one of the others still waiting
+// behind it -- the exact same rule app/api/doctors.py's
+// get_doctor_queue uses (lowest token_number among today's still-
+// CHECKED_IN rows for that doctor), computed by the caller from
+// whichever source it already has (OPD Today derives it from the
+// live queue endpoint -- see AppointmentsPanel.tsx's fetchQueues).
+// Passed in rather than recomputed here since buildAppointmentActions
+// only ever sees one appointment at a time, never its doctor's other
+// queued patients.
+export type QueuePosition = 'serving' | 'waiting'
 
 interface ActionDescriptor {
   key: string
@@ -63,6 +83,7 @@ export function buildAppointmentActions(
   a: AdminAppointment,
   h: AppointmentActionHandlers,
   isAdmin: boolean,
+  queuePosition?: QueuePosition,
 ): AppointmentActionSet {
   const viewDetails: ActionDescriptor = { key: 'details', label: 'View details', onClick: () => h.onViewDetails(a), variant: 'secondary' }
   const reschedule: ActionDescriptor = { key: 'reschedule', label: 'Reschedule', onClick: () => h.onReschedule(a), variant: 'secondary' }
@@ -120,6 +141,27 @@ export function buildAppointmentActions(
           ? { key: 'waive-charge', label: 'Waive Charge', onClick: () => h.onWaiveCharge(a), variant: 'secondary' }
           : null,
         overflow: [viewDetails],
+        note: null,
+      }
+    }
+    // Paid/waived, so a token exists -- genuinely in this doctor's
+    // queue now, not just "checked in". Callers that know this row's
+    // queue position (OPD Today) get the queue-appropriate primary
+    // action instead of the plain "Mark completed" shortcut below;
+    // "Mark completed" itself is never removed, just moved to
+    // overflow, since completing anyone other than who the queue
+    // actually has up (now_serving) out of turn is exactly the thing
+    // routing through the queue screen avoids.
+    const complete: ActionDescriptor = { key: 'complete', label: 'Mark completed', onClick: () => h.onComplete(a), variant: 'secondary' }
+    if (queuePosition === 'serving') {
+      return { primary: { ...viewDetails, label: 'View Visit', variant: 'primary' }, secondary: null, overflow: [complete], note: null }
+    }
+    if (queuePosition === 'waiting' && h.onOpenQueue) {
+      const openQueue = h.onOpenQueue
+      return {
+        primary: { key: 'open-queue', label: 'Open Queue', onClick: () => openQueue(a), variant: 'primary' },
+        secondary: null,
+        overflow: [viewDetails, complete],
         note: null,
       }
     }

@@ -102,7 +102,7 @@ function AlertDialogAction({
         'inline-flex cursor-pointer items-center justify-center rounded-[var(--radius-sm)] border border-transparent',
         'px-4 py-2.5 text-[0.95rem] font-semibold text-[var(--color-on-primary)] transition-colors',
         variant === 'danger'
-          ? 'bg-[var(--color-danger)] hover:bg-[#8f1f19]'
+          ? 'bg-[var(--color-danger)] hover:bg-[var(--color-danger-hover)]'
           : 'bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)]',
         className,
       )}

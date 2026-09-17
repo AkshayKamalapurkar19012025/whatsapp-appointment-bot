@@ -90,6 +90,19 @@ export default function AdminApp() {
     setNavResetKey((n) => n + 1)
   }
 
+  // Shared by DoctorsPanel's "View queue" and AppointmentsPanel's
+  // per-row "Open Queue" action -- both just want "take me to this
+  // doctor's live queue", same QueuePanel.tsx destination and the same
+  // localStorage handoff it already reads on mount.
+  function goToQueueForDoctor(doctorId: number) {
+    try {
+      localStorage.setItem('admin_queue_panel_last_doctor_id', String(doctorId))
+    } catch {
+      // Best-effort only, same as QueuePanel's own write to this key.
+    }
+    goTo('queue')
+  }
+
   if (checkingSession) {
     return (
       <div className="page">
@@ -236,26 +249,18 @@ export default function AdminApp() {
             />
           )}
           {section === 'appointments' && (
-            <AppointmentsPanel key={navResetKey} onBookAppointment={() => goTo('book-appointment')} isAdmin={isAdmin} />
+            <AppointmentsPanel
+              key={navResetKey}
+              onBookAppointment={() => goTo('book-appointment')}
+              onGoToQueue={goToQueueForDoctor}
+              isAdmin={isAdmin}
+            />
           )}
           {section === 'book-appointment' && (
             <BookAppointmentPanel key={navResetKey} onViewAppointments={() => goTo('appointments')} />
           )}
           {section === 'queue' && <QueuePanel key={navResetKey} />}
-          {section === 'doctors' && (
-            <DoctorsPanel
-              key={navResetKey}
-              isAdmin={isAdmin}
-              onGoToQueue={(doctorId) => {
-                try {
-                  localStorage.setItem('admin_queue_panel_last_doctor_id', String(doctorId))
-                } catch {
-                  // Best-effort only, same as QueuePanel's own write to this key.
-                }
-                goTo('queue')
-              }}
-            />
-          )}
+          {section === 'doctors' && <DoctorsPanel key={navResetKey} isAdmin={isAdmin} onGoToQueue={goToQueueForDoctor} />}
           {section === 'departments' && <DepartmentsPanel key={navResetKey} isAdmin={isAdmin} />}
           {section === 'appointment-types' && <AppointmentTypesPanel key={navResetKey} isAdmin={isAdmin} />}
           {section === 'patients' && <PatientsPanel key={navResetKey} />}
