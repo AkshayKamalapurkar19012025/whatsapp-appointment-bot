@@ -21,23 +21,30 @@ export default function ScheduleMonthView({
   blocks,
   oneOffBlocks,
   departments,
-  defaultDuration,
+  previewDurationLabel,
   bufferMinutes,
   isAdmin,
   onDateClick,
   onAddSchedule,
-  onChangeDuration,
   onChangeBuffer,
 }: {
   blocks: ScheduleBlock[]
   oneOffBlocks: DoctorBlockEntry[]
   departments: Department[]
-  defaultDuration: number
+  // Unused by this component's own rendering (day cells read straight
+  // off each schedule segment's actual start/end time, never chunked by
+  // a duration) -- only threaded through so callers have one consistent
+  // prop list across ScheduleMonthView/ConfigureScheduleModal/
+  // DuplicateScheduleModal. Kept as a named prop (not omitted) so it's
+  // obvious at the call site that this component is duration-aware for
+  // the Slot settings popover's label, even though it doesn't use the
+  // number itself.
+  previewDurationMinutes: number
+  previewDurationLabel: string | null
   bufferMinutes: number
   isAdmin: boolean
   onDateClick: (dateStr: string) => void
   onAddSchedule: () => void
-  onChangeDuration: (minutes: number) => void
   onChangeBuffer: (minutes: number) => void
 }) {
   // Dismisses on an outside click or Escape (usePreviewPopover, shared
@@ -91,9 +98,8 @@ export default function ScheduleMonthView({
               {slotSettingsOpen && (
                 <div className="schedule-month-jump-popover schedule-slot-settings-popover">
                   <SlotSettingsFields
-                    defaultDuration={defaultDuration}
                     bufferMinutes={bufferMinutes}
-                    onChangeDuration={onChangeDuration}
+                    previewDurationLabel={previewDurationLabel}
                     onChangeBuffer={onChangeBuffer}
                   />
                 </div>
