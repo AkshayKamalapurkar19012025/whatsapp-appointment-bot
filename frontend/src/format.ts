@@ -57,6 +57,32 @@ export function formatPatientId(id: number): string {
   return `PT-${String(id).padStart(5, '0')}`
 }
 
+const GENDER_LABELS: Record<string, string> = { MALE: 'Male', FEMALE: 'Female', OTHER: 'Other' }
+
+// "28 yrs · Male" (OPD Today redesign's patient sub-line) -- both
+// date_of_birth and gender are real, already-stored Patient fields
+// (migrations/0023, both optional), just never combined into one
+// display string before. Age is a plain whole-years calculation from
+// the stored date, not a new persisted value. Returns null only when
+// NEITHER is set, so a patient with just one of the two still shows
+// that one rather than disappearing entirely.
+export function formatAgeGender(dateOfBirth: string | null, gender: string | null): string | null {
+  let age: number | null = null
+  if (dateOfBirth) {
+    const dob = new Date(`${dateOfBirth}T00:00:00`)
+    if (!Number.isNaN(dob.getTime())) {
+      const today = new Date()
+      age = today.getFullYear() - dob.getFullYear()
+      const beforeBirthdayThisYear =
+        today.getMonth() < dob.getMonth() || (today.getMonth() === dob.getMonth() && today.getDate() < dob.getDate())
+      if (beforeBirthdayThisYear) age -= 1
+    }
+  }
+  const genderLabel = gender ? GENDER_LABELS[gender] ?? null : null
+  const parts = [age !== null ? `${age} yrs` : null, genderLabel].filter((p): p is string => Boolean(p))
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
 // Unlike formatDate/formatTime above, this is for audit-log-style
 // timestamps (e.g. "doctor added on") that are NOT a clinic wall-clock
 // time -- there's no doctor-local zone to preserve here, just "when did
