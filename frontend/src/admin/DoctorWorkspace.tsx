@@ -116,6 +116,32 @@ export default function DoctorWorkspace({
   const [deactivateOpen, setDeactivateOpen] = useState(false)
   const [deactivating, setDeactivating] = useState(false)
   const [deactivateError, setDeactivateError] = useState<string | null>(null)
+  // Gates the Schedule tab: without a real appointment type assigned,
+  // the Working-Hours Preview has no real duration to chop slots by
+  // (ScheduleGrid's own previewDurationMinutes falls back to the
+  // doctor's disconnected default_duration_minutes -- see that file's
+  // comment), which is exactly what produced the "preview slot time
+  // doesn't match what's bookable" confusion this now heads off at the
+  // source. null while loading, so the gate doesn't flash on before the
+  // first fetch resolves. Refetched on every tab change (cheap, single
+  // list call) rather than threaded through AppointmentTypeAssignment's
+  // own state, so assigning a type on the Types tab and switching to
+  // Schedule immediately reflects it.
+  const [hasAppointmentTypes, setHasAppointmentTypes] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    listAppointmentTypesForDoctor(doctor.id)
+      .then((types) => {
+        if (!cancelled) setHasAppointmentTypes(types.length > 0)
+      })
+      .catch(() => {
+        if (!cancelled) setHasAppointmentTypes(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [doctor.id, tab])
   // The Schedule tab no longer stages edits into a page-wide draft --
   // every create/edit now persists immediately through the Configure
   // Schedule popup (its own discard-confirm guards unsaved *popup*
@@ -249,11 +275,41 @@ export default function DoctorWorkspace({
         />
       )}
       {tab === 'appointments' && <DoctorAppointmentsTab doctor={doctor} isAdmin={isAdmin} />}
-      {tab === 'schedule' && <ScheduleGrid doctor={doctor} isAdmin={isAdmin} />}
+      {tab === 'schedule' &&
+        (hasAppointmentTypes === false ? (
+          <ScheduleNeedsAppointmentType onGoToTypes={() => guardedSetTab('types')} />
+        ) : (
+          <ScheduleGrid doctor={doctor} isAdmin={isAdmin} />
+        ))}
       {tab === 'blocks' && <TimeOffSection doctor={doctor} />}
       {tab === 'departments' && <DepartmentAssignment doctor={doctor} isAdmin={isAdmin} />}
       {tab === 'types' && <AppointmentTypeAssignment doctor={doctor} isAdmin={isAdmin} />}
       {tab === 'profile' && <DoctorProfileSection doctor={doctor} isAdmin={isAdmin} />}
+    </div>
+  )
+}
+
+// The Schedule tab's gate -- shown instead of ScheduleGrid until this
+// doctor has at least one real appointment type assigned. Scheduling
+// without one used to fall back to a disconnected doctor-level preview
+// duration, producing a Working-Hours Preview whose slot boundaries
+// didn't match any real bookable time (the source of a real reported
+// confusion). Requiring the type first removes that failure mode
+// entirely instead of just labeling around it.
+function ScheduleNeedsAppointmentType({ onGoToTypes }: { onGoToTypes: () => void }) {
+  return (
+    <div className="state-block empty">
+      <span className="state-icon" aria-hidden="true">
+        <Tag size={28} weight="light" />
+      </span>
+      <strong>Add an appointment type first</strong>
+      <p className="muted" style={{ margin: 0, maxWidth: 360 }}>
+        This doctor's schedule is chopped into bookable slots by an appointment type's real duration. Assign at
+        least one before configuring working hours, so the preview always matches what patients can actually book.
+      </p>
+      <button type="button" className="btn btn-sm" onClick={onGoToTypes}>
+        Go to Appointment types
+      </button>
     </div>
   )
 }
@@ -912,7 +968,7 @@ function DepartmentAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmin: bo
         <p className="muted">Not assigned to any department.</p>
       )}
       {isAdmin && unassigned.length > 0 && (
-        <form className="inline-form wrap" onSubmit={handleAssign}>
+        <form className="inline-form wrap assign-form-card" onSubmit={handleAssign}>
           <select value={selected} onChange={(e) => setSelected(e.target.value)} required>
             <option value="">Add department…</option>
             {unassigned.map((d) => (
@@ -921,9 +977,11 @@ function DepartmentAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmin: bo
               </option>
             ))}
           </select>
-          <button type="submit">+ Add department</button>
+          <button type="submit" className="btn btn-sm">
+            + Add department
+          </button>
           {selected && (
-            <button type="button" className="link" onClick={() => setSelected('')}>
+            <button type="button" className="btn-secondary btn btn-sm" onClick={() => setSelected('')}>
               Cancel
             </button>
           )}
@@ -1144,7 +1202,7 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
       )}
 
       {isAdmin && showForm && unassigned.length > 0 && (
-        <form className="inline-form wrap" onSubmit={handleAssign}>
+        <form className="inline-form wrap assign-form-card" onSubmit={handleAssign}>
           <select value={selected} onChange={(e) => setSelected(e.target.value)} required>
             <option value="">Add appointment type…</option>
             {unassigned.map((c) => (
@@ -1171,7 +1229,7 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
             <input type="number" min={0} step="1" placeholder="0" value={fee} onChange={(e) => setFee(e.target.value)} />
           </label>
 
-          <button type="submit" className="btn-sm">
+          <button type="submit" className="btn btn-sm">
             Save
           </button>
           <button type="button" className="btn-secondary btn btn-sm" onClick={resetAssignForm}>
