@@ -21,6 +21,7 @@ import {
 import { ApiError, createDoctorSchedule, deleteDoctorSchedule, listAdminAppointments } from '../api'
 import type { AdminAppointment, Department } from '../types'
 import { formatDate, formatTimeOfDay } from '../format'
+import { usePreviewPopover } from '../usePreviewPopover'
 import { TimeCombobox } from '../components/ui/time-combobox'
 import AdminDatePicker from './AdminDatePicker'
 import SlotSettingsFields from './SlotSettingsFields'
@@ -207,8 +208,14 @@ export default function ConfigureScheduleModal({
   const [previewDate, setPreviewDate] = useState<string | null>(mode === 'edit' ? initialDate : null)
   const [previewWeekday, setPreviewWeekday] = useState<number | null>(mode === 'edit' ? clickedWeekday : null)
   const [previewViewMode, setPreviewViewMode] = useState<'timeline' | 'list'>('timeline')
-  const [slotSettingsOpen, setSlotSettingsOpen] = useState(false)
-  const [actionsMenuOpen, setActionsMenuOpen] = useState(false)
+  // Dismiss on an outside click or Escape, not just by clicking the
+  // trigger again -- same fix as ScheduleMonthView.tsx/MonthCalendar.tsx's
+  // own Slot settings/jump popovers (usePreviewPopover). slotSettingsOpen
+  // backs two different render sites (step 3's "Change slot settings" and
+  // step 4's "Edit" card, only one mounted at a time), so the same
+  // containerRef is attached to whichever one is actually rendered.
+  const { open: slotSettingsOpen, setOpen: setSlotSettingsOpen, containerRef: slotSettingsRef } = usePreviewPopover<HTMLDivElement>()
+  const { open: actionsMenuOpen, setOpen: setActionsMenuOpen, containerRef: actionsMenuRef } = usePreviewPopover<HTMLDivElement>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [confirmDiscardOpen, setConfirmDiscardOpen] = useState(false)
@@ -722,7 +729,7 @@ export default function ConfigureScheduleModal({
             </h3>
             {mode === 'edit' && step !== 'success' && step !== 'conflict' && <span className="schedule-modal-badge">Existing schedule</span>}
             {mode === 'edit' && step !== 'success' && step !== 'conflict' && (
-              <div className="schedule-month-jump schedule-actions-menu">
+              <div className="schedule-month-jump schedule-actions-menu" ref={actionsMenuRef}>
                 <button
                   type="button" className="icon-btn"
                   aria-label="Schedule actions"
@@ -1336,7 +1343,7 @@ export default function ConfigureScheduleModal({
                 </dd>
               </dl>
 
-              <div className="schedule-month-jump">
+              <div className="schedule-month-jump" ref={slotSettingsRef}>
                 <button
                   type="button" className="link"
                   onClick={() => setSlotSettingsOpen((v) => !v)}
@@ -1572,7 +1579,7 @@ export default function ConfigureScheduleModal({
                       <div>Buffer: {bufferMinutes === 0 ? 'No buffer' : `${bufferMinutes} minutes`}</div>
                     </span>
                   </div>
-                  <div className="schedule-month-jump">
+                  <div className="schedule-month-jump" ref={slotSettingsRef}>
                     <button
                       type="button" className="btn-secondary btn btn-sm"
                       onClick={() => setSlotSettingsOpen((v) => !v)} disabled={busy}

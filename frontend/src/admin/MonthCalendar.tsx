@@ -1,5 +1,6 @@
 import { useRef, useState, type ReactNode } from 'react'
 import { CalendarBlank } from '@phosphor-icons/react'
+import { usePreviewPopover } from '../usePreviewPopover'
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -45,7 +46,10 @@ export default function MonthCalendar({
   const todayIso = isoDate(today.getFullYear(), today.getMonth() + 1, today.getDate())
   const [year, setYear] = useState(today.getFullYear())
   const [month, setMonth] = useState(today.getMonth() + 1)
-  const [jumpOpen, setJumpOpen] = useState(false)
+  // Dismisses on an outside click or Escape, not just by clicking the
+  // calendar icon again -- see ScheduleMonthView.tsx's own Slot
+  // settings popover for the same fix and why (usePreviewPopover).
+  const { open: jumpOpen, setOpen: setJumpOpen, containerRef: jumpRef } = usePreviewPopover<HTMLDivElement>()
   // Briefly rings today's cell after "Today" is clicked, so jumping back
   // to the current month makes it immediately obvious which date that is.
   const [highlightedDate, setHighlightedDate] = useState<string | null>(null)
@@ -89,7 +93,7 @@ export default function MonthCalendar({
         <button type="button" className="btn-secondary btn btn-sm" onClick={goNextMonth} aria-label="Next month">
           {'›'}
         </button>
-        <div className="schedule-month-jump">
+        <div className="schedule-month-jump" ref={jumpRef}>
           <button
             type="button"
             className="btn-secondary btn btn-sm"
