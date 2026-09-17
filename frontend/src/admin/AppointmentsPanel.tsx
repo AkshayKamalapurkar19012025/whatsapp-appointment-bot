@@ -1,14 +1,20 @@
 import { Fragment, useEffect, useState } from 'react'
 import {
   CalendarBlank,
+  CalendarCheck,
   CaretDown,
   CaretLeft,
   CaretRight,
+  CheckCircle,
   Clock,
   FunnelSimple,
+  HourglassMedium,
   MagnifyingGlass,
   Plus,
   ArrowClockwise,
+  UsersThree,
+  Wallet,
+  XCircle,
 } from '@phosphor-icons/react'
 import { useStaggerReveal } from '../useStaggerReveal'
 import {
@@ -735,6 +741,9 @@ export default function AppointmentsPanel({
 
       <div className="dashboard-grid dashboard-grid-6 opd-kpi-grid">
         <div className="stat-card">
+          <span className="stat-icon opd-icon-total" aria-hidden="true">
+            <CalendarCheck size={20} weight="bold" />
+          </span>
           <div className="stat-body">
             <span className="stat-value">{totalVisits}</span>
             <span className="stat-label">Total Visits</span>
@@ -744,6 +753,9 @@ export default function AppointmentsPanel({
           </div>
         </div>
         <div className="stat-card">
+          <span className="stat-icon opd-icon-waiting" aria-hidden="true">
+            <HourglassMedium size={20} weight="bold" />
+          </span>
           <div className="stat-body">
             <span className="stat-value">{isTodayScope ? waitingCount : '—'}</span>
             <span className="stat-label">Waiting</span>
@@ -753,12 +765,18 @@ export default function AppointmentsPanel({
           </div>
         </div>
         <div className="stat-card">
+          <span className="stat-icon opd-icon-consultation" aria-hidden="true">
+            <UsersThree size={20} weight="bold" />
+          </span>
           <div className="stat-body">
             <span className="stat-value">{isTodayScope ? inConsultationCount : '—'}</span>
             <span className="stat-label">In Consultation</span>
           </div>
         </div>
         <div className="stat-card">
+          <span className="stat-icon opd-icon-completed" aria-hidden="true">
+            <CheckCircle size={20} weight="bold" />
+          </span>
           <div className="stat-body">
             <span className="stat-value">{completedCount}</span>
             <span className="stat-label">Completed</span>
@@ -766,6 +784,9 @@ export default function AppointmentsPanel({
           </div>
         </div>
         <div className="stat-card">
+          <span className="stat-icon opd-icon-noshow" aria-hidden="true">
+            <XCircle size={20} weight="bold" />
+          </span>
           <div className="stat-body">
             <span className="stat-value">{noShowCount}</span>
             <span className="stat-label">No Show</span>
@@ -773,6 +794,9 @@ export default function AppointmentsPanel({
           </div>
         </div>
         <div className="stat-card">
+          <span className="stat-icon opd-icon-collected" aria-hidden="true">
+            <Wallet size={20} weight="bold" />
+          </span>
           <div className="stat-body">
             <span className="stat-value">₹{amountCollected.toLocaleString('en-IN')}</span>
             <span className="stat-label">Amount Collected</span>

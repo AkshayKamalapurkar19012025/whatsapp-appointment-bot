@@ -2568,6 +2568,44 @@ a.link.danger {
   margin-top: 2px;
 }
 
+/* Each OPD Today KPI card's icon badge -- colors sampled directly from
+   the reference mockup screenshot (pale tint bg + a darker, saturated
+   version of the same hue for the icon), not this app's own
+   --color-* tokens, so this card row reads exactly as pictured. Kept
+   scoped to these six classes rather than changing --color-warning-
+   soft/--color-danger-soft/etc. themselves, which are shared by pills
+   and cards on every other admin page -- retinting those globally
+   would shift colors well beyond this one screen. */
+.opd-icon-total {
+  background: #e3f6f0;
+  color: #0c7057;
+}
+
+.opd-icon-waiting {
+  background: #fdf2df;
+  color: #a5680a;
+}
+
+.opd-icon-consultation {
+  background: #e5f3fe;
+  color: #0f54b5;
+}
+
+.opd-icon-completed {
+  background: #e5f6ee;
+  color: #0c7057;
+}
+
+.opd-icon-noshow {
+  background: #fce0e3;
+  color: #b3121d;
+}
+
+.opd-icon-collected {
+  background: #daf3e8;
+  color: #0c7057;
+}
+
 /* -- OPD Today header (AppointmentsPanel.tsx) --------------------- */
 
 .opd-today-header {
@@ -4742,18 +4780,21 @@ a.link.danger {
 /* OPD Today's own WAITING/IN_CONSULTATION buckets (opdStatus in
    AppointmentsPanel.tsx) -- the two states the pre-existing
    .status-checked_in/.status-queued/.status-arrived pills never had to
-   distinguish before this redesign. Warning amber for "waiting, needs
-   attention", primary teal for "actively being seen" -- same two tones
-   already used for that contrast everywhere else in this file, not new
-   colors. */
+   distinguish before this redesign, so unlike those there's no shared,
+   used-elsewhere class to reuse or risk drifting by retinting. Colors
+   here are sampled directly from the reference OPD Today mockup
+   (peach/brown for Waiting, lavender/indigo for In Consultation) --
+   .status-in-consultation in particular needed its own hue since
+   nothing in the existing palette (all teal/green/amber/red) covers
+   purple. */
 .pill.status-waiting {
-  background: var(--color-warning-soft);
-  color: var(--color-warning);
+  background: #fee9ce;
+  color: #92400e;
 }
 
 .pill.status-in-consultation {
-  background: var(--color-primary-soft);
-  color: var(--color-primary-hover);
+  background: #eae6fe;
+  color: #3730a3;
 }
 
 /* AppointmentsPanel.tsx's Payment column -- amount and status shown
