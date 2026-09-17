@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Gear } from '@phosphor-icons/react'
 import type { Department, DoctorBlockEntry } from '../types'
 import { formatTimeOfDay } from '../format'
+import { usePreviewPopover } from '../usePreviewPopover'
 import { dayAvailability, type ScheduleBlock } from './doctorSchedule'
 import MonthCalendar from './MonthCalendar'
 import SlotSettingsFields from './SlotSettingsFields'
@@ -39,7 +40,12 @@ export default function ScheduleMonthView({
   onChangeDuration: (minutes: number) => void
   onChangeBuffer: (minutes: number) => void
 }) {
-  const [slotSettingsOpen, setSlotSettingsOpen] = useState(false)
+  // Dismisses on an outside click or Escape (usePreviewPopover, shared
+  // with DepartmentsPanel/DoctorsPanel's own hover-preview popovers) --
+  // previously a bare useState that only ever closed by clicking the
+  // Slot settings button again, so it stayed open no matter where else
+  // you clicked.
+  const { open: slotSettingsOpen, setOpen: setSlotSettingsOpen, containerRef: slotSettingsRef } = usePreviewPopover<HTMLDivElement>()
   const [filterDepartmentId, setFilterDepartmentId] = useState('')
 
   // Department filter -- real (blocks are actually department_id-scoped
@@ -73,7 +79,7 @@ export default function ScheduleMonthView({
       toolbarExtra={
         isAdmin && (
           <>
-            <div className="schedule-month-jump">
+            <div className="schedule-month-jump" ref={slotSettingsRef}>
               <button
                 type="button"
                 className="btn-secondary btn btn-sm"
