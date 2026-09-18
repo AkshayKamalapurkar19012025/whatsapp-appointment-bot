@@ -2111,6 +2111,17 @@ a.link.danger {
   margin: 0 0 var(--space-4);
 }
 
+/* Compact inline hint under the Years of Experience field -- deliberately
+   not the app's block-level .error banner (background + "!" icon), which
+   reads fine as a form-level submit error but is too heavy squeezed
+   under a single field inside a two-column grid. */
+.doctor-wizard-field-error {
+  display: block;
+  color: var(--color-danger);
+  font-size: 0.78rem;
+  margin-top: 4px;
+}
+
 .doctor-wizard-footer {
   margin-top: auto;
   padding-top: var(--space-4);
