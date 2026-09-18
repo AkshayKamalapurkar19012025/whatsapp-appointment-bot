@@ -3,7 +3,6 @@ from functools import wraps
 import logging
 import re
 
-import psycopg
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -27,13 +26,18 @@ from app.services.availability_engine import (
     DOCTOR_SUMMARY_JOIN_SQL,
 )
 from app.api.doctors import get_doctor_profile_and_education
-from app.services.appointment_services import reschedule_appointment_service
+from app.services.appointment_services import (
+    create_appointment_service,
+    reschedule_appointment_service,
+)
 from app.services.exceptions import (
     AppointmentNotFound,
     AlreadyCancelled,
     AppointmentTypeNotAssigned,
     DoctorBlockConflict,
+    DoctorNotFound,
     OutsideDoctorSchedule,
+    PatientNotFound,
     SlotOverlap,
 )
 
@@ -4022,141 +4026,86 @@ def scheduling(request: SchedulingRequest):
                     )
 
                 # ---------------------------------------------------------
-                # Serialize scheduling attempts for this doctor.
+                # Create the appointment through the single shared service
+                # (app/services/appointment_services.py) instead of a third,
+                # separately-maintained copy of the lock/re-check/INSERT
+                # sequence -- the same rules app/api/appointments.py's REST
+                # endpoint and app/api/patient_scheduling.py's web booking
+                # endpoint already enforce (see that function's own
+                # docstring and step-by-step comments for the advisory
+                # lock, the post-lock overlap re-check, and the
+                # EXCLUDE-constraint backstop underneath the INSERT --
+                # unchanged here, just no longer duplicated).
+                # enforce_scheduling_window stays at its default (False):
+                # the WhatsApp flow has its own date-listing window
+                # (get_available_dates/get_available_slots) and changing
+                # that is a separate decision from this one.
                 #
-                # The earlier availability check is only advisory. Two
-                # concurrent requests can both observe the slot as free unless
-                # the final check and INSERT are serialized at the database
-                # transaction level.
-                # ---------------------------------------------------------
-
-                cur.execute(
-                    "SELECT pg_advisory_xact_lock(%s::bigint)",
-                    (session["doctor_id"],),
-                )
-
-                # ---------------------------------------------------------
-                # Re-check existing appointments after acquiring the lock.
-                # ---------------------------------------------------------
-
-                cur.execute(
-                    """
-                    SELECT start_at, end_at
-                    FROM appointments
-                    WHERE doctor_id = %s
-                      AND start_at < %s
-                      AND end_at > %s
-                      -- status::text: see availability_engine.py's
-                      -- get_available_slots for why (enum-typed
-                      -- appointments.status on some databases).
-                      AND NOT (status::text = ANY(%s::text[]))
-                    """,
-                    (
-                        session["doctor_id"],
-                        end_at,
-                        start_at,
-                        ["CANCELLED", "REJECTED"],
-                    ),
-                )
-
-                existing_appointments = cur.fetchall()
-
-                occupied = False
-
-                for existing_start, existing_end in existing_appointments:
-
-                    existing_start = ensure_aware_datetime(existing_start, doctor_tz)
-                    existing_end = ensure_aware_datetime(existing_end, doctor_tz)
-
-                    if overlaps(
-                        start_at,
-                        end_at,
-                        existing_start,
-                        existing_end,
-                    ):
-                        occupied = True
-                        break
-
-                if occupied:
-                    return _select_date_or_available_doctors_response(
-                        cur,
-                        patient,
-                        session,
-                        error="That slot was just booked by someone else. Please choose another date or slot.",
-                    )
-
-                # ---------------------------------------------------------
-                # Create appointment.
-                #
-                # Second line of defense below this INSERT: a
-                # database-level EXCLUDE constraint on (doctor_id, time
-                # range) for non-cancelled appointments (see
-                # migrations/0003_prevent_overlapping_bookings.sql). The
-                # advisory lock above should make it impossible for two
-                # concurrent requests to both reach this INSERT for an
-                # overlapping slot; the constraint is what guarantees
-                # that even if some future code path ever bypassed the
-                # lock. If it fires, the transaction is already aborted
-                # by Postgres -- roll back explicitly before issuing any
-                # further statements on this connection (including the
-                # session update below), matching the existing
-                # slot-taken response used earlier in this same
-                # function.
+                # The service additionally checks the doctor is active,
+                # the patient exists, the appointment type is still
+                # assigned to the doctor, and the doctor's schedule still
+                # covers the slot -- none of those existed as an inline
+                # re-check here before. The first three are effectively
+                # unreachable this late in the flow (patient/type were
+                # already resolved/checked above); the schedule check is a
+                # genuine behavior addition: a schedule edited between slot
+                # selection and this confirmation now correctly rejects
+                # instead of booking anyway.
                 # ---------------------------------------------------------
 
                 try:
-                    cur.execute(
-                        """
-                        INSERT INTO appointments (
-                            doctor_id,
-                            patient_id,
-                            appointment_type_id,
-                            start_at,
-                            end_at,
-                            status,
-                            booking_source
-                        )
-                        VALUES (
-                            %s,
-                            %s,
-                            %s,
-                            %s,
-                            %s,
-                            'PENDING',
-                            -- Patient self-service through the WhatsApp
-                            -- bot -- same bucket as the web app's own
-                            -- self-service booking (app/api/
-                            -- patient_scheduling.py passes 'ONLINE' for
-                            -- the identical reason). Not refactored to
-                            -- go through create_appointment_service in
-                            -- this phase -- see migrations/0023's
-                            -- report for why this INSERT stays inline.
-                            'ONLINE'
-                        )
-                        RETURNING
-                            id,
-                            doctor_id,
-                            patient_id,
-                            appointment_type_id,
-                            start_at,
-                            end_at,
-                            status
-                        """,
-                        (
-                            session["doctor_id"],
-                            patient["id"],
-                            session["appointment_type_id"],
-                            start_at,
-                            end_at,
-                        ),
+                    result = create_appointment_service(
+                        cur,
+                        doctor_id=session["doctor_id"],
+                        patient_id=patient["id"],
+                        appointment_type_id=session["appointment_type_id"],
+                        start_at=start_at,
+                        booking_source="ONLINE",
                     )
-                except psycopg.errors.ExclusionViolation:
+                except DoctorNotFound:
+                    return _select_date_or_available_doctors_response(
+                        cur,
+                        patient,
+                        session,
+                        error="That doctor is no longer available. Please choose another doctor.",
+                    )
+                except PatientNotFound:
+                    return {
+                        "patient": patient,
+                        "next_step": "ERROR",
+                        "error": "Your patient record could not be found. Please start over.",
+                    }
+                except AppointmentTypeNotAssigned:
+                    return {
+                        "patient": patient,
+                        "next_step": "ERROR",
+                        "error": "The selected appointment type is no longer available.",
+                    }
+                except OutsideDoctorSchedule:
+                    return _select_date_or_available_doctors_response(
+                        cur,
+                        patient,
+                        session,
+                        error="That slot is no longer available because the doctor's schedule has changed. Please choose another date or slot.",
+                    )
+                except DoctorBlockConflict:
+                    return _select_date_or_available_doctors_response(
+                        cur,
+                        patient,
+                        session,
+                        error="That slot is no longer available because the doctor is unavailable. Please choose another date or slot.",
+                    )
+                except SlotOverlap:
+                    # The service raises this instead of returning, for
+                    # both the plain post-lock re-check and the
+                    # EXCLUDE-constraint backstop underneath its INSERT --
+                    # the latter leaves the transaction aborted by
+                    # Postgres, so roll back explicitly before issuing any
+                    # further statement on this connection (including the
+                    # session update below). Matches the inline
+                    # implementation this replaces, which had to do the
+                    # same for its own ExclusionViolation catch.
                     conn.rollback()
-                    logger.warning(
-                        f"Exclusion constraint rejected overlapping scheduling for "
-                        f"doctor_id={session['doctor_id']} (advisory lock should "
-                        f"normally prevent reaching this point -- backstop triggered)"
-                    )
 
                     return _select_date_or_available_doctors_response(
                         cur,
@@ -4164,8 +4113,6 @@ def scheduling(request: SchedulingRequest):
                         session,
                         error="That slot was just booked by someone else. Please choose another date or slot.",
                     )
-
-                row = cur.fetchone()
 
                 # ---------------------------------------------------------
                 # Return to the main menu after successful scheduling.
@@ -4185,14 +4132,18 @@ def scheduling(request: SchedulingRequest):
 
                 return {
                     "patient": patient,
+                    # Only the seven keys this response has always
+                    # returned -- the service's result also carries
+                    # booking_source/duration_minutes/appointment_type_name,
+                    # deliberately not forwarded here (see R1 report).
                     "appointment": {
-                        "id": row[0],
-                        "doctor_id": row[1],
-                        "patient_id": row[2],
-                        "appointment_type_id": row[3],
-                        "start_at": row[4].isoformat(),
-                        "end_at": row[5].isoformat(),
-                        "status": row[6],
+                        "id": result["id"],
+                        "doctor_id": result["doctor_id"],
+                        "patient_id": result["patient_id"],
+                        "appointment_type_id": result["appointment_type_id"],
+                        "start_at": result["start_at"],
+                        "end_at": result["end_at"],
+                        "status": result["status"],
                     },
                     "next_step": "SCHEDULED",
                     "message": (

@@ -9,6 +9,10 @@ the future regardless of what time of day the suite happens to run --
 get_upcoming_scheduled_appointments() filters on start_at > NOW().
 """
 
+import psycopg
+
+import app.api.scheduling as scheduling_module
+from app.services.exceptions import SlotOverlap
 from tests.helpers import seed_basic_doctor, register_patient, schedule_first_available_slot
 
 
@@ -16,6 +20,24 @@ def send(client, whatsapp_number, message):
     return client.post(
         "/api/scheduling", json={"whatsapp_number": whatsapp_number, "message": message}
     ).json()
+
+
+def _drive_to_confirm(client, whatsapp_number, date_option="1", slot_option="1"):
+    """Like schedule_first_available_slot, but stops at CONFIRM_SCHEDULING
+    instead of sending the final "1" -- so a test can intervene (change
+    the doctor's schedule, force an exception) between slot selection and
+    confirmation."""
+    msg = lambda m: client.post(
+        "/api/scheduling", json={"whatsapp_number": whatsapp_number, "message": m}
+    ).json()
+
+    msg("1")  # Book Appointment -> SELECT_SCHEDULING_MODE
+    msg("1")  # Choose a Doctor (Doctor-First)
+    msg("1")  # department 1
+    msg("1")  # doctor 1
+    msg("1")  # appointment type 1
+    msg(date_option)
+    return msg(slot_option)  # now sitting at CONFIRM_SCHEDULING
 
 
 def test_registration_flow_for_new_patient(client):
@@ -241,3 +263,101 @@ def test_invalid_department_selection_reprompts(client, db_connection):
     response = send(client, number, "not-a-number")
     assert response["next_step"] == "SELECT_DEPARTMENT"
     assert "error" in response
+
+
+# ---------------------------------------------------------------------
+# R1: WhatsApp confirm converged onto create_appointment_service() --
+# exercising the two new failure modes that only exist because the
+# service, unlike the inline code it replaced, re-checks the doctor's
+# schedule and can raise SlotOverlap from its EXCLUDE-constraint
+# backstop (not just its plain overlap re-check).
+# ---------------------------------------------------------------------
+
+def test_booking_rejects_when_doctor_schedule_removed_after_slot_selection(client, db_connection):
+    """The service's OutsideDoctorSchedule check is a genuine behavior
+    addition from R1: the inline code it replaced never re-checked the
+    schedule at confirm time, only at slot-selection time. Removing the
+    doctor's schedule row between selection and confirmation must now
+    reject with the same conversational wording used for a block/overlap
+    conflict, not crash or silently book anyway."""
+    seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Schedule Removed")
+    number = "+919000000211"
+    register_patient(client, number, "Schedule Removed Patient")
+
+    at_confirm = _drive_to_confirm(client, number, date_option="5")
+    assert at_confirm["next_step"] == "CONFIRM_SCHEDULING"
+
+    with db_connection.cursor() as cur:
+        cur.execute("DELETE FROM doctor_schedule WHERE doctor_id = %s", (seeded["doctor_id"],))
+    db_connection.commit()
+
+    result = send(client, number, "1")
+
+    assert result["next_step"] != "SCHEDULED"
+    assert result["error"] == (
+        "That slot is no longer available because the doctor's schedule has "
+        "changed. Please choose another date or slot."
+    )
+
+    # The session must still be usable afterward -- this path returns via
+    # _select_date_or_available_doctors_response, not an unhandled error.
+    follow_up = send(client, number, "main menu")
+    assert follow_up["next_step"] == "MAIN_MENU"
+
+
+def test_slot_overlap_from_aborted_transaction_leaves_session_usable(client, db_connection, monkeypatch):
+    """
+    create_appointment_service raises SlotOverlap from two different
+    internal causes: its plain post-lock overlap re-check (transaction
+    still healthy -- already covered by
+    test_concurrency.py::test_simultaneous_whatsapp_bookings_same_slot,
+    which reliably hits this one via the advisory lock serializing two
+    real racing confirms), and its EXCLUDE-constraint backstop underneath
+    the INSERT (transaction left aborted by Postgres). Only the second
+    needs the caller's explicit conn.rollback() before it can safely
+    touch the session again -- see the R1 report's timezone/rollback
+    findings and test_reschedule_service.py's
+    test_rollback_after_exclusion_violation_restores_cursor_usability for
+    the sibling case.
+
+    Reaching the real EXCLUDE-constraint backstop through the actual
+    advisory lock requires a second transaction to slip in during the
+    narrow window between the service's post-lock re-check and its
+    INSERT while bypassing the lock entirely -- exactly the kind of
+    timing-dependent race tests/test_exclusion_constraint.py's Test D
+    resorts to raw, lock-free connections for, and not worth chasing here
+    with a flaky thread race. Instead, this monkeypatches
+    create_appointment_service to reproduce the one property that
+    actually matters to this test: a Postgres-level error occurred inside
+    it (any error aborts a transaction the same way, not just
+    ExclusionViolation specifically) and it raised SlotOverlap anyway --
+    then proves the real scheduling.py code recovers correctly. Without
+    its conn.rollback(), the assertions below fail with
+    psycopg.errors.InFailedSqlTransaction instead of the assertions they
+    write.
+    """
+    seed_basic_doctor(client, db_connection, doctor_name="Dr. Rollback WhatsApp")
+    number = "+919000000212"
+    register_patient(client, number, "Rollback WhatsApp Patient")
+
+    at_confirm = _drive_to_confirm(client, number, date_option="5")
+    assert at_confirm["next_step"] == "CONFIRM_SCHEDULING"
+
+    def _fake_create_appointment_service(cur, **kwargs):
+        try:
+            cur.execute("SELECT 1/0")
+        except psycopg.errors.DivisionByZero:
+            pass
+        raise SlotOverlap()
+
+    monkeypatch.setattr(
+        scheduling_module, "create_appointment_service", _fake_create_appointment_service
+    )
+
+    result = send(client, number, "1")
+
+    assert result["next_step"] != "SCHEDULED"
+    assert result["error"] == "That slot was just booked by someone else. Please choose another date or slot."
+
+    follow_up = send(client, number, "main menu")
+    assert follow_up["next_step"] == "MAIN_MENU"

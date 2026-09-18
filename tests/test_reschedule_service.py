@@ -44,8 +44,8 @@ def _next_weekday_matching(schedule_days, start_from_days_ahead=1):
     return candidate
 
 
-def _at(day: date, hour: int) -> datetime:
-    return datetime.fromisoformat(f"{day.isoformat()}T{hour:02d}:00:00{IST}")
+def _at(day: date, hour: int, tz: str = IST) -> datetime:
+    return datetime.fromisoformat(f"{day.isoformat()}T{hour:02d}:00:00{tz}")
 
 
 def _insert_synthetic_patient(cur, label: str):
@@ -56,13 +56,13 @@ def _insert_synthetic_patient(cur, label: str):
     return cur.fetchone()[0]
 
 
-def _book(cur, seeded, patient_id, hour):
+def _book(cur, seeded, patient_id, hour, tz: str = IST):
     return create_appointment_service(
         cur,
         doctor_id=seeded["doctor_id"],
         patient_id=patient_id,
         appointment_type_id=seeded["appointment_type_id"],
-        start_at=_at(_next_weekday_matching((1, 2, 3, 4, 5)), hour),
+        start_at=_at(_next_weekday_matching((1, 2, 3, 4, 5)), hour, tz=tz),
     )
 
 
@@ -341,7 +341,10 @@ def test_reschedule_result_start_at_is_the_same_instant_though_utc_labeled(clien
 
     with db_connection.cursor() as cur:
         patient_id = _insert_synthetic_patient(cur, "I9")
-        original = _book(cur, seeded, patient_id, 9)
+        # America/New_York, not the file's default IST -- see _book/_at's
+        # tz parameter. Booking this doctor at a literal "09:00+05:30"
+        # would be 23:30 the previous night in their actual timezone.
+        original = _book(cur, seeded, patient_id, 9, tz="-04:00")
     db_connection.commit()
 
     new_day = _next_weekday_matching((1, 2, 3, 4, 5), start_from_days_ahead=2)
