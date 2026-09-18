@@ -291,7 +291,7 @@ def get_patient_by_session_token(cur, token: str):
     cur.execute(
         """
         SELECT s.patient_id, s.expires_at, s.revoked_at, s.last_seen_at,
-               p.name, p.whatsapp_number
+               p.name, p.whatsapp_number, p.hospital_id
         FROM patient_sessions s
         JOIN patients p ON p.id = s.patient_id
         WHERE s.token_hash = %s
@@ -303,7 +303,7 @@ def get_patient_by_session_token(cur, token: str):
     if row is None:
         raise InvalidSession()
 
-    patient_id, expires_at, revoked_at, last_seen_at, name, whatsapp_number = row
+    patient_id, expires_at, revoked_at, last_seen_at, name, whatsapp_number, hospital_id = row
 
     now = _now()
     idle_cutoff = now - timedelta(minutes=SESSION_IDLE_TIMEOUT_MINUTES)
@@ -316,10 +316,15 @@ def get_patient_by_session_token(cur, token: str):
         (now, token_hash),
     )
 
+    # hospital_id (M2): request-scoped tenant context, resolved here so
+    # every endpoint depending on get_current_patient has it available --
+    # not used to filter anything yet (see migrations/0024's own
+    # docstring).
     return {
         "id": patient_id,
         "name": name,
         "whatsapp_number": whatsapp_number,
+        "hospital_id": hospital_id,
     }
 
 
