@@ -77,6 +77,33 @@ export class ApiError extends Error {
   }
 }
 
+// FastAPI's own automatic request-validation errors (a bad type/missing
+// field caught by Pydantic before a route body even runs) return `detail`
+// as a list of {loc, msg, type} objects, not the plain string every
+// hand-written `HTTPException(detail="...")` in this app's routes uses --
+// callers here have only ever seen the plain-string shape, so `detail`
+// landing as an array/object was silently becoming "[object Object]"
+// once coerced into an Error's message. Reduces either shape down to one
+// readable string; unrecognized shapes fall back to the caller's default
+// rather than ever surfacing an unstringified object.
+function stringifyErrorDetail(detail: unknown): string | undefined {
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    const messages = detail.map((entry) => {
+      if (typeof entry === 'string') return entry
+      if (entry && typeof entry === 'object' && 'msg' in entry) {
+        const e = entry as { loc?: unknown[]; msg?: unknown }
+        const field = Array.isArray(e.loc) ? e.loc[e.loc.length - 1] : null
+        return field ? `${field}: ${e.msg}` : String(e.msg)
+      }
+      return null
+    })
+    const joined = messages.filter((m): m is string => m !== null).join('; ')
+    return joined || undefined
+  }
+  return undefined
+}
+
 async function request<T>(
   path: string,
   options: { method?: string; body?: unknown; auth?: boolean | 'staff' } = {},
@@ -111,7 +138,7 @@ async function request<T>(
     let detail = response.statusText
     try {
       const errorBody = await response.json()
-      detail = errorBody.detail ?? detail
+      detail = stringifyErrorDetail(errorBody.detail) ?? detail
     } catch {
       // Non-JSON error body -- fall back to statusText.
     }
@@ -523,7 +550,7 @@ export async function uploadDoctorPhoto(
     let detail = response.statusText
     try {
       const errorBody = await response.json()
-      detail = errorBody.detail ?? detail
+      detail = stringifyErrorDetail(errorBody.detail) ?? detail
     } catch {
       // Non-JSON error body -- fall back to statusText.
     }

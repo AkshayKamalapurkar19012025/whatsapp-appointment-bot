@@ -69,7 +69,18 @@ export default function AddDoctorModal({
   }
 
   const step1Valid = form.name.trim().length > 0 && form.departmentId.trim().length > 0 && form.specialization.trim().length > 0
-  const step2Valid = form.yearsOfExperience.trim().length > 0 && Number(form.yearsOfExperience) >= 0
+  // Matches the backend's own constraint exactly (DoctorCreate.years_of_
+  // experience: int, ge=0, le=80) -- Number.isInteger rejects a typed
+  // decimal like "7.8" client-side, instead of letting it reach
+  // createDoctor() and bounce back as a 422 from Pydantic's own int
+  // parsing (a request-validation error, not one of this app's own
+  // hand-written HTTPException messages).
+  const yearsOfExperienceNum = Number(form.yearsOfExperience)
+  const step2Valid =
+    form.yearsOfExperience.trim().length > 0 &&
+    Number.isInteger(yearsOfExperienceNum) &&
+    yearsOfExperienceNum >= 0 &&
+    yearsOfExperienceNum <= 80
 
   const departmentName = departments.find((d) => String(d.id) === form.departmentId)?.name ?? null
 
@@ -246,10 +257,14 @@ export default function AddDoctorModal({
                       type="number"
                       min={0}
                       max={80}
+                      step={1}
                       placeholder="10"
                       value={form.yearsOfExperience}
                       onChange={(e) => set('yearsOfExperience', e.target.value)}
                     />
+                    {form.yearsOfExperience.trim().length > 0 && !step2Valid && (
+                      <span className="doctor-wizard-field-error">Enter a whole number of years, 0–80.</span>
+                    )}
                   </label>
                 </div>
                 <p className="muted doctor-wizard-content-subtitle">
