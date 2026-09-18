@@ -19,7 +19,7 @@ test_cancel_appointment_service_default_stays_unrestricted exists to
 pin that today's behavior is unchanged, not to claim the gap is closed.
 """
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -137,6 +137,47 @@ def test_create_appointment_service_default_does_not_enforce_booking_window(clie
             appointment_type_id=seeded["appointment_type_id"],
             start_at=start_at,
             # enforce_scheduling_window intentionally omitted (default False).
+        )
+    db_connection.commit()
+
+    assert result["status"] == "PENDING"
+
+
+# ---------------------------------------------------------------------
+# R1 verification: create_appointment_service's step 4 (doctor schedule
+# check) extracts weekday()/time() from whatever tzinfo start_at
+# carries, then compares against doctor_schedule's naive local TIME
+# columns. That's only correct if start_at is already expressed in the
+# doctor's own timezone. app/api/scheduling.py's
+# get_upcoming_scheduled_appointments docstring documents a previously
+# shipped, confirmed-live bug of the identical shape (a psycopg
+# TIMESTAMPTZ read-back normalized to the database session's timezone,
+# UTC in this app, instead of the offset the row was written with) in a
+# sibling code path -- this test checks whether create_appointment_service
+# is exposed to the same failure mode when a slot is expressed in UTC
+# instead of the doctor's local offset.
+# ---------------------------------------------------------------------
+
+def test_create_appointment_service_accepts_utc_expressed_start_at_for_ist_schedule(
+    client, db_connection
+):
+    seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. UTC Boundary")
+
+    scheduling_date = _next_weekday_matching((1, 2, 3, 4, 5))
+    start_at_ist = _at(scheduling_date, 10)  # 10:00 IST -- inside the 09:00-17:00 schedule
+    start_at_utc = start_at_ist.astimezone(timezone.utc)  # same instant, 04:30 UTC
+
+    with db_connection.cursor() as cur:
+        patient_id = _insert_synthetic_patient(cur, "TZ1")
+    db_connection.commit()
+
+    with db_connection.cursor() as cur:
+        result = create_appointment_service(
+            cur,
+            doctor_id=seeded["doctor_id"],
+            patient_id=patient_id,
+            appointment_type_id=seeded["appointment_type_id"],
+            start_at=start_at_utc,
         )
     db_connection.commit()
 

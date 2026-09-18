@@ -127,7 +127,7 @@ def create_appointment_service(
     # ---------------------------------------------------------
     cur.execute(
         """
-        SELECT id
+        SELECT id, timezone
         FROM doctors
         WHERE id = %s
           AND active = TRUE
@@ -135,8 +135,12 @@ def create_appointment_service(
         (doctor_id,),
     )
 
-    if cur.fetchone() is None:
+    doctor_row = cur.fetchone()
+
+    if doctor_row is None:
         raise DoctorNotFound()
+
+    doctor_timezone = doctor_row[1]
 
     # ---------------------------------------------------------
     # 2. Check patient
@@ -188,10 +192,26 @@ def create_appointment_service(
 
     # ---------------------------------------------------------
     # 4. Check doctor's schedule
+    #
+    # doctor_schedule's day_of_week/start_time/end_time are the
+    # doctor's own local wall-clock, so start_at must be converted
+    # to the doctor's timezone before day_of_week()/time() are
+    # pulled off it -- pulling them off whatever offset start_at
+    # happens to carry is only safe by accident, when that offset
+    # is already the doctor's own. A start_at read back from a
+    # TIMESTAMPTZ column through psycopg carries the database
+    # session's timezone instead (UTC in this app) regardless of
+    # the offset it was written with -- see app/api/scheduling.py's
+    # get_upcoming_scheduled_appointments docstring for a
+    # previously shipped, confirmed-live bug of the identical shape
+    # in a sibling code path.
     # ---------------------------------------------------------
-    day_of_week = start_at.weekday() + 1
-    start_time = start_at.time()
-    end_time = end_at.time()
+    local_start_at = convert_to_timezone(start_at, doctor_timezone)
+    local_end_at = convert_to_timezone(end_at, doctor_timezone)
+
+    day_of_week = local_start_at.weekday() + 1
+    start_time = local_start_at.time()
+    end_time = local_end_at.time()
 
     cur.execute(
         """
@@ -211,8 +231,8 @@ def create_appointment_service(
             day_of_week,
             start_time,
             end_time,
-            start_at.date(),
-            start_at.date(),
+            local_start_at.date(),
+            local_start_at.date(),
         ),
     )
 
