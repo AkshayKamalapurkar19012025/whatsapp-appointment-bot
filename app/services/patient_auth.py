@@ -69,7 +69,11 @@ from app.services.exceptions import (
     InvalidSession,
 )
 from app.services.notifications import KIND_OTP, send_mock_notification
-from app.services.patient_identifiers import write_phone_identifier
+from app.services.patient_identifiers import (
+    DEFAULT_HOSPITAL_ID,
+    resolve_patient_by_identifier,
+    write_phone_identifier,
+)
 from app.services.sms_provider import send_otp_sms
 
 logger = logging.getLogger(__name__)
@@ -211,11 +215,17 @@ def verify_otp(cur, whatsapp_number: str, code: str, name: str | None = None):
         )
         raise OtpInvalid()
 
-    cur.execute(
-        "SELECT id, name, whatsapp_number FROM patients WHERE whatsapp_number = %s",
-        (whatsapp_number,),
+    # M4-M5: migrated onto the identifier resolver (web OTP verify) --
+    # see app/services/patient_identifiers.py. DEFAULT_HOSPITAL_ID: no
+    # patient is resolved yet at this point, so there's no authenticated
+    # actor to derive a real hospital_id from (see that constant's own
+    # comment).
+    resolved = resolve_patient_by_identifier(cur, DEFAULT_HOSPITAL_ID, "PHONE", whatsapp_number)
+    patient_row = (
+        (resolved["id"], resolved["name"], resolved["whatsapp_number"])
+        if resolved is not None
+        else None
     )
-    patient_row = cur.fetchone()
 
     is_new_patient = False
 
@@ -240,11 +250,12 @@ def verify_otp(cur, whatsapp_number: str, code: str, name: str | None = None):
             # Lost a race with another request for the same number
             # (e.g. two tabs registering at once) -- the patient now
             # exists either way, so just read it back.
-            cur.execute(
-                "SELECT id, name, whatsapp_number FROM patients WHERE whatsapp_number = %s",
-                (whatsapp_number,),
+            resolved = resolve_patient_by_identifier(cur, DEFAULT_HOSPITAL_ID, "PHONE", whatsapp_number)
+            patient_row = (
+                (resolved["id"], resolved["name"], resolved["whatsapp_number"])
+                if resolved is not None
+                else None
             )
-            patient_row = cur.fetchone()
         else:
             is_new_patient = True
             # M4-M5 dual write -- see app/services/patient_identifiers.py.
