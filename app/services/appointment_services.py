@@ -127,7 +127,7 @@ def create_appointment_service(
     # ---------------------------------------------------------
     cur.execute(
         """
-        SELECT id, timezone
+        SELECT id, timezone, hospital_id
         FROM doctors
         WHERE id = %s
           AND active = TRUE
@@ -141,6 +141,7 @@ def create_appointment_service(
         raise DoctorNotFound()
 
     doctor_timezone = doctor_row[1]
+    doctor_hospital_id = doctor_row[2]
 
     # ---------------------------------------------------------
     # 2. Check patient
@@ -341,7 +342,31 @@ def create_appointment_service(
             raise SlotOverlap()
 
     # ---------------------------------------------------------
-    # 8. Create appointment.
+    # 8. Create the encounter (M3), then the appointment linked to it.
+    #
+    # One encounter per appointment, in the same transaction as the
+    # appointment itself so the two can never diverge -- if the INSERT
+    # below fails (including via the EXCLUDE-constraint backstop), this
+    # encounter is rolled back along with it, same as everything else in
+    # this transaction. started_at mirrors migrations/0025's own backfill
+    # fallback: there is no arrived_at yet for a brand-new booking, so
+    # start_at (the scheduled time) is the best available signal for
+    # "when this visit is." status is always OPEN here -- none of the
+    # terminal appointment statuses (COMPLETED/CANCELLED/REJECTED/
+    # NO_SHOW) apply to a brand-new booking, which always starts PENDING.
+    # ---------------------------------------------------------
+    cur.execute(
+        """
+        INSERT INTO encounters (hospital_id, patient_id, doctor_id, encounter_type, status, started_at)
+        VALUES (%s, %s, %s, 'OPD', 'OPEN', %s)
+        RETURNING id
+        """,
+        (doctor_hospital_id, patient_id, doctor_id, start_at),
+    )
+    encounter_id = cur.fetchone()[0]
+
+    # ---------------------------------------------------------
+    # 9. Create appointment.
     #
     # A second line of defense sits below this INSERT: a
     # database-level EXCLUDE constraint on (doctor_id, time
@@ -362,7 +387,8 @@ def create_appointment_service(
                 start_at,
                 end_at,
                 status,
-                booking_source
+                booking_source,
+                encounter_id
             )
             VALUES (
                 %s,
@@ -371,6 +397,7 @@ def create_appointment_service(
                 %s,
                 %s,
                 'PENDING',
+                %s,
                 %s
             )
             RETURNING
@@ -390,6 +417,7 @@ def create_appointment_service(
                 start_at,
                 end_at,
                 booking_source,
+                encounter_id,
             ),
         )
     except psycopg.errors.ExclusionViolation:
@@ -413,6 +441,7 @@ def create_appointment_service(
         "booking_source": row[7],
         "duration_minutes": duration_minutes,
         "appointment_type_name": appointment_type[1],
+        "encounter_id": encounter_id,
     }
 
 

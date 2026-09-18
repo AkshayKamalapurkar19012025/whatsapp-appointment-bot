@@ -124,10 +124,16 @@ def test_booking_creates_appointment_for_authenticated_patient(client, db_connec
     body = response.json()
     assert body["status"] == "PENDING"
     assert body["doctor_id"] == seeded["doctor_id"]
+    # M3: the web booking path is one of the three create_appointment_service
+    # entry points, so it must get an encounter too.
+    assert body["encounter_id"] is not None
 
     with db_connection.cursor() as cur:
-        cur.execute("SELECT patient_id FROM appointments WHERE id = %s", (body["id"],))
-        patient_id = cur.fetchone()[0]
+        cur.execute("SELECT patient_id, encounter_id FROM appointments WHERE id = %s", (body["id"],))
+        patient_id, encounter_id = cur.fetchone()
+        assert encounter_id == body["encounter_id"]
+        cur.execute("SELECT status FROM encounters WHERE id = %s", (encounter_id,))
+        assert cur.fetchone()[0] == "OPEN"
 
     me = client.get("/api/auth/patient/me", headers={"Authorization": f"Bearer {token}"})
     assert patient_id == me.json()["id"]

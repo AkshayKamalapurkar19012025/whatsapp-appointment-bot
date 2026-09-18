@@ -71,10 +71,23 @@ def test_full_booking_flow_creates_booked_appointment(client, db_connection):
     assert result["appointment"]["status"] == "PENDING"
 
     with db_connection.cursor() as cur:
-        cur.execute("SELECT status FROM appointments WHERE id = %s", (result["appointment"]["id"],))
+        cur.execute(
+            "SELECT status, encounter_id FROM appointments WHERE id = %s",
+            (result["appointment"]["id"],),
+        )
         row = cur.fetchone()
     assert row is not None
     assert row[0] == "PENDING"
+    # M3: the WhatsApp confirm path converged onto create_appointment_service
+    # in R1, so it must get an encounter too. Not exposed in the WhatsApp
+    # response itself (R1 kept that response to its original seven keys),
+    # so checked directly against the database.
+    encounter_id = row[1]
+    assert encounter_id is not None
+
+    with db_connection.cursor() as cur:
+        cur.execute("SELECT status FROM encounters WHERE id = %s", (encounter_id,))
+        assert cur.fetchone()[0] == "OPEN"
 
 
 def test_booking_uses_doctor_specific_timezone(client, db_connection):
