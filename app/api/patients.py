@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.api.staff_auth import get_current_staff
 from app.db.connection import get_connection
-from app.services.patient_identifiers import write_phone_identifier
+from app.services.patient_identifiers import resolve_patient_by_identifier, write_phone_identifier
 from app.utils.phone import normalize_whatsapp_number
 
 router = APIRouter(
@@ -199,16 +199,14 @@ def create_patient(
     with get_connection() as conn:
         with conn.cursor() as cur:
 
-            cur.execute(
-                """
-                SELECT id
-                FROM patients
-                WHERE whatsapp_number = %s
-                """,
-                (patient.whatsapp_number,),
-            )
-
-            if cur.fetchone() is not None:
+            # M4-M5: migrated onto the identifier resolver (admin patient
+            # lookup) -- see app/services/patient_identifiers.py. The
+            # column is still what actually enforces uniqueness (the
+            # UNIQUE constraint on patients.whatsapp_number, unchanged
+            # until M7); this check is just a friendlier 409 ahead of it.
+            if resolve_patient_by_identifier(
+                cur, staff["hospital_id"], "PHONE", patient.whatsapp_number
+            ) is not None:
                 raise HTTPException(
                     status_code=409,
                     detail="Patient with this WhatsApp number already exists",
@@ -256,13 +254,13 @@ def update_patient(
             # number is a conflict), a patient keeping their own current
             # number must not conflict with themselves -- only a
             # *different* patient already owning this number is a real
-            # collision.
-            cur.execute(
-                "SELECT id FROM patients WHERE whatsapp_number = %s AND id <> %s",
-                (patient.whatsapp_number, patient_id),
+            # collision. M4-M5: migrated onto the identifier resolver,
+            # same as create_patient above.
+            match = resolve_patient_by_identifier(
+                cur, staff["hospital_id"], "PHONE", patient.whatsapp_number
             )
 
-            if cur.fetchone() is not None:
+            if match is not None and match["id"] != patient_id:
                 raise HTTPException(
                     status_code=409,
                     detail="Another patient with this WhatsApp number already exists",
