@@ -2,11 +2,9 @@ import { useEffect, useState } from 'react'
 import {
   Buildings,
   CalendarCheck,
-  CalendarPlus,
   ChartLineUp,
   Gauge,
   GearSix,
-  ListNumbers,
   ShieldCheck,
   Stethoscope,
   Tag,
@@ -151,24 +149,14 @@ export default function AdminApp() {
       key: 'appointments',
       label: 'Appointments',
       icon: <CalendarCheck size={20} weight="regular" />,
-      active: section === 'appointments',
+      // Also "active" while parked on Book Appointment or Queue -- both
+      // are reached only as actions from inside this workspace now (the
+      // "+ New OPD Visit" dropdown and the header's Queue button/per-row
+      // "Open Queue"), not separate top-level destinations, so the nav
+      // shouldn't go dark while a staff member is mid-booking or
+      // watching a doctor's queue.
+      active: section === 'appointments' || section === 'book-appointment' || section === 'queue',
       onSelect: () => goTo('appointments'),
-      group: 'Main',
-    },
-    {
-      key: 'book-appointment',
-      label: 'Book Appointment',
-      icon: <CalendarPlus size={20} weight="regular" />,
-      active: section === 'book-appointment',
-      onSelect: () => goTo('book-appointment'),
-      group: 'Main',
-    },
-    {
-      key: 'queue',
-      label: 'Queue',
-      icon: <ListNumbers size={20} weight="regular" />,
-      active: section === 'queue',
-      onSelect: () => goTo('queue'),
       group: 'Main',
     },
     {
@@ -253,13 +241,14 @@ export default function AdminApp() {
               key={navResetKey}
               onBookAppointment={() => goTo('book-appointment')}
               onGoToQueue={goToQueueForDoctor}
+              onViewQueue={() => goTo('queue')}
               isAdmin={isAdmin}
             />
           )}
           {section === 'book-appointment' && (
             <BookAppointmentPanel key={navResetKey} onViewAppointments={() => goTo('appointments')} />
           )}
-          {section === 'queue' && <QueuePanel key={navResetKey} />}
+          {section === 'queue' && <QueuePanel key={navResetKey} onBack={() => goTo('appointments')} />}
           {section === 'doctors' && <DoctorsPanel key={navResetKey} isAdmin={isAdmin} onGoToQueue={goToQueueForDoctor} />}
           {section === 'departments' && <DepartmentsPanel key={navResetKey} isAdmin={isAdmin} />}
           {section === 'appointment-types' && <AppointmentTypesPanel key={navResetKey} isAdmin={isAdmin} />}

@@ -9,6 +9,7 @@ import {
   Clock,
   FunnelSimple,
   HourglassMedium,
+  ListNumbers,
   MagnifyingGlass,
   Plus,
   ArrowClockwise,
@@ -297,6 +298,7 @@ function paymentCell(a: AdminAppointment) {
 export default function AppointmentsPanel({
   onBookAppointment,
   onGoToQueue,
+  onViewQueue,
   isAdmin,
 }: {
   // Routes to the dedicated Book Appointment section (see AdminApp.tsx)
@@ -314,6 +316,11 @@ export default function AppointmentsPanel({
   // Same "go to this doctor's live queue" hand-off DoctorsPanel's own
   // "View queue" action already uses (AdminApp.tsx's goToQueueForDoctor).
   onGoToQueue: (doctorId: number) => void
+  // Routes to the standalone Queue section with no doctor preselected
+  // (QueuePanel falls back to the last-viewed/first active doctor) --
+  // Queue's own former sidebar entry (AdminApp.tsx), now reached only
+  // from inside this OPD workspace, same as Book Appointment.
+  onViewQueue: () => void
   // Gates "Waive Charge" (patient arrival workflow Phase 3) -- same
   // prop DoctorsPanel/DepartmentsPanel/AppointmentTypesPanel already
   // take from AdminApp.tsx.
@@ -721,6 +728,9 @@ export default function AppointmentsPanel({
           )}
           <button type="button" className="icon-btn" aria-label="Refresh" onClick={load} disabled={loading}>
             <ArrowClockwise size={17} weight="bold" className={loading ? 'opd-refresh-spinning' : undefined} />
+          </button>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={onViewQueue}>
+            <ListNumbers size={15} weight="bold" /> Queue
           </button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
