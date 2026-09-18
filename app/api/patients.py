@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.api.staff_auth import get_current_staff
 from app.db.connection import get_connection
+from app.services.patient_identifiers import write_phone_identifier
 from app.utils.phone import normalize_whatsapp_number
 
 router = APIRouter(
@@ -34,7 +35,7 @@ def insert_patient(
         )
         VALUES (%s, %s, %s, %s)
         ON CONFLICT (whatsapp_number) DO NOTHING
-        RETURNING id, name, whatsapp_number, date_of_birth, gender
+        RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id
         """,
         (
             name,
@@ -48,6 +49,11 @@ def insert_patient(
 
     if row is None:
         return None
+
+    # M4-M5 dual write -- see app/services/patient_identifiers.py.
+    write_phone_identifier(
+        cur, hospital_id=row[5], patient_id=row[0], whatsapp_number=row[2]
+    )
 
     return {
         "id": row[0],
@@ -271,12 +277,17 @@ def update_patient(
                     gender = %s,
                     updated_at = NOW()
                 WHERE id = %s
-                RETURNING id, name, whatsapp_number, date_of_birth, gender
+                RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id
                 """,
                 (patient.name, patient.whatsapp_number, patient.date_of_birth, patient.gender, patient_id),
             )
 
             row = cur.fetchone()
+
+            # M4-M5 dual write -- see app/services/patient_identifiers.py.
+            write_phone_identifier(
+                cur, hospital_id=row[5], patient_id=row[0], whatsapp_number=row[2]
+            )
 
     return {
         "id": row[0],

@@ -69,6 +69,7 @@ from app.services.exceptions import (
     InvalidSession,
 )
 from app.services.notifications import KIND_OTP, send_mock_notification
+from app.services.patient_identifiers import write_phone_identifier
 from app.services.sms_provider import send_otp_sms
 
 logger = logging.getLogger(__name__)
@@ -229,7 +230,7 @@ def verify_otp(cur, whatsapp_number: str, code: str, name: str | None = None):
             INSERT INTO patients (name, whatsapp_number)
             VALUES (%s, %s)
             ON CONFLICT (whatsapp_number) DO NOTHING
-            RETURNING id, name, whatsapp_number
+            RETURNING id, name, whatsapp_number, hospital_id
             """,
             (name.strip(), whatsapp_number),
         )
@@ -246,6 +247,16 @@ def verify_otp(cur, whatsapp_number: str, code: str, name: str | None = None):
             patient_row = cur.fetchone()
         else:
             is_new_patient = True
+            # M4-M5 dual write -- see app/services/patient_identifiers.py.
+            # Not needed on the race-recovery branch above: that read
+            # back a patient this same call didn't create, so nothing
+            # about their identifier changed.
+            write_phone_identifier(
+                cur,
+                hospital_id=patient_row[3],
+                patient_id=patient_row[0],
+                whatsapp_number=patient_row[2],
+            )
 
     patient = {
         "id": patient_row[0],
