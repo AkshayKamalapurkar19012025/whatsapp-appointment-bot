@@ -1203,14 +1203,17 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
 
       {isAdmin && showForm && unassigned.length > 0 && (
         <form className="inline-form wrap assign-form-card" onSubmit={handleAssign}>
-          <select value={selected} onChange={(e) => setSelected(e.target.value)} required>
-            <option value="">Add appointment type…</option>
-            {unassigned.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+          <label className="inline-label">
+            Appointment type
+            <select value={selected} onChange={(e) => setSelected(e.target.value)} required>
+              <option value="">Add appointment type…</option>
+              {unassigned.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
 
           <label className="inline-label">
             Duration
