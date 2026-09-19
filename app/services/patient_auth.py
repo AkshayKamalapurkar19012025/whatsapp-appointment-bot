@@ -57,6 +57,8 @@ import hashlib
 import logging
 import secrets
 
+import psycopg
+
 from app import config
 from app.services.exceptions import (
     OtpRateLimited,
@@ -236,16 +238,31 @@ def verify_otp(cur, whatsapp_number: str, code: str, name: str | None = None):
             # unconsumed so the same code works on the follow-up call.
             raise RegistrationRequired()
 
-        cur.execute(
-            """
-            INSERT INTO patients (name, whatsapp_number)
-            VALUES (%s, %s)
-            ON CONFLICT (whatsapp_number) DO NOTHING
-            RETURNING id, name, whatsapp_number, hospital_id
-            """,
-            (name.strip(), whatsapp_number),
-        )
-        patient_row = cur.fetchone()
+        # M7 (in progress): ON CONFLICT (whatsapp_number) is gone -- it
+        # needs a matching unique/exclusion constraint or index to
+        # target, so it becomes invalid SQL the moment
+        # patients.whatsapp_number's UNIQUE constraint is actually
+        # dropped (see migrations/0027's follow-up report for the rest
+        # of that migration). Until that drop ships, the constraint is
+        # still live, so the same race this used to resolve via DO
+        # NOTHING can still raise UniqueViolation here -- caught below
+        # and funneled into the exact same race-recovery read as before.
+        # Once the constraint is gone this except simply never fires
+        # again; two patients sharing a number then both insert
+        # successfully, which is the point of dropping it.
+        try:
+            cur.execute(
+                """
+                INSERT INTO patients (name, whatsapp_number)
+                VALUES (%s, %s)
+                RETURNING id, name, whatsapp_number, hospital_id
+                """,
+                (name.strip(), whatsapp_number),
+            )
+            patient_row = cur.fetchone()
+        except psycopg.errors.UniqueViolation:
+            cur.connection.rollback()
+            patient_row = None
 
         if patient_row is None:
             # Lost a race with another request for the same number

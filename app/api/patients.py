@@ -1,5 +1,6 @@
 from datetime import date
 
+import psycopg
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
@@ -25,31 +26,44 @@ def insert_patient(
     """date_of_birth/gender are optional everywhere this is called from
     (admin create_patient below, and app/api/scheduling.py's WhatsApp
     registration, which never collects either) -- defaulting to None
-    keeps that WhatsApp call site unchanged."""
-    cur.execute(
-        """
-        INSERT INTO patients (
-            name,
-            whatsapp_number,
-            date_of_birth,
-            gender
+    keeps that WhatsApp call site unchanged.
+
+    M7 (in progress): ON CONFLICT (whatsapp_number) is gone -- it needs
+    a matching unique/exclusion constraint or index to target, so it
+    becomes invalid SQL the moment patients.whatsapp_number's UNIQUE
+    constraint is actually dropped (see migrations/0027's follow-up
+    report for the rest of that migration). Until that drop ships, the
+    constraint is still live, so the same race this used to resolve via
+    DO NOTHING can still raise UniqueViolation here -- caught below and
+    treated exactly the same way (nothing created, caller decides what
+    that means). Once the constraint is gone this except simply never
+    fires again; two patients sharing a number then both insert
+    successfully, which is the point of dropping it.
+    """
+    try:
+        cur.execute(
+            """
+            INSERT INTO patients (
+                name,
+                whatsapp_number,
+                date_of_birth,
+                gender
+            )
+            VALUES (%s, %s, %s, %s)
+            RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id
+            """,
+            (
+                name,
+                whatsapp_number,
+                date_of_birth,
+                gender,
+            ),
         )
-        VALUES (%s, %s, %s, %s)
-        ON CONFLICT (whatsapp_number) DO NOTHING
-        RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id
-        """,
-        (
-            name,
-            whatsapp_number,
-            date_of_birth,
-            gender,
-        ),
-    )
+    except psycopg.errors.UniqueViolation:
+        cur.connection.rollback()
+        return None
 
     row = cur.fetchone()
-
-    if row is None:
-        return None
 
     # M4-M5 dual write -- see app/services/patient_identifiers.py.
     write_phone_identifier(
