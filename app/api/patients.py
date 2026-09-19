@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.api.staff_auth import get_current_staff
 from app.db.connection import get_connection
 from app.services import exceptions as svc_exc
+from app.services.patient_duplicate_detection import decide_duplicate_review, find_duplicate_candidates
 from app.services.patient_identifiers import resolve_patient_by_identifier, write_phone_identifier
 from app.services.patient_merge import merge_patients, unmerge_patients
 from app.services.uhid import generate_uhid, resolve_patient_by_uhid
@@ -24,6 +25,7 @@ def insert_patient(
     whatsapp_number: str,
     date_of_birth: date | None = None,
     gender: str | None = None,
+    government_id: str | None = None,
 ):
     """date_of_birth/gender are optional everywhere this is called from
     (admin create_patient below, and app/api/scheduling.py's WhatsApp
@@ -49,16 +51,18 @@ def insert_patient(
                 name,
                 whatsapp_number,
                 date_of_birth,
-                gender
+                gender,
+                government_id
             )
-            VALUES (%s, %s, %s, %s)
-            RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id, government_id
             """,
             (
                 name,
                 whatsapp_number,
                 date_of_birth,
                 gender,
+                government_id,
             ),
         )
     except psycopg.errors.UniqueViolation:
@@ -85,6 +89,7 @@ def insert_patient(
         "date_of_birth": row[3].isoformat() if row[3] else None,
         "gender": row[4],
         "uhid": uhid,
+        "government_id": row[6],
     }
 
 
@@ -135,13 +140,17 @@ class PatientCreate(_PatientFieldValidators, BaseModel):
     # PatientUpdate.
     date_of_birth: date | None = None
     gender: str | None = None
+    # M8: one of the four duplicate-detection signals (see
+    # app/services/patient_duplicate_detection.py). Optional, same as
+    # date_of_birth/gender -- never required by registration.
+    government_id: str | None = None
 
 
 class PatientUpdate(_PatientFieldValidators, BaseModel):
     """For PATCH /patients/{id} -- staff correcting a patient's name or
     WhatsApp number discovered wrong during front-desk verification.
     Same two required fields, same validation as PatientCreate, plus
-    the same two optional demographics; the two models stay separate
+    the same optional demographics; the two models stay separate
     (rather than making PatientCreate's fields optional and reusing it
     directly) since create and update have different semantics
     (whatsapp_number collision means "already exists" on create,
@@ -152,6 +161,7 @@ class PatientUpdate(_PatientFieldValidators, BaseModel):
     whatsapp_number: str = Field(min_length=1, max_length=30)
     date_of_birth: date | None = None
     gender: str | None = None
+    government_id: str | None = None
 
 
 @router.get("")
@@ -246,6 +256,7 @@ def create_patient(
                 patient.whatsapp_number,
                 patient.date_of_birth,
                 patient.gender,
+                patient.government_id,
             )
 
             if created_patient is None:
@@ -253,6 +264,14 @@ def create_patient(
                     status_code=409,
                     detail="Patient with this WhatsApp number already exists",
                 )
+
+            # M8: warns, never blocks -- created_patient above is
+            # already committed to being returned either way. See
+            # app/services/patient_duplicate_detection.py for why this
+            # only runs on this (staff-reviewed) registration path.
+            created_patient["possible_duplicates"] = find_duplicate_candidates(
+                cur, staff["hospital_id"], created_patient["id"]
+            )
 
     return created_patient
 
@@ -301,11 +320,19 @@ def update_patient(
                     whatsapp_number = %s,
                     date_of_birth = %s,
                     gender = %s,
+                    government_id = %s,
                     updated_at = NOW()
                 WHERE id = %s
-                RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id
+                RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id, government_id
                 """,
-                (patient.name, patient.whatsapp_number, patient.date_of_birth, patient.gender, patient_id),
+                (
+                    patient.name,
+                    patient.whatsapp_number,
+                    patient.date_of_birth,
+                    patient.gender,
+                    patient.government_id,
+                    patient_id,
+                ),
             )
 
             row = cur.fetchone()
@@ -321,6 +348,7 @@ def update_patient(
         "whatsapp_number": row[2],
         "date_of_birth": row[3].isoformat() if row[3] else None,
         "gender": row[4],
+        "government_id": row[6],
     }
 
 
@@ -397,3 +425,32 @@ def get_patient_by_uhid(
         raise HTTPException(status_code=404, detail="No patient found for this UHID")
 
     return resolved
+
+
+class DuplicateReviewDecision(BaseModel):
+    decision: str
+
+
+@router.patch("/duplicate-reviews/{review_id}")
+def decide_duplicate_review_endpoint(
+    review_id: int,
+    body: DuplicateReviewDecision,
+    staff: dict = Depends(get_current_staff),
+):
+    if body.decision not in ("CONFIRMED_DUPLICATE", "NOT_DUPLICATE"):
+        raise HTTPException(
+            status_code=422,
+            detail="decision must be one of CONFIRMED_DUPLICATE, NOT_DUPLICATE",
+        )
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                decide_duplicate_review(cur, review_id, body.decision, staff["id"])
+            except svc_exc.DuplicateReviewNotFound:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Duplicate review not found, or already decided",
+                )
+
+    return {"review_id": review_id, "decision": body.decision}

@@ -39,6 +39,7 @@ def test_update_patient_changes_name_and_number(client, db_connection):
         "whatsapp_number": "+919700000009",
         "date_of_birth": None,
         "gender": None,
+        "government_id": None,
     }
 
 

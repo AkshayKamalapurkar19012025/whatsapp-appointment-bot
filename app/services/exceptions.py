@@ -185,6 +185,12 @@ class MergeNotFound(ServiceError):
     pass
 
 
+class DuplicateReviewNotFound(ServiceError):
+    """Raised for an unknown review id, or one that's already been
+    decided -- a decision is recorded once, never overwritten."""
+    pass
+
+
 class UnmergeNotPermitted(ServiceError):
     """Raised when a clinical record (appointment or encounter) exists
     for the surviving patient with created_at after the merge's own
