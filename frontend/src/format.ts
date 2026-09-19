@@ -57,6 +57,50 @@ export function formatPatientId(id: number): string {
   return `PT-${String(id).padStart(5, '0')}`
 }
 
+// Zero-padded ISO date ("YYYY-MM-DD") from a JS Date's own
+// getFullYear/getMonth/getDate -- shared by parseTypedDob and
+// DobPicker.tsx so both build the exact same string shape formatDate
+// above already parses (never goes through Date#toISOString, which
+// reinterprets through UTC and can shift the date by a day).
+export function toIsoDate(d: Date): string {
+  return isoDateOnly(d.getFullYear(), d.getMonth() + 1, d.getDate())
+}
+
+// Parses a typed "DD/MM/YYYY" (also accepts "-" or "." as the
+// separator) into an ISO date, or null if the text isn't a real
+// calendar date -- the DOB picker's typed-entry path (OPD Patient
+// Search & Registration redesign, point 3: "Allow the receptionist to
+// type the date directly," never picker-only). Rejects both malformed
+// input (wrong shape, non-numeric) and impossible dates (32/13/2020,
+// 31/04/2020, 29/02/2021 -- a non-leap year) via the same round-trip
+// check every other robust date parser uses: construct the Date and
+// confirm its own y/m/d getters echo back exactly what was typed,
+// rather than JS's default behavior of silently rolling an invalid
+// date over into the next month. Does NOT reject a future date here --
+// that's a business rule (a DOB must be in the past), checked
+// separately by callers so this function stays purely "is this a real
+// calendar date," not baking in DOB-specific policy.
+export function parseTypedDob(text: string): string | null {
+  const match = /^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/.exec(text.trim())
+  if (!match) return null
+  const day = Number(match[1])
+  const month = Number(match[2])
+  const year = Number(match[3])
+  const d = new Date(year, month - 1, day)
+  if (d.getFullYear() !== year || d.getMonth() !== month - 1 || d.getDate() !== day) return null
+  return toIsoDate(d)
+}
+
+// "18 Sep 1991" -> "18/09/1991", the typed-entry field's own display
+// format -- reuses formatDate's day/month/year extraction (same
+// raw-digit parsing, no Date/timezone reinterpretation) rather than
+// growing a third ad hoc date parser.
+export function formatDobForInput(isoDate: string): string {
+  const match = isoDate.match(/(\d{4})-(\d{2})-(\d{2})/)
+  if (!match) return ''
+  return `${match[3]}/${match[2]}/${match[1]}`
+}
+
 const GENDER_LABELS: Record<string, string> = { MALE: 'Male', FEMALE: 'Female', OTHER: 'Other' }
 
 // "28 yrs · Male" (OPD Today redesign's patient sub-line) -- both
@@ -66,6 +110,44 @@ const GENDER_LABELS: Record<string, string> = { MALE: 'Male', FEMALE: 'Female', 
 // the stored date, not a new persisted value. Returns null only when
 // NEITHER is set, so a patient with just one of the two still shows
 // that one rather than disappearing entirely.
+// "35 years" / "2 years 4 months" / "8 months" -- precise age for the
+// OPD patient search/registration screens (point 4: age must be
+// calculated automatically from DOB, with pediatric precision where it
+// matters). Separate from formatAgeGender above rather than changing
+// it in place: formatAgeGender's plain whole-years count is already
+// used elsewhere in the app (patient list/appointment rows) and
+// nothing there asked for month-level precision -- this is additive,
+// only used by the new find/register flow.
+//
+// Under 1 year: months only ("8 months", "0 months" for a newborn this
+// same week). 1-2 years: years + months, omitting "0 months" when the
+// birthday just passed ("2 years", not "2 years 0 months"). 3+ years:
+// plain whole years, same precision formatAgeGender already uses --
+// month-level precision stops mattering well before then.
+export function formatPreciseAge(dateOfBirth: string): string | null {
+  const dob = new Date(`${dateOfBirth}T00:00:00`)
+  if (Number.isNaN(dob.getTime())) return null
+
+  const today = new Date()
+  if (dob.getTime() > today.getTime()) return null
+
+  let years = today.getFullYear() - dob.getFullYear()
+  let months = today.getMonth() - dob.getMonth()
+  if (today.getDate() < dob.getDate()) months -= 1
+  if (months < 0) {
+    years -= 1
+    months += 12
+  }
+
+  if (years === 0) {
+    return `${months} month${months === 1 ? '' : 's'}`
+  }
+  if (years < 3) {
+    return months === 0 ? `${years} year${years === 1 ? '' : 's'}` : `${years} year${years === 1 ? '' : 's'} ${months} month${months === 1 ? '' : 's'}`
+  }
+  return `${years} year${years === 1 ? '' : 's'}`
+}
+
 export function formatAgeGender(dateOfBirth: string | null, gender: string | null): string | null {
   let age: number | null = null
   if (dateOfBirth) {

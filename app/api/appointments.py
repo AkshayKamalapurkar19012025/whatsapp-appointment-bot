@@ -45,6 +45,7 @@ from app.services.appointment_services import (
     get_consultation_charge_service,
     record_payment_service,
     waive_consultation_fee_service,
+    settle_free_visit_service,
 )
 from app.services.availability_engine import list_available_dates_in_range
 from app.services.notifications import KIND_CHECK_IN, KIND_QUEUE_TOKEN, send_mock_notification
@@ -777,6 +778,55 @@ def waive_appointment_payment(
                 raise HTTPException(
                     status_code=409,
                     detail="Waiver requires a completed visit with this doctor in the last 3 days",
+                )
+
+            if result["token_just_issued"]:
+                _notify_queue_token(cur, appointment_id, result["token_number"])
+
+    return result
+
+
+@router.post("/{appointment_id}/settle-free-visit")
+def settle_free_appointment_visit(
+    appointment_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    """
+    OPD front-desk "Payment Required? No" path -- called by the admin
+    booking UI right after check-in when the appointment's own
+    configured consultation fee is 0, so a genuinely free visit reaches
+    the queue without staff having to press a manual waive button (see
+    settle_free_visit_service's docstring for why this is a distinct
+    action from record_payment_service/waive_consultation_fee_service,
+    not a variant of either). No ADMIN gate, unlike waive-payment: there
+    is no discretion here, and the service function itself refuses to
+    settle anything with a nonzero fee.
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = settle_free_visit_service(cur, appointment_id)
+            except svc_exc.AppointmentNotFound:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            except svc_exc.InvalidStatusTransition:
+                raise HTTPException(
+                    status_code=409,
+                    detail="A visit can only be settled as free for a Checked-In appointment",
+                )
+            except svc_exc.PaymentStateConflict:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This appointment's consultation fee is already paid or refunded",
+                )
+            except svc_exc.FreeVisitNotEligible:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This appointment has a configured consultation fee and cannot be settled as free",
+                )
+            except svc_exc.AppointmentTypeNotAssigned:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This doctor/appointment-type combination no longer has a configured fee",
                 )
 
             if result["token_just_issued"]:

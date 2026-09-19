@@ -766,6 +766,19 @@ export function listPatients(): Promise<Patient[]> {
   return request('/patients', { auth: 'staff' })
 }
 
+// GET /patients/search -- the OPD find/register step's backend lookup
+// (name/phone/UHID substring, optional exact DOB match), unlike
+// listPatients above (the whole registry, filtered client-side by
+// PatientsPanel's directory table). At least one of query/dob is
+// required server-side; returns [] rather than 404 when nothing
+// matches.
+export function searchPatientsAdmin(query: string, dob?: string | null): Promise<Patient[]> {
+  const params = new URLSearchParams()
+  if (query.trim()) params.set('q', query.trim())
+  if (dob) params.set('dob', dob)
+  return request(`/patients/search?${params.toString()}`, { auth: 'staff' })
+}
+
 export function createPatientAdmin(
   name: string,
   whatsappNumber: string,
@@ -939,6 +952,17 @@ export function waiveAppointmentPayment(
     auth: 'staff',
     body: { reason },
   })
+}
+
+// POST .../settle-free-visit -- the OPD flow's "Payment Required? No"
+// branch (settle_free_visit_service): auto-settles a CHECKED_IN visit
+// whose configured consultation fee is 0, generating its queue token
+// without a manual Collect Payment/Waive Charge step. Distinct from
+// waiveAppointmentPayment above (ADMIN-only, 3-day-revisit policy for
+// a REAL fee) -- any staff role can call this, and the backend itself
+// refuses it if the fee turns out to be nonzero.
+export function settleFreeVisitAdmin(appointmentId: number): Promise<PaymentActionResult> {
+  return request(`/appointments/${appointmentId}/settle-free-visit`, { method: 'POST', auth: 'staff' })
 }
 
 export function completeAdminAppointment(

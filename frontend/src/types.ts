@@ -21,6 +21,13 @@ export interface Patient {
   // existed, or who simply hasn't had them added yet.
   date_of_birth: string | null
   gender: PatientGender | null
+  // "HOS-0000123" (migrations/0024) -- the patient's permanent
+  // hospital identifier, derived from id and never mutated. This, not
+  // whatsapp_number, is what the OPD find/register flow treats as a
+  // patient's real identity; whatsapp_number stays a separate
+  // search/contact attribute. Always present (a stored generated
+  // column), unlike the appointment_count/last_visit_at fields above.
+  uhid: string
 }
 
 // ONLINE covers both the patient web app and WhatsApp self-service

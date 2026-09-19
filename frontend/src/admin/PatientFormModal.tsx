@@ -4,6 +4,7 @@ import { CaretDown, CaretRight, X } from '@phosphor-icons/react'
 import { ApiError, createPatientAdmin, updatePatientAdmin } from '../api'
 import type { Patient, PatientGender } from '../types'
 import PhoneInput from '../PhoneInput'
+import DobPicker from './DobPicker'
 
 const GENDER_OPTIONS: { value: PatientGender; label: string }[] = [
   { value: 'MALE', label: 'Male' },
@@ -99,7 +100,7 @@ export default function PatientFormModal({
             <div className="inline-form wrap" style={{ marginTop: 0 }}>
               <label className="inline-label">
                 Date of birth
-                <input type="date" value={dateOfBirth} onChange={(e) => setDateOfBirth(e.target.value)} max={new Date().toISOString().slice(0, 10)} />
+                <DobPicker value={dateOfBirth} onChange={setDateOfBirth} />
               </label>
               <label className="inline-label">
                 Gender

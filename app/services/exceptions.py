@@ -94,6 +94,16 @@ class WaiverNotEligible(ServiceError):
     pass
 
 
+class FreeVisitNotEligible(ServiceError):
+    """Raised by settle_free_visit_service when the appointment's
+    configured consultation_fee is not zero -- this endpoint only ever
+    auto-settles a visit with no fee configured; a real, nonzero fee
+    must go through record_payment_service (or, if the clinic's revisit
+    policy applies, waive_consultation_fee_service), never this
+    shortcut."""
+    pass
+
+
 # ---------------------------------------------------------------------
 # Patient authentication (WEB P2) -- see app/services/patient_auth.py.
 # ---------------------------------------------------------------------

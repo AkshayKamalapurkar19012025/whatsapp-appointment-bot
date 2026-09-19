@@ -66,6 +66,7 @@ from app.services.exceptions import (
     AppointmentNotStarted,
     PaymentStateConflict,
     WaiverNotEligible,
+    FreeVisitNotEligible,
 )
 
 logger = logging.getLogger(__name__)
@@ -1473,6 +1474,71 @@ def waive_consultation_fee_service(cur, appointment_id: int, *, reason: str, sta
         WHERE id = %s
         """,
         (reason, staff_id, appointment_id),
+    )
+
+    token_result = generate_queue_token_service(cur, appointment_id, doctor_id=doctor_id, doctor_tz=doctor_tz)
+
+    return {**_current_payment_record(cur, appointment_id), "token_just_issued": token_result["newly_generated"]}
+
+
+def settle_free_visit_service(cur, appointment_id: int):
+    """
+    System-settles a CHECKED_IN visit that has no consultation fee
+    configured (consultation_fee = 0) -- the OPD front-desk flow's
+    "Payment Required? No" branch (see the OPD Patient Search &
+    Registration redesign report, point 9): a genuinely free visit
+    (₹0 appointment type, a policy-exempt follow-up, etc.) shouldn't
+    need staff to press a manual "waive" button and type a reason.
+
+    Deliberately NOT the same thing as waive_consultation_fee_service,
+    and never reuses its eligibility gate: that function's 3-day-
+    revisit rule is a distinct clinic policy for waiving a REAL,
+    nonzero charge, and requires ADMIN. This one has no discretion in
+    it at all -- it only ever fires when there is nothing to collect
+    in the first place (enforced below, not just assumed by the
+    caller), so any authenticated staff member can trigger it, and it
+    is not staff-attributed (payment_recorded_by stays NULL, matching
+    "no one waived anything, there was nothing to waive").
+
+    Kept entirely separate from mark_visited_service/record_payment_
+    service/waive_consultation_fee_service -- none of their behavior
+    changes, so every existing payment/queue-token test keeps testing
+    exactly what it already tests.
+
+    Idempotent on an already-WAIVED appointment, same replay guard as
+    waive_consultation_fee_service. Raises PaymentStateConflict for
+    PAID/REFUNDED (a settled real payment is never silently
+    overwritten), and FreeVisitNotEligible if the configured fee turns
+    out to be nonzero (e.g. a stale client retrying after the fee was
+    reconfigured) -- callers must not use this as a way to skip a real
+    charge.
+    """
+    payment_status, doctor_id, patient_id, visited_at, doctor_tz = _lock_appointment_for_payment(cur, appointment_id)
+
+    if payment_status == "WAIVED":
+        return {**_current_payment_record(cur, appointment_id), "token_just_issued": False}
+
+    if payment_status in ("PAID", "REFUNDED"):
+        raise PaymentStateConflict()
+
+    charge = get_consultation_charge_service(cur, appointment_id)
+
+    if charge["consultation_fee"] != 0:
+        raise FreeVisitNotEligible()
+
+    cur.execute(
+        """
+        UPDATE appointments
+        SET payment_status = 'WAIVED',
+            payment_method = NULL,
+            payment_amount = 0,
+            waive_reason = 'No consultation fee configured for this visit',
+            payment_recorded_by = NULL,
+            payment_recorded_at = NOW(),
+            updated_at = NOW()
+        WHERE id = %s
+        """,
+        (appointment_id,),
     )
 
     token_result = generate_queue_token_service(cur, appointment_id, doctor_id=doctor_id, doctor_tz=doctor_tz)
