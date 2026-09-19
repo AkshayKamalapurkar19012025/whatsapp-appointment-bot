@@ -75,6 +75,7 @@ from app.services.patient_identifiers import (
     write_phone_identifier,
 )
 from app.services.sms_provider import send_otp_sms
+from app.services.uhid import generate_uhid
 
 logger = logging.getLogger(__name__)
 
@@ -268,6 +269,11 @@ def verify_otp(cur, whatsapp_number: str, code: str, name: str | None = None):
                 patient_id=patient_row[0],
                 whatsapp_number=patient_row[2],
             )
+            # M6: assign this patient's permanent UHID at creation time
+            # -- see app/services/uhid.py. Same "not on the race-recovery
+            # branch" reasoning as above.
+            uhid = generate_uhid(cur, patient_row[3])
+            cur.execute("UPDATE patients SET uhid = %s WHERE id = %s", (uhid, patient_row[0]))
 
     patient = {
         "id": patient_row[0],

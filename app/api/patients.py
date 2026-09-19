@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.api.staff_auth import get_current_staff
 from app.db.connection import get_connection
 from app.services.patient_identifiers import resolve_patient_by_identifier, write_phone_identifier
+from app.services.uhid import generate_uhid
 from app.utils.phone import normalize_whatsapp_number
 
 router = APIRouter(
@@ -55,12 +56,19 @@ def insert_patient(
         cur, hospital_id=row[5], patient_id=row[0], whatsapp_number=row[2]
     )
 
+    # M6: assign this patient's permanent UHID at creation time -- see
+    # app/services/uhid.py. Unlike whatsapp_number, never regenerated or
+    # touched again once assigned (update_patient does not call this).
+    uhid = generate_uhid(cur, row[5])
+    cur.execute("UPDATE patients SET uhid = %s WHERE id = %s", (uhid, row[0]))
+
     return {
         "id": row[0],
         "name": row[1],
         "whatsapp_number": row[2],
         "date_of_birth": row[3].isoformat() if row[3] else None,
         "gender": row[4],
+        "uhid": uhid,
     }
 
 
@@ -156,10 +164,13 @@ def get_patients(staff: dict = Depends(get_current_staff)):
                     -- formatDateTime renders this in the viewer's own
                     -- local time instead, the same convention already
                     -- used for created_at elsewhere in this app).
-                    MAX(a.start_at) FILTER (WHERE NOT (a.status::text = ANY(ARRAY['CANCELLED', 'REJECTED'])))
+                    MAX(a.start_at) FILTER (WHERE NOT (a.status::text = ANY(ARRAY['CANCELLED', 'REJECTED']))),
+                    -- M6: nullable -- a patient created before this
+                    -- column existed and not yet backfilled has none.
+                    p.uhid
                 FROM patients p
                 LEFT JOIN appointments a ON a.patient_id = p.id
-                GROUP BY p.id, p.name, p.whatsapp_number, p.date_of_birth, p.gender
+                GROUP BY p.id, p.name, p.whatsapp_number, p.date_of_birth, p.gender, p.uhid
                 ORDER BY p.name
                 """
             )
@@ -186,6 +197,7 @@ def get_patients(staff: dict = Depends(get_current_staff)):
             "date_of_birth": row[4].isoformat() if row[4] else None,
             "gender": row[5],
             "last_visit_at": row[6].isoformat() if row[6] else None,
+            "uhid": row[7],
         }
         for row in rows
     ]
