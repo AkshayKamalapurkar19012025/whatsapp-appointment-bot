@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from datetime import date, time
 
-from app.api.staff_auth import require_role
+from app.api.staff_auth import require_permission
 from app.db.connection import get_connection
 
 router = APIRouter(
@@ -183,7 +183,7 @@ def get_doctor_schedule(doctor_id: int):
 def create_doctor_schedule(
     doctor_id: int,
     schedule: DoctorScheduleCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor_schedule.manage")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -281,7 +281,7 @@ def update_doctor_schedule(
     doctor_id: int,
     schedule_id: int,
     schedule: DoctorScheduleCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor_schedule.manage")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -399,7 +399,7 @@ def update_doctor_schedule(
 def delete_doctor_schedule(
     doctor_id: int,
     schedule_id: int,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor_schedule.manage")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:

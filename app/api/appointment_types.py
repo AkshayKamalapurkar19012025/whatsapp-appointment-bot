@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 import psycopg
 
-from app.api.staff_auth import get_current_staff, require_role
+from app.api.staff_auth import get_current_staff, require_permission
 from app.db.connection import get_connection
 
 router = APIRouter(
@@ -180,7 +180,7 @@ def get_appointment_type_detail(
 @router.post("")
 def create_appointment_type(
     appointment_type: AppointmentTypeCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("appointment_type.manage")),
 ):
     try:
         with get_connection() as conn:
@@ -212,7 +212,7 @@ def create_appointment_type(
 def update_appointment_type(
     appointment_type_id: int,
     appointment_type: AppointmentTypeCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("appointment_type.manage")),
 ):
     try:
         with get_connection() as conn:
@@ -254,7 +254,7 @@ class AppointmentTypeActiveUpdate(BaseModel):
 def update_appointment_type_active(
     appointment_type_id: int,
     body: AppointmentTypeActiveUpdate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("appointment_type.manage")),
 ):
     """
     Deactivate/reactivate an appointment type (the redesigned Appointment
@@ -289,7 +289,7 @@ def update_appointment_type_active(
 @router.delete("/{appointment_type_id}")
 def delete_appointment_type(
     appointment_type_id: int,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("appointment_type.manage")),
 ):
     # Soft delete only, same as departments -- appointment_types is
     # referenced by doctor_appointment_types and appointments.appointment_

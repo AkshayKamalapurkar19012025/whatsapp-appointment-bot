@@ -4,8 +4,9 @@ RBAC, covering: valid login, wrong username, wrong password (both map to
 the same generic message -- no username enumeration), inactive account,
 account lockout after repeated failures and its expiry, session
 expiry/logout/deactivation invalidation, unauthorized requests, and the
-require_role RBAC dependency (403 for the wrong role, 200/201 for the
-right one) exercised through the real ADMIN-only account-management
+require_permission RBAC dependency (403 for the wrong role, 200/201 for
+the right one, formerly require_role -- see P1.a/migrations/0029)
+exercised through the real staff.manage-gated account-management
 endpoints -- not just unit-tested in isolation.
 """
 
@@ -149,8 +150,8 @@ def test_deactivating_account_invalidates_its_existing_session(client, db_connec
 
 def test_unauthenticated_request_to_admin_only_endpoint_is_401_not_403(client):
     # No session at all must fail authentication (401) before RBAC's own
-    # role check ever runs (403) -- require_role delegates to
-    # get_current_staff first, not "unknown role" -> reject.
+    # permission check ever runs (403) -- require_permission delegates to
+    # get_current_staff first, not "unknown permission" -> reject.
     response = client.get("/api/auth/staff/accounts")
 
     assert response.status_code == 401

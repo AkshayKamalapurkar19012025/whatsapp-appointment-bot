@@ -28,7 +28,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
-from app.api.staff_auth import get_current_staff, require_role
+from app.api.staff_auth import get_current_staff, require_permission
 from app.db.connection import get_connection
 from app.services import exceptions as svc_exc
 from app.services.appointment_services import (
@@ -482,7 +482,7 @@ def reschedule_appointment(
 # scheduling, and the admin create above all go through the same
 # create_appointment_service). Staff move it forward from here -- same
 # RBAC as the rest of this router (any authenticated STAFF or ADMIN,
-# matching cancel/reschedule above, not require_role("ADMIN")).
+# matching cancel/reschedule above, not require_permission("appointment.waive_payment")).
 # ---------------------------------------------------------------------
 
 
@@ -750,7 +750,7 @@ def record_appointment_payment(
 def waive_appointment_payment(
     appointment_id: int,
     waiver: PaymentWaive,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("appointment.waive_payment")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:

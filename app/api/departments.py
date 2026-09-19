@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 import psycopg
 
-from app.api.staff_auth import require_role
+from app.api.staff_auth import require_permission
 from app.db.connection import get_connection
 
 router = APIRouter(prefix="/departments", tags=["Departments"])
@@ -49,7 +49,7 @@ def get_departments():
 @router.post("")
 def create_department(
     department: DepartmentCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("department.manage")),
 ):
     try:
         with get_connection() as conn:
@@ -81,7 +81,7 @@ def create_department(
 def update_department(
     department_id: int,
     department: DepartmentCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("department.manage")),
 ):
     try:
         with get_connection() as conn:
@@ -118,7 +118,7 @@ def update_department(
 @router.delete("/{department_id}")
 def delete_department(
     department_id: int,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("department.manage")),
 ):
     # Soft delete only, same as doctors/doctor_schedule -- departments are
     # referenced by doctor_departments and appointments.department_id, so

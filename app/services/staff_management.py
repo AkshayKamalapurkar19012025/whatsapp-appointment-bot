@@ -4,12 +4,19 @@ staff accounts.
 
 This module has no role-awareness of its own -- authorization (that only
 an ADMIN may call these) is enforced at the API layer
-(app/api/staff_auth.py's require_role dependency), the same
+(app/api/staff_auth.py's require_permission dependency), the same
 transport-layer-owns-authorization pattern used throughout
 app/services/*. There is no self-service staff signup (unlike patients,
 who register themselves via OTP) -- an account only ever comes into
 existence via create_staff_account, called by an existing ADMIN, or via
 scripts/create_staff_account.py for the very first bootstrap account.
+
+P1.a: create_staff_account dual-writes staff_roles alongside staff.role
+-- staff.role stays authoritative here (this module still reads/writes
+only that column for everything else), staff_roles is what
+require_permission actually resolves against. See
+migrations/0029_rbac_decomposition.sql for the backfill covering every
+account created before this.
 """
 
 from app.services.exceptions import StaffNotFound, UsernameAlreadyExists
@@ -35,6 +42,15 @@ def create_staff_account(cur, username: str, password: str, role: str) -> dict:
 
     if row is None:
         raise UsernameAlreadyExists()
+
+    # P1.a dual write -- see this module's own docstring.
+    cur.execute(
+        """
+        INSERT INTO staff_roles (staff_id, role_id)
+        SELECT %s, id FROM roles WHERE name = %s
+        """,
+        (row[0], role),
+    )
 
     return {"id": row[0], "username": row[1], "role": row[2], "active": row[3]}
 

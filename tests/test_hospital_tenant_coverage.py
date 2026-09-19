@@ -23,6 +23,21 @@ EXEMPT_TABLES = {
     "patient_otp_codes",
     "staff_sessions",
     "mock_sms_outbox",
+    # P1.a RBAC (migrations/0029_rbac_decomposition.sql): roles/
+    # permissions/role_permissions are a fixed, code-level catalogue --
+    # one permission name per resource-area router, wired directly into
+    # require_permission() call sites -- not hospital-configurable data.
+    # A hospital can't define its own "doctor.manage"-equivalent without
+    # a code change to go with it, so there's no per-hospital row to
+    # scope these tables by.
+    "roles",
+    "permissions",
+    "role_permissions",
+    # Child of staff (staff_id FK, and staff itself is hospital-scoped
+    # since migrations/0024) -- tenant derivable through it, same
+    # category as doctor_education above.
+    "staff_roles",
+    "break_glass_grants",
 }
 
 

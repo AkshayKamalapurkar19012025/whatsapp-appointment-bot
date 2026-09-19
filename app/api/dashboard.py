@@ -1,7 +1,7 @@
 """
 Admin dashboard: summary stats + trend charts backing the Dashboard
 landing page (frontend/src/admin/DashboardPanel.tsx). Both endpoints are
-staff-readable (get_current_staff, not require_role("ADMIN")): viewing
+staff-readable (get_current_staff, not require_permission(...)): viewing
 these counts is no more sensitive than viewing the appointments list,
 which any STAFF session can already do via GET /appointments.
 

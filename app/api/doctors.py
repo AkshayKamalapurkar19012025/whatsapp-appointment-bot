@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 import psycopg
 
-from app.api.staff_auth import get_current_staff, require_role
+from app.api.staff_auth import get_current_staff, require_permission
 from app.db.connection import get_connection
 from app.services.availability_engine import DOCTOR_SUMMARY_SELECT_SQL, DOCTOR_SUMMARY_JOIN_SQL, build_doctor_summary
 from app.utils.timezone import convert_to_timezone, validate_timezone
@@ -148,7 +148,7 @@ def get_doctors():
 @router.post("")
 def create_doctor(
     doctor: DoctorCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     try:
         with get_connection() as conn:
@@ -207,7 +207,7 @@ def create_doctor(
 def update_doctor(
     doctor_id: int,
     doctor: DoctorCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     try:
         with get_connection() as conn:
@@ -282,7 +282,7 @@ class DoctorSlotSettingsUpdate(BaseModel):
 def update_doctor_slot_settings(
     doctor_id: int,
     settings: DoctorSlotSettingsUpdate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -318,7 +318,7 @@ class DoctorActiveUpdate(BaseModel):
 def update_doctor_active(
     doctor_id: int,
     body: DoctorActiveUpdate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     """
     Deactivate/reactivate a doctor (the workspace header's "..." menu).
@@ -431,7 +431,7 @@ def get_doctor_profile(doctor_id: int):
 def add_doctor_education(
     doctor_id: int,
     entry: DoctorEducationCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -468,7 +468,7 @@ def add_doctor_education(
 def remove_doctor_education(
     doctor_id: int,
     education_id: int,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -493,7 +493,7 @@ def remove_doctor_education(
 def feature_doctor_education(
     doctor_id: int,
     education_id: int,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     """
     Marks this entry as the one shown on the compact scheduling card's
@@ -534,7 +534,7 @@ def feature_doctor_education(
 def unfeature_doctor_education(
     doctor_id: int,
     education_id: int,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -594,7 +594,7 @@ def get_doctor_departments(doctor_id: int):
 def assign_department_to_doctor(
     doctor_id: int,
     department_id: int,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -664,7 +664,7 @@ def assign_department_to_doctor(
 def remove_department_from_doctor(
     doctor_id: int,
     department_id: int,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:

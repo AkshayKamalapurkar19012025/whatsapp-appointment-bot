@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from PIL import Image, UnidentifiedImageError
 
-from app.api.staff_auth import require_role
+from app.api.staff_auth import require_permission
 from app.config import MEDIA_ROOT
 from app.db.connection import get_connection
 
@@ -53,7 +53,7 @@ def _delete_photo_file(photo_url: str) -> None:
 async def upload_doctor_photo(
     doctor_id: int,
     file: UploadFile = File(...),
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     raw = await file.read()
 
@@ -122,7 +122,7 @@ async def upload_doctor_photo(
 @router.delete("/{doctor_id}/photo")
 def remove_doctor_photo(
     doctor_id: int,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
