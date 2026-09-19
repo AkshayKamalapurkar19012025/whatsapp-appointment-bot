@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { CaretLeft } from '@phosphor-icons/react'
 import { listAllDoctors } from '../api'
 import type { Doctor } from '../types'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
@@ -14,10 +15,16 @@ const LAST_DOCTOR_KEY = 'admin_queue_panel_last_doctor_id'
 // A standalone, doctor-selectable version of DoctorDetail.tsx's Queue
 // tab (same QueueSection component, not a second implementation) --
 // the thing actually missing before this: reaching the queue required
-// Doctors -> pick a doctor -> Queue tab. This puts it one click from
-// the main nav, meant to be the screen staff or a doctor leaves open
-// during a shift (QueueSection polls on its own).
-export default function QueuePanel() {
+// Doctors -> pick a doctor -> Queue tab. Not a top-level sidebar
+// destination itself (AdminApp.tsx) -- reached from inside the
+// Appointments/OPD workspace, either via its header "Queue" button (no
+// doctor preselected, same as this panel's own default -- last-viewed
+// doctor or the first active one) or a per-appointment "Open Queue"
+// row action, meant to be the screen staff or a doctor leaves open
+// during a shift (QueueSection polls on its own). onBack mirrors
+// BookAppointmentPanel's onViewAppointments: the one way back to that
+// workspace now that this isn't its own nav item.
+export default function QueuePanel({ onBack }: { onBack: () => void }) {
   const [doctors, setDoctors] = useState<Doctor[]>([])
   const [doctorId, setDoctorId] = useState('')
   const [loading, setLoading] = useState(true)
@@ -53,6 +60,9 @@ export default function QueuePanel() {
           <h2>Queue</h2>
           <p className="muted">Today&apos;s walk-in queue -- who&apos;s up next for each doctor.</p>
         </div>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={onBack}>
+          <CaretLeft size={14} weight="bold" /> Back to Appointments
+        </button>
       </div>
 
       {loading && (
