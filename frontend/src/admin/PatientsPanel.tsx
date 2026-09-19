@@ -5,6 +5,7 @@ import type { Patient } from '../types'
 import { formatDateTime } from '../format'
 import { useStaggerReveal } from '../useStaggerReveal'
 import PatientFormModal from './PatientFormModal'
+import PatientVisitHistoryModal from './PatientVisitHistoryModal'
 
 // The patient MASTER REGISTRY -- "who is this person", not a booking
 // workflow. Deliberately no permanent first-time/recurring status or
@@ -22,6 +23,10 @@ export default function PatientsPanel() {
   // edit mode for that row (PATCH /patients/{id}). Both share the exact
   // same modal/component -- there is no second patient form anywhere.
   const [formTarget, setFormTarget] = useState<'add' | Patient | null>(null)
+  // Opens PatientVisitHistoryModal for the clicked row -- the "N
+  // visits" count on its own was a dead end (no way to see when or
+  // with which doctor); this is the drill-in.
+  const [historyTarget, setHistoryTarget] = useState<Patient | null>(null)
 
   const searchNeedle = searchText.trim().toLowerCase()
   const visiblePatients = patients.filter((p) => {
@@ -116,7 +121,13 @@ export default function PatientsPanel() {
                   <td>{p.whatsapp_number}</td>
                   <td>{p.last_visit_at ? formatDateTime(p.last_visit_at) : <span className="muted">—</span>}</td>
                   <td>
-                    {visits} visit{visits === 1 ? '' : 's'}
+                    {visits === 0 ? (
+                      <span className="muted">0 visits</span>
+                    ) : (
+                      <button type="button" className="link" onClick={() => setHistoryTarget(p)}>
+                        {visits} visit{visits === 1 ? '' : 's'}
+                      </button>
+                    )}
                   </td>
                   <td>
                     <button type="button" className="btn-secondary btn btn-sm" onClick={() => setFormTarget(p)}>
@@ -139,6 +150,8 @@ export default function PatientsPanel() {
           onSaved={handleSaved}
         />
       )}
+
+      {historyTarget && <PatientVisitHistoryModal patient={historyTarget} onClose={() => setHistoryTarget(null)} />}
     </section>
   )
 }

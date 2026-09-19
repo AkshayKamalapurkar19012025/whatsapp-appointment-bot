@@ -1018,3 +1018,42 @@ def test_settle_free_visit_rejected_when_line_item_added(client, db_connection):
 
     response = client.post(f"/api/appointments/{appointment_id}/settle-free-visit", headers=admin_headers)
     assert response.status_code == 409
+
+
+def test_admin_listing_includes_invoice_number_and_refund_fields(client, db_connection):
+    """GET /appointments (the admin listing AppointmentDetailsModal reads
+    from) must carry invoice_number always, and the refund columns once
+    a refund is recorded -- these are looked up separately from GET
+    .../invoice and GET .../charge, so the listing needs its own copy
+    rather than the frontend having to fetch a second endpoint per row
+    just to show a refund reason on reopen."""
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Listing Refund",
+        department_name="Listing Refund Dept", appointment_type_name="Listing Refund Type",
+    )
+    _set_fee(client, admin_headers, seeded, 500)
+    patient = _create_patient(client, admin_headers, "Listing Refund Patient", "+919600000040")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+    _pay(client, admin_headers, appointment_id)
+
+    before = client.get("/api/appointments", headers=admin_headers).json()
+    row_before = next(a for a in before if a["id"] == appointment_id)
+    assert row_before["invoice_number"].startswith("INV-")
+    assert row_before["refund_amount"] is None
+    assert row_before["refund_reason"] is None
+    assert row_before["refunded_at"] is None
+
+    client.post(
+        f"/api/appointments/{appointment_id}/refund-payment",
+        json={"amount": 500, "reason": "Listing visibility check"},
+        headers=admin_headers,
+    )
+
+    after = client.get("/api/appointments", headers=admin_headers).json()
+    row_after = next(a for a in after if a["id"] == appointment_id)
+    assert row_after["payment_status"] == "REFUNDED"
+    assert float(row_after["refund_amount"]) == 500.0
+    assert row_after["refund_reason"] == "Listing visibility check"
+    assert row_after["refunded_at"] is not None

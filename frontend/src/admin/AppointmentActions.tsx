@@ -61,10 +61,10 @@ export interface AppointmentActionSet {
   // appointment), or a "..." menu once there's more than one, so a
   // status with three-plus applicable actions never has to wrap.
   overflow: ActionDescriptor[]
-  // "Not started yet" for a Confirmed appointment whose time hasn't
-  // arrived -- there's no lifecycle action to take yet, but this still
-  // isn't nothing, so it's shown as a caption rather than silently
-  // rendering an empty actions cell.
+  // e.g. "Slot has passed" for a Pending appointment nobody actioned
+  // before its start_at -- there's no lifecycle action to take, but
+  // this still isn't nothing, so it's shown as a caption rather than
+  // silently rendering an empty actions cell.
   note: string | null
 }
 
@@ -121,20 +121,29 @@ export function buildAppointmentActions(
         note: null,
       }
     }
-    // Not started yet -- but the patient may already be physically
-    // present (migrations/0023's arrived_at). Once they are, "Mark
-    // Arrived" has nothing left to do (idempotent, but re-showing it
-    // is just noise), so the row falls back to a note instead --
-    // describeArrival's "Arrived early -- appointment at HH:MM" label
-    // is what actually communicates this state, not this note.
+    // Not started yet -- but mark_visited_service has no start_at gate
+    // any more (first-come-first-served check-in, not slot-order; see
+    // its own docstring), so Check In is always available here too,
+    // not just once the scheduled time arrives. Recording arrival
+    // separately still matters (it's the "physically present, not yet
+    // processed" fact describeArrival's "Arrived early -- appointment
+    // at HH:MM" label shows), so "Mark Arrived" stays the primary nudge
+    // until it's done, with Check In offered alongside it for a
+    // patient staff want to process immediately without a separate
+    // arrival step.
     if (a.arrived_at) {
-      return { primary: null, secondary: null, overflow: [viewDetails, reschedule, cancel], note: null }
+      return {
+        primary: { key: 'checkin', label: 'Check In', onClick: () => h.onCheckIn(a), variant: 'primary' },
+        secondary: null,
+        overflow: [viewDetails, reschedule, cancel],
+        note: null,
+      }
     }
     return {
       primary: { key: 'mark-arrived', label: 'Mark Arrived', onClick: () => h.onMarkArrived(a), variant: 'primary' },
-      secondary: null,
+      secondary: { key: 'checkin', label: 'Check In', onClick: () => h.onCheckIn(a), variant: 'secondary' },
       overflow: [viewDetails, reschedule, cancel],
-      note: 'Not started yet',
+      note: null,
     }
   }
 

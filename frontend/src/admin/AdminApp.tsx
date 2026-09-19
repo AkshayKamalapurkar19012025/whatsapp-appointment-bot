@@ -3,6 +3,7 @@ import {
   Buildings,
   CalendarCheck,
   ChartLineUp,
+  CurrencyInr,
   Gauge,
   GearSix,
   ShieldCheck,
@@ -20,6 +21,7 @@ import AppointmentTypesPanel from './AppointmentTypesPanel'
 import StaffAccountsPanel from './StaffAccountsPanel'
 import PatientsPanel from './PatientsPanel'
 import AppointmentsPanel from './AppointmentsPanel'
+import BillingPanel from './BillingPanel'
 import BookAppointmentPanel from './BookAppointmentPanel'
 import QueuePanel from './QueuePanel'
 import AdminSidebar, { type AdminSidebarItem } from './AdminSidebar'
@@ -35,6 +37,7 @@ type Section =
   | 'appointment-types'
   | 'patients'
   | 'staff-accounts'
+  | 'billing'
 
 // Nothing in this component clears staff/getStaffToken() when `section`
 // changes -- switching sections is a plain in-memory state update, same
@@ -155,7 +158,9 @@ export default function AdminApp() {
   // has a backend or a panel behind it today, and inventing one wasn't
   // in scope here -- but the requested menu named them explicitly, so
   // they stay visible (with a plain "Coming soon" label) rather than a
-  // silently incomplete menu or a dead-end click.
+  // silently incomplete menu or a dead-end click. Billing is the one
+  // "Reports" entry that's real (GET /dashboard/billing), so it's not
+  // marked disabled.
   const menuItems: AdminSidebarItem[] = [
     {
       key: 'dashboard',
@@ -224,6 +229,14 @@ export default function AdminApp() {
         ]
       : []),
     {
+      key: 'billing',
+      label: 'Billing',
+      icon: <CurrencyInr size={20} weight="regular" />,
+      active: section === 'billing',
+      onSelect: () => goTo('billing'),
+      group: 'Reports',
+    },
+    {
       key: 'analytics',
       label: 'Analytics',
       icon: <ChartLineUp size={20} weight="regular" />,
@@ -281,6 +294,7 @@ export default function AdminApp() {
           {section === 'appointment-types' && <AppointmentTypesPanel key={navResetKey} isAdmin={isAdmin} />}
           {section === 'patients' && <PatientsPanel key={navResetKey} />}
           {section === 'staff-accounts' && isAdmin && <StaffAccountsPanel key={navResetKey} />}
+          {section === 'billing' && <BillingPanel key={navResetKey} />}
         </main>
       </div>
     </div>

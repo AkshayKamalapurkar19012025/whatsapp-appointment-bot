@@ -1063,13 +1063,25 @@ def mark_visited_service(cur, appointment_id: int):
     successfully paid, unless waived"). token_number stays NULL on
     CHECKED_IN until then.
 
+    No longer gated on start_at: a Confirmed, physically-present
+    patient can be checked in whenever the front desk actually
+    processes them, regardless of their scheduled slot time (first-
+    come-first-served, not slot-order) -- queue order is, and always
+    was, check-in/payment order (generate_queue_token_service), not
+    scheduled time. Earlier revisions raised AppointmentNotStarted
+    here to keep an early arrival from jumping ahead of a patient whose
+    slot had actually arrived; that rule was deliberately dropped, not
+    an oversight -- see mark_no_show_service for the one remaining,
+    unrelated use of an AppointmentNotStarted-style time guard (you
+    can't mark someone a no-show before their slot has even happened).
+
     Doesn't reuse _transition_appointment_status above the way the
-    other three transitions do, since it also needs the AppointmentNotStarted
-    time check below.
+    other three transitions do, since it needs a wider RETURNING
+    (visited_at/doctor_id/patient_id, not just id/status).
     """
     cur.execute(
         """
-        SELECT status, start_at
+        SELECT status
         FROM appointments
         WHERE id = %s
         FOR UPDATE
@@ -1082,20 +1094,8 @@ def mark_visited_service(cur, appointment_id: int):
     if row is None:
         raise AppointmentNotFound()
 
-    status, start_at = row
-
-    if status != "CONFIRMED":
+    if row[0] != "CONFIRMED":
         raise InvalidStatusTransition()
-
-    # start_at is TIMESTAMPTZ -- an absolute instant, so comparing it
-    # directly against an aware "now" is correct regardless of which
-    # timezone either side happens to be labeled in -- no conversion to
-    # the doctor's local wall-clock time needed here (unlike the
-    # token-numbering "which doctor-local day is this" question inside
-    # generate_queue_token_service, which does need it, but that no
-    # longer runs from this function -- see the docstring above).
-    if start_at > datetime.now(timezone.utc):
-        raise AppointmentNotStarted()
 
     cur.execute(
         """
@@ -1125,18 +1125,18 @@ def mark_arrived_service(cur, appointment_id: int):
     """
     Staff records that a Confirmed patient has physically arrived at the
     front desk -- independent of whether their scheduled start_at has
-    passed yet. Deliberately NOT mark_visited_service: that function
-    (unchanged by this addition, guard included) still requires
-    start_at <= now before it will set status='CHECKED_IN', and still
-    means "formally checked in, at the front of the payment/queue
-    gate." arrived_at here means only "physically present" -- an early
-    arrival stays CONFIRMED with arrived_at set and visited_at still
-    NULL, so it can never generate a queue token
-    (generate_queue_token_service is only ever reached from
-    record_payment_service/waive_consultation_fee_service, both of
-    which require status='CHECKED_IN' -- see
-    _lock_appointment_for_payment) and never jumps ahead of patients
-    whose appointment time has actually arrived.
+    passed yet. Deliberately NOT mark_visited_service: recording an
+    arrival on its own still means only "physically present," never
+    "formally checked in, at the front of the payment/queue gate."
+    arrived_at here means only that -- an early arrival stays CONFIRMED
+    with arrived_at set and visited_at still NULL, so it can never
+    generate a queue token by itself (generate_queue_token_service is
+    only ever reached from record_payment_service/waive_consultation_
+    fee_service, both of which require status='CHECKED_IN' -- see
+    _lock_appointment_for_payment). mark_visited_service no longer
+    requires start_at <= now (see its own docstring), so front desk can
+    check this patient in for real -- and into the queue -- as soon as
+    they're ready, without waiting for their scheduled slot time.
 
     Idempotent: replaying this for an appointment that already has
     arrived_at set returns the existing value unchanged rather than
@@ -1198,25 +1198,17 @@ def mark_arrived_service(cur, appointment_id: int):
 def confirm_and_check_in_service(cur, appointment_id: int):
     """
     The walk-in "Confirm & Check In" action: composes confirm_
-    appointment_service, mark_visited_service, and mark_arrived_service
-    above -- none of their bodies duplicated or modified -- into the
-    one action reception wants for a walk-in, without ever weakening
-    mark_visited_service's start_at <= now guard.
+    appointment_service and mark_visited_service above -- neither body
+    duplicated or modified -- into the one action reception wants for a
+    walk-in.
 
-    Only reachable from PENDING or CONFIRMED.
-
-    If the appointment's start_at has already arrived, this reaches all
-    the way to CHECKED_IN, same as clicking Confirm then Check In
-    separately. If start_at is still in the future (e.g. a walk-in
-    booked for the earliest open slot, which may be a few minutes from
-    now rather than exactly now), mark_visited_service raises
-    AppointmentNotStarted -- rather than surfacing that as an error,
-    this falls back to mark_arrived_service instead: the appointment
-    ends up CONFIRMED with arrived_at set, exactly the "arrived early"
-    state, and staff check them in for real (the ordinary Check-In
-    action) once their time comes. Never generates a queue token
-    itself either way -- that still only happens via payment/waiver,
-    same as every other path.
+    Only reachable from PENDING or CONFIRMED. Always reaches CHECKED_IN
+    (arrival_kind stays "checked_in" in the response -- kept as a field
+    rather than removed so existing callers don't need a shape change --
+    since mark_visited_service no longer has a start_at guard that could
+    make this fall back to anything else; see that function's docstring
+    for why). Never generates a queue token itself either way -- that
+    still only happens via payment/waiver, same as every other path.
     """
     cur.execute(
         "SELECT status FROM appointments WHERE id = %s FOR UPDATE",
@@ -1236,27 +1228,16 @@ def confirm_and_check_in_service(cur, appointment_id: int):
     if status == "PENDING":
         confirm_appointment_service(cur, appointment_id)
 
-    try:
-        visit_result = mark_visited_service(cur, appointment_id)
-        return {
-            "id": visit_result["id"],
-            "status": visit_result["status"],
-            "arrival_kind": "checked_in",
-            "visited_at": visit_result["visited_at"],
-            "arrived_at": None,
-            "doctor_id": visit_result["doctor_id"],
-            "patient_id": visit_result["patient_id"],
-        }
-    except AppointmentNotStarted:
-        arrive_result = mark_arrived_service(cur, appointment_id)
-        return {
-            "id": arrive_result["id"],
-            "status": arrive_result["status"],
-            "arrival_kind": "arrived_early",
-            "visited_at": None,
-            "arrived_at": arrive_result["arrived_at"],
-            "start_at": arrive_result["start_at"],
-        }
+    visit_result = mark_visited_service(cur, appointment_id)
+    return {
+        "id": visit_result["id"],
+        "status": visit_result["status"],
+        "arrival_kind": "checked_in",
+        "visited_at": visit_result["visited_at"],
+        "arrived_at": None,
+        "doctor_id": visit_result["doctor_id"],
+        "patient_id": visit_result["patient_id"],
+    }
 
 
 def mark_completed_service(cur, appointment_id: int):
