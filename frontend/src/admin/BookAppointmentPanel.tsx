@@ -210,8 +210,15 @@ export default function BookAppointmentPanel({
       .catch(() => setTypes([]))
   }, [doctorId])
 
+  // Defaults Step 3 to today the moment an appointment type is picked,
+  // rather than leaving `date` empty until staff explicitly clicks
+  // Today/a calendar day -- the slot fetch below only runs once `date`
+  // is set, so without this, step 3's availability never appears on
+  // its own. Resets back to '' when appointmentTypeId is cleared (e.g.
+  // the doctor-change effect above clearing it), so the date field
+  // doesn't carry a stale selection with no type chosen.
   useEffect(() => {
-    setDate('')
+    setDate(appointmentTypeId ? isoDateToday() : '')
     setSelectedSlot(null)
   }, [appointmentTypeId])
 
