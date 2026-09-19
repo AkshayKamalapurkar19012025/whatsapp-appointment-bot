@@ -189,6 +189,19 @@ export function TimeCombobox({
           sideOffset={4}
           onOpenAutoFocus={(e) => e.preventDefault()}
           onCloseAutoFocus={(e) => e.preventDefault()}
+          // The input's own onFocus/onBlur above are the sole source of
+          // truth for open/close -- Radix's own outside-dismiss races with
+          // that: this Content mounts synchronously while the very focusin
+          // event that opened it is still bubbling (React flushes focus
+          // updates on controlled inputs eagerly), so its focus-outside
+          // listener attaches to `document` in time to catch that same
+          // event once it reaches there. Since the anchor input lives
+          // outside this portaled Content by construction, that reads as
+          // "focus left the layer" and self-dismisses immediately after
+          // opening. Suppressing Radix's own outside checks here avoids
+          // that false positive without losing real dismissal.
+          onPointerDownOutside={(e) => e.preventDefault()}
+          onFocusOutside={(e) => e.preventDefault()}
           className={cn(
             // Higher than .modal-overlay's z-index:1000 (styles.css) --
             // this combobox is now also used inside ConfigureScheduleModal,
