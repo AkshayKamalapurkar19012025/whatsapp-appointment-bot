@@ -7,6 +7,7 @@ import psycopg
 
 from app.api.staff_auth import get_current_staff, require_permission
 from app.db.connection import get_connection
+from app.services.audit_log import record_audit_log
 from app.services.availability_engine import DOCTOR_SUMMARY_SELECT_SQL, DOCTOR_SUMMARY_JOIN_SQL, build_doctor_summary
 from app.utils.timezone import convert_to_timezone, validate_timezone
 
@@ -175,6 +176,16 @@ def create_doctor(
                 )
                 row = cur.fetchone()
 
+                record_audit_log(
+                    cur,
+                    hospital_id=admin["hospital_id"],
+                    staff_id=admin["id"],
+                    action="doctor.create",
+                    resource_type="doctor",
+                    resource_id=row[0],
+                    details={"name": row[1]},
+                )
+
         return {
             "id": row[0],
             "name": row[1],
@@ -241,6 +252,16 @@ def update_doctor(
                 if row is None:
                     raise HTTPException(status_code=404, detail="Doctor not found")
 
+                record_audit_log(
+                    cur,
+                    hospital_id=admin["hospital_id"],
+                    staff_id=admin["id"],
+                    action="doctor.update",
+                    resource_type="doctor",
+                    resource_id=row[0],
+                    details={"name": row[1]},
+                )
+
         return {
             "id": row[0],
             "name": row[1],
@@ -303,6 +324,16 @@ def update_doctor_slot_settings(
             if row is None:
                 raise HTTPException(status_code=404, detail="Doctor not found")
 
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="doctor.slot_settings_update",
+                resource_type="doctor",
+                resource_id=row[0],
+                details={"default_duration_minutes": row[1], "buffer_minutes": row[2]},
+            )
+
     return {
         "id": row[0],
         "default_duration_minutes": row[1],
@@ -350,6 +381,16 @@ def update_doctor_active(
 
             if row is None:
                 raise HTTPException(status_code=404, detail="Doctor not found")
+
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="doctor.active_update",
+                resource_type="doctor",
+                resource_id=row[0],
+                details={"active": row[1]},
+            )
 
     return {"id": row[0], "active": row[1]}
 
@@ -461,6 +502,16 @@ def add_doctor_education(
             )
             row = cur.fetchone()
 
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="doctor_education.add",
+                resource_type="doctor_education",
+                resource_id=row[0],
+                details={"doctor_id": doctor_id, "qualification": row[1]},
+            )
+
     return _education_entry_dict(row, doctor_id)
 
 
@@ -482,6 +533,17 @@ def remove_doctor_education(
                 (education_id, doctor_id),
             )
             removed = cur.fetchone()
+
+            if removed is not None:
+                record_audit_log(
+                    cur,
+                    hospital_id=admin["hospital_id"],
+                    staff_id=admin["id"],
+                    action="doctor_education.remove",
+                    resource_type="doctor_education",
+                    resource_id=education_id,
+                    details={"doctor_id": doctor_id},
+                )
 
     if removed is None:
         raise HTTPException(status_code=404, detail="Education entry not found")
@@ -527,6 +589,16 @@ def feature_doctor_education(
             )
             row = cur.fetchone()
 
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="doctor_education.feature",
+                resource_type="doctor_education",
+                resource_id=row[0],
+                details={"doctor_id": doctor_id},
+            )
+
     return _education_entry_dict(row, doctor_id)
 
 
@@ -549,6 +621,17 @@ def unfeature_doctor_education(
                 (education_id, doctor_id),
             )
             row = cur.fetchone()
+
+            if row is not None:
+                record_audit_log(
+                    cur,
+                    hospital_id=admin["hospital_id"],
+                    staff_id=admin["id"],
+                    action="doctor_education.unfeature",
+                    resource_type="doctor_education",
+                    resource_id=row[0],
+                    details={"doctor_id": doctor_id},
+                )
 
     if row is None:
         raise HTTPException(status_code=404, detail="Education entry not found")
@@ -653,6 +736,16 @@ def assign_department_to_doctor(
                     detail="Department already assigned to doctor",
                 )
 
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="doctor.department_assign",
+                resource_type="doctor",
+                resource_id=doctor_id,
+                details={"department_id": department_id, "department_name": department[1]},
+            )
+
     return {
         "doctor_id": doctor_id,
         "department_id": department[0],
@@ -704,6 +797,16 @@ def remove_department_from_doctor(
                     status_code=404,
                     detail="Department is not assigned to doctor",
                 )
+
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="doctor.department_remove",
+                resource_type="doctor",
+                resource_id=removed[0],
+                details={"department_id": removed[1]},
+            )
 
     return {
         "doctor_id": removed[0],

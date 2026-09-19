@@ -4,6 +4,7 @@ import psycopg
 
 from app.api.staff_auth import get_current_staff, require_permission
 from app.db.connection import get_connection
+from app.services.audit_log import record_audit_log
 
 router = APIRouter(
     prefix="/appointment-types",
@@ -195,6 +196,16 @@ def create_appointment_type(
                 )
                 row = cur.fetchone()
 
+                record_audit_log(
+                    cur,
+                    hospital_id=admin["hospital_id"],
+                    staff_id=admin["id"],
+                    action="appointment_type.create",
+                    resource_type="appointment_type",
+                    resource_id=row[0],
+                    details={"name": row[1]},
+                )
+
         return {
             "id": row[0],
             "name": row[1],
@@ -232,6 +243,16 @@ def update_appointment_type(
 
                 if row is None:
                     raise HTTPException(status_code=404, detail="Appointment type not found")
+
+                record_audit_log(
+                    cur,
+                    hospital_id=admin["hospital_id"],
+                    staff_id=admin["id"],
+                    action="appointment_type.update",
+                    resource_type="appointment_type",
+                    resource_id=row[0],
+                    details={"name": row[1]},
+                )
 
         return {
             "id": row[0],
@@ -283,6 +304,16 @@ def update_appointment_type_active(
             if row is None:
                 raise HTTPException(status_code=404, detail="Appointment type not found")
 
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="appointment_type.active_update",
+                resource_type="appointment_type",
+                resource_id=row[0],
+                details={"active": row[1]},
+            )
+
     return {"id": row[0], "active": row[1]}
 
 
@@ -311,6 +342,15 @@ def delete_appointment_type(
 
             if cur.fetchone() is None:
                 raise HTTPException(status_code=404, detail="Appointment type not found")
+
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="appointment_type.delete",
+                resource_type="appointment_type",
+                resource_id=appointment_type_id,
+            )
 
     return {
         "id": appointment_type_id,

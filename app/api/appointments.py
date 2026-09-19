@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.api.staff_auth import get_current_staff, require_permission
 from app.db.connection import get_connection
 from app.services import exceptions as svc_exc
+from app.services.audit_log import record_audit_log
 from app.services.appointment_services import (
     create_appointment_service,
     cancel_appointment_service,
@@ -778,6 +779,16 @@ def waive_appointment_payment(
                     status_code=409,
                     detail="Waiver requires a completed visit with this doctor in the last 3 days",
                 )
+
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="appointment.waive_payment",
+                resource_type="appointment",
+                resource_id=appointment_id,
+                details={"reason": waiver.reason},
+            )
 
             if result["token_just_issued"]:
                 _notify_queue_token(cur, appointment_id, result["token_number"])

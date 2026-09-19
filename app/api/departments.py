@@ -4,6 +4,7 @@ import psycopg
 
 from app.api.staff_auth import require_permission
 from app.db.connection import get_connection
+from app.services.audit_log import record_audit_log
 
 router = APIRouter(prefix="/departments", tags=["Departments"])
 
@@ -64,6 +65,16 @@ def create_department(
                 )
                 row = cur.fetchone()
 
+                record_audit_log(
+                    cur,
+                    hospital_id=admin["hospital_id"],
+                    staff_id=admin["id"],
+                    action="department.create",
+                    resource_type="department",
+                    resource_id=row[0],
+                    details={"name": row[1]},
+                )
+
         return {
             "id": row[0],
             "name": row[1],
@@ -101,6 +112,16 @@ def update_department(
 
                 if row is None:
                     raise HTTPException(status_code=404, detail="Department not found")
+
+                record_audit_log(
+                    cur,
+                    hospital_id=admin["hospital_id"],
+                    staff_id=admin["id"],
+                    action="department.update",
+                    resource_type="department",
+                    resource_id=row[0],
+                    details={"name": row[1]},
+                )
 
         return {
             "id": row[0],
@@ -140,6 +161,15 @@ def delete_department(
 
             if cur.fetchone() is None:
                 raise HTTPException(status_code=404, detail="Department not found")
+
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="department.delete",
+                resource_type="department",
+                resource_id=department_id,
+            )
 
     return {
         "id": department_id,

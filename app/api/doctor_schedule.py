@@ -4,6 +4,7 @@ from datetime import date, time
 
 from app.api.staff_auth import require_permission
 from app.db.connection import get_connection
+from app.services.audit_log import record_audit_log
 
 router = APIRouter(
     prefix="/doctors",
@@ -263,6 +264,16 @@ def create_doctor_schedule(
 
             row = cur.fetchone()
 
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="doctor_schedule.create",
+                resource_type="doctor_schedule",
+                resource_id=row[0],
+                details={"doctor_id": doctor_id, "day_of_week": row[1]},
+            )
+
     return {
         "id": row[0],
         "doctor_id": doctor_id,
@@ -382,6 +393,16 @@ def update_doctor_schedule(
 
             row = cur.fetchone()
 
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="doctor_schedule.update",
+                resource_type="doctor_schedule",
+                resource_id=row[0],
+                details={"doctor_id": doctor_id, "day_of_week": row[1]},
+            )
+
     return {
         "id": row[0],
         "doctor_id": doctor_id,
@@ -441,6 +462,16 @@ def delete_doctor_schedule(
                     status_code=404,
                     detail="Schedule not found",
                 )
+
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="doctor_schedule.delete",
+                resource_type="doctor_schedule",
+                resource_id=schedule_id,
+                details={"doctor_id": doctor_id},
+            )
 
     return {
         "id": schedule_id,

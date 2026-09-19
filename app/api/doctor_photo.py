@@ -8,6 +8,7 @@ from PIL import Image, UnidentifiedImageError
 from app.api.staff_auth import require_permission
 from app.config import MEDIA_ROOT
 from app.db.connection import get_connection
+from app.services.audit_log import record_audit_log
 
 router = APIRouter(prefix="/doctors", tags=["Doctors"])
 
@@ -111,6 +112,15 @@ async def upload_doctor_photo(
                 (new_photo_url, doctor_id),
             )
 
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="doctor.photo_upload",
+                resource_type="doctor",
+                resource_id=doctor_id,
+            )
+
     # Only remove the previous file once the new one is safely referenced
     # by the DB row -- if anything above failed, the old photo stays put.
     if previous_photo_url:
@@ -140,6 +150,15 @@ def remove_doctor_photo(
             cur.execute(
                 "UPDATE doctors SET photo_url = NULL, updated_at = NOW() WHERE id = %s",
                 (doctor_id,),
+            )
+
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="doctor.photo_remove",
+                resource_type="doctor",
+                resource_id=doctor_id,
             )
 
     if previous_photo_url:

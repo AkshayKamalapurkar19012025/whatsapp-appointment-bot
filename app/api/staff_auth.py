@@ -32,6 +32,7 @@ from typing import Literal
 
 from app.db.connection import get_connection
 from app.services import exceptions as svc_exc
+from app.services.audit_log import record_audit_log
 from app.services.staff_auth import (
     login,
     get_staff_by_session_token,
@@ -225,9 +226,21 @@ def create_account(body: StaffCreateBody, admin: dict = Depends(require_permissi
     with get_connection() as conn:
         with conn.cursor() as cur:
             try:
-                return create_staff_account(cur, body.username, body.password, body.role)
+                result = create_staff_account(cur, body.username, body.password, body.role)
             except svc_exc.UsernameAlreadyExists:
                 raise HTTPException(status_code=409, detail="Username already exists")
+
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="staff.create",
+                resource_type="staff",
+                resource_id=result["id"],
+                details={"username": result["username"], "role": result["role"]},
+            )
+
+    return result
 
 
 @router.patch("/accounts/{staff_id}/active")
@@ -239,9 +252,21 @@ def set_account_active(
     with get_connection() as conn:
         with conn.cursor() as cur:
             try:
-                return set_staff_active(cur, staff_id, body.active)
+                result = set_staff_active(cur, staff_id, body.active)
             except svc_exc.StaffNotFound:
                 raise HTTPException(status_code=404, detail="Staff account not found")
+
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="staff.active_update",
+                resource_type="staff",
+                resource_id=staff_id,
+                details={"active": result["active"]},
+            )
+
+    return result
 
 
 # staff.manage is deliberately not grantable through break-glass: it's
@@ -283,6 +308,20 @@ def grant_break_glass(
                 (staff["id"], body.permission_name, body.reason, body.duration_minutes),
             )
             row = cur.fetchone()
+
+            record_audit_log(
+                cur,
+                hospital_id=staff["hospital_id"],
+                staff_id=staff["id"],
+                action="break_glass.grant",
+                resource_type="break_glass_grant",
+                resource_id=row[0],
+                details={
+                    "permission_name": body.permission_name,
+                    "reason": body.reason,
+                    "duration_minutes": body.duration_minutes,
+                },
+            )
 
     return {
         "id": row[0],
@@ -352,5 +391,14 @@ def review_break_glass_grant(
 
             if row is None:
                 raise HTTPException(status_code=404, detail="Grant not found")
+
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="break_glass.review",
+                resource_type="break_glass_grant",
+                resource_id=row[0],
+            )
 
     return {"id": row[0], "reviewed_at": row[1].isoformat()}
