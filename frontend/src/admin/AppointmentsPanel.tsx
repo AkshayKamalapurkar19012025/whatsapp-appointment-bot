@@ -112,6 +112,7 @@ const MORE_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'LAPSED', label: 'Lapsed' },
   { key: 'CONFIRMED', label: 'Confirmed' },
   { key: 'ARRIVED', label: 'Arrived' },
+  { key: 'CHECKED_IN', label: 'Checked In' },
   { key: 'REJECTED', label: 'Rejected' },
 ]
 
@@ -199,6 +200,16 @@ function opdStatus(a: AdminAppointment, queuePosition: Map<number, QueuePosition
     case 'CONFIRMED':
       return a.arrived_at ? 'ARRIVED' : 'CONFIRMED'
     case 'CHECKED_IN': {
+      // Outside today, this is the only place a stale entry -- checked
+      // in on some earlier day, never paid/waived into the queue or
+      // completed -- becomes visible at all: get_doctor_queue
+      // (app/api/doctors.py) scopes strictly to the doctor's current
+      // local day, so it drops off that view the moment the day rolls
+      // over, with no other surface. Kept as its own raw 'CHECKED_IN'
+      // bucket (MORE_TABS below) rather than folded into
+      // Waiting/Arrived/In Consultation -- those three only mean
+      // anything relative to today's live queue, which a past day's
+      // straggler was never part of.
       if (!isTodayScope) return 'CHECKED_IN'
       if (a.payment_status === 'UNPAID' || a.payment_status === 'FAILED') return 'ARRIVED'
       return queuePosition.get(a.id) === 'serving' ? 'IN_CONSULTATION' : 'WAITING'
