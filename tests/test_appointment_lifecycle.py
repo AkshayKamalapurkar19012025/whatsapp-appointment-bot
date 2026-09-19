@@ -114,6 +114,47 @@ def test_confirm_already_confirmed_appointment_is_409(client, db_connection):
     assert response.status_code == 409
 
 
+def test_confirm_lapsed_pending_appointment_is_409(client, db_connection):
+    # create_appointment_service (the only normal way to get a PENDING
+    # row) refuses a past start_at outright, so the only way to get one
+    # -- a request nobody actioned before its own slot passed -- is to
+    # insert it directly, same as test_reschedule_service.py's own
+    # synthetic-row fixtures for states the service layer won't produce
+    # itself.
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client,
+        db_connection,
+        doctor_name="Dr. Confirm Lapsed",
+        department_name="Confirm Lapsed Dept",
+        appointment_type_name="Confirm Lapsed Type",
+    )
+    patient = client.post(
+        "/api/patients",
+        json={"name": "Confirm Lapsed Patient", "whatsapp_number": "+919900000001"},
+        headers=admin_headers,
+    ).json()
+
+    with db_connection.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO appointments (doctor_id, patient_id, appointment_type_id, start_at, end_at, status)
+            VALUES (%s, %s, %s, '2020-01-01T09:00:00+00:00', '2020-01-01T09:30:00+00:00', 'PENDING')
+            RETURNING id
+            """,
+            (seeded["doctor_id"], patient["id"], seeded["appointment_type_id"]),
+        )
+        appointment_id = cur.fetchone()[0]
+    db_connection.commit()
+
+    response = client.post(f"/api/appointments/{appointment_id}/confirm", headers=admin_headers)
+    assert response.status_code == 409
+
+    with db_connection.cursor() as cur:
+        cur.execute("SELECT status FROM appointments WHERE id = %s", (appointment_id,))
+        assert cur.fetchone()[0] == "PENDING"
+
+
 # ---------------------------------------------------------------------
 # Reject
 # ---------------------------------------------------------------------

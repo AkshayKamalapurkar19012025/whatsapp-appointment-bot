@@ -64,6 +64,7 @@ from app.services.exceptions import (
     NotAppointmentOwner,
     InvalidStatusTransition,
     AppointmentNotStarted,
+    AppointmentSlotPassed,
     PaymentStateConflict,
     WaiverNotEligible,
     FreeVisitNotEligible,
@@ -894,10 +895,52 @@ def _transition_appointment_status(cur, appointment_id: int, *, from_statuses, t
 
 
 def confirm_appointment_service(cur, appointment_id: int):
-    """Staff approves a Pending request."""
-    return _transition_appointment_status(
-        cur, appointment_id, from_statuses=("PENDING",), to_status="CONFIRMED"
+    """Staff approves a Pending request -- refused once the requested
+    slot's start_at has already gone by (AppointmentSlotPassed): a
+    request nobody actioned before its time passed has nothing left to
+    confirm the patient into. Doesn't reuse _transition_appointment_status
+    above, since it also needs this time check (same shape as
+    mark_visited_service's own AppointmentNotStarted check, mirrored)."""
+    cur.execute(
+        """
+        SELECT status, start_at
+        FROM appointments
+        WHERE id = %s
+        FOR UPDATE
+        """,
+        (appointment_id,),
     )
+
+    row = cur.fetchone()
+
+    if row is None:
+        raise AppointmentNotFound()
+
+    status, start_at = row
+
+    if status != "PENDING":
+        raise InvalidStatusTransition()
+
+    # start_at is TIMESTAMPTZ -- see mark_visited_service's identical
+    # comment on why comparing it directly against an aware UTC "now" is
+    # correct with no doctor-timezone conversion needed.
+    if start_at <= datetime.now(timezone.utc):
+        raise AppointmentSlotPassed()
+
+    cur.execute(
+        """
+        UPDATE appointments
+        SET status = %s,
+            updated_at = NOW()
+        WHERE id = %s
+        RETURNING id, status
+        """,
+        ("CONFIRMED", appointment_id),
+    )
+
+    result_row = cur.fetchone()
+
+    return {"id": result_row[0], "status": result_row[1]}
 
 
 def reject_appointment_service(cur, appointment_id: int):

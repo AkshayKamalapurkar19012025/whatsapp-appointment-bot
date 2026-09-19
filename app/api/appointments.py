@@ -503,6 +503,11 @@ def confirm_appointment(
                     status_code=409,
                     detail="Only a Pending appointment can be confirmed",
                 )
+            except svc_exc.AppointmentSlotPassed:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This appointment's scheduled time has already passed and can no longer be confirmed",
+                )
 
     return result
 

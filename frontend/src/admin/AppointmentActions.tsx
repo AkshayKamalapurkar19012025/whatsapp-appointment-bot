@@ -90,6 +90,20 @@ export function buildAppointmentActions(
   const cancel: ActionDescriptor = { key: 'cancel', label: 'Cancel', onClick: () => h.onCancel(a), variant: 'danger' }
 
   if (a.status === 'PENDING') {
+    // A request nobody confirmed/rejected before its own slot's start_at
+    // went by -- the backend refuses Confirm at this point (Appointment
+    // SlotPassed, app/services/appointment_services.py), so there's
+    // nothing left to confirm the patient into. Reject (formally
+    // declining it) and Reschedule (onto a new, future slot) still make
+    // sense; Confirm doesn't, so it's dropped rather than shown to fail.
+    if (hasStarted(a.start_at)) {
+      return {
+        primary: { key: 'reject', label: 'Reject', onClick: () => h.onReject(a), variant: 'danger' },
+        secondary: null,
+        overflow: [viewDetails, reschedule, cancel],
+        note: 'Slot has passed',
+      }
+    }
     return {
       primary: { key: 'confirm', label: 'Confirm', onClick: () => h.onConfirm(a), variant: 'primary' },
       secondary: { key: 'reject', label: 'Reject', onClick: () => h.onReject(a), variant: 'danger' },

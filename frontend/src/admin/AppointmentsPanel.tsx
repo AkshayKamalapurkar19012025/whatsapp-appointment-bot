@@ -48,7 +48,7 @@ import {
   visitAdminAppointment,
 } from '../api'
 import type { AdminAppointment, Department, Doctor, DoctorQueue, Patient, Slot } from '../types'
-import { formatAgeGender, formatDate, formatPatientId, formatTime } from '../format'
+import { formatAgeGender, formatDate, formatPatientId, formatTime, hasStarted } from '../format'
 import { accentClassFor } from '../cardAccent'
 import { isoDateToday } from './doctorSchedule'
 import AdminSlotPicker from './AdminSlotPicker'
@@ -81,6 +81,7 @@ const PAGE_SIZE = 8
 // and the per-doctor queue endpoint already return.
 type OpdStatus =
   | 'BOOKED'
+  | 'LAPSED'
   | 'CONFIRMED'
   | 'ARRIVED'
   | 'WAITING'
@@ -108,6 +109,7 @@ const PRIMARY_TABS: { key: StatusFilter; label: string }[] = [
 
 const MORE_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'BOOKED', label: 'Booked' },
+  { key: 'LAPSED', label: 'Lapsed' },
   { key: 'CONFIRMED', label: 'Confirmed' },
   { key: 'ARRIVED', label: 'Arrived' },
   { key: 'REJECTED', label: 'Rejected' },
@@ -193,7 +195,7 @@ function durationBetween(startAt: string, endAt: string): number {
 function opdStatus(a: AdminAppointment, queuePosition: Map<number, QueuePosition>, isTodayScope: boolean): OpdStatus {
   switch (a.status) {
     case 'PENDING':
-      return 'BOOKED'
+      return hasStarted(a.start_at) ? 'LAPSED' : 'BOOKED'
     case 'CONFIRMED':
       return a.arrived_at ? 'ARRIVED' : 'CONFIRMED'
     case 'CHECKED_IN': {
@@ -216,6 +218,7 @@ function opdStatus(a: AdminAppointment, queuePosition: Map<number, QueuePosition
 
 const STATUS_PILL_LABEL: Record<OpdStatus, string> = {
   BOOKED: 'Booked',
+  LAPSED: 'Lapsed',
   CONFIRMED: 'Confirmed',
   ARRIVED: 'Arrived',
   WAITING: 'Waiting',
@@ -230,9 +233,12 @@ const STATUS_PILL_LABEL: Record<OpdStatus, string> = {
 // Reuses the existing lifecycle-status color tokens (styles.css's
 // "Status pills" block) everywhere a direct equivalent already exists
 // -- only WAITING and IN_CONSULTATION are genuinely new buckets with
-// no prior single-word status to borrow a class from.
+// no prior single-word status to borrow a class from. LAPSED borrows
+// NO_SHOW's color (same "expected, but nothing happened by the time
+// that stopped being possible" shape), not a new one.
 const STATUS_PILL_CLASS: Record<OpdStatus, string> = {
   BOOKED: 'pill status-pending',
+  LAPSED: 'pill status-no_show',
   CONFIRMED: 'pill status-confirmed',
   ARRIVED: 'pill status-arrived',
   WAITING: 'pill status-waiting',
