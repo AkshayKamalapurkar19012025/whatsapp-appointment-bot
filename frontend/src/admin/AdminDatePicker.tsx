@@ -3,6 +3,7 @@ import * as PopoverPrimitive from '@radix-ui/react-popover'
 import { CalendarBlank, X } from '@phosphor-icons/react'
 import MonthGrid from '../MonthGrid'
 import { formatDate, isoDateOnly } from '../format'
+import { isoDateToday } from './doctorSchedule'
 
 function daysInMonth(year: number, month: number): number {
   return new Date(year, month, 0).getDate()
@@ -34,15 +35,19 @@ export default function AdminDatePicker({
   onChange: (isoDate: string) => void
   placeholder?: string
 }) {
-  const today = new Date()
-  const todayIso = isoDateOnly(today.getFullYear(), today.getMonth() + 1, today.getDate())
+  // In the clinic's own configured timezone, not the viewer's device
+  // timezone -- see doctorSchedule.ts's isoDateToday for why (this used
+  // to read new Date() directly, so which dates counted as "past" here
+  // could disagree with the clinic's actual current date).
+  const todayIso = isoDateToday()
+  const [todayYear, todayMonth] = todayIso.split('-').map(Number)
   const [open, setOpen] = useState(false)
-  const [year, setYear] = useState(today.getFullYear())
-  const [month, setMonth] = useState(today.getMonth() + 1)
+  const [year, setYear] = useState(todayYear)
+  const [month, setMonth] = useState(todayMonth)
   const triggerRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
 
-  const isCurrentMonth = year === today.getFullYear() && month === today.getMonth() + 1
+  const isCurrentMonth = year === todayYear && month === todayMonth
 
   const dates: Record<string, boolean> = {}
   const total = daysInMonth(year, month)
