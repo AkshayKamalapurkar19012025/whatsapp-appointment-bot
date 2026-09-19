@@ -75,6 +75,17 @@ class AppointmentNotStarted(ServiceError):
     pass
 
 
+class AppointmentSlotPassed(ServiceError):
+    """Raised by confirm_appointment_service when the Pending
+    appointment's status allows the transition but its scheduled
+    start_at has already gone by -- there's no live slot left to confirm
+    the patient into. The mirror image of AppointmentNotStarted (too
+    late instead of too early), and just as deliberately distinct from
+    InvalidStatusTransition: the status (PENDING) is fine, the slot just
+    isn't current any more."""
+    pass
+
+
 class PaymentStateConflict(ServiceError):
     """Raised by record_payment_service/waive_consultation_fee_service
     when payment_status is already in a state that makes the requested
