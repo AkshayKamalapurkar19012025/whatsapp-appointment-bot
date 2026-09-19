@@ -226,7 +226,11 @@ def get_appointments(
                     a.payment_recorded_at,
                     a.waive_reason,
                     a.arrived_at,
-                    a.booking_source
+                    a.booking_source,
+                    a.refund_amount,
+                    a.refund_reason,
+                    a.refunded_at,
+                    a.invoice_number
                 FROM appointments a
                 JOIN doctors d
                     ON d.id = a.doctor_id
@@ -292,6 +296,10 @@ def get_appointments(
                 # computed from on the frontend, alongside start_at.
                 "arrived_at": convert_to_timezone(row[20], doctor_tz).isoformat() if row[20] else None,
                 "booking_source": row[21],
+                "refund_amount": row[22],
+                "refund_reason": row[23],
+                "refunded_at": row[24].isoformat() if row[24] else None,
+                "invoice_number": row[25],
             }
         )
 

@@ -8,6 +8,7 @@ import type {
   AppointmentTypeDetail,
   AppointmentTypeSummary,
   ScheduledAppointment,
+  BillingReport,
   BookingSource,
   CalendarMonth,
   DashboardStats,
@@ -21,6 +22,7 @@ import type {
   DoctorQueue,
   DoctorScheduleEntry,
   DoctorWithSlots,
+  Invoice,
   MyAppointmentsResponse,
   Patient,
   PatientGender,
@@ -359,6 +361,10 @@ export function getDashboardStats(): Promise<DashboardStats> {
 
 export function getDashboardTrends(days = 14): Promise<DashboardTrends> {
   return request(`/dashboard/trends?days=${days}`, { auth: 'staff' })
+}
+
+export function getBillingReport(days = 14): Promise<BillingReport> {
+  return request(`/dashboard/billing?days=${days}`, { auth: 'staff' })
 }
 
 // -- WEB P11: staff accounts (ADMIN only) -----------------------------------
@@ -963,6 +969,46 @@ export function waiveAppointmentPayment(
 // refuses it if the fee turns out to be nonzero.
 export function settleFreeVisitAdmin(appointmentId: number): Promise<PaymentActionResult> {
   return request(`/appointments/${appointmentId}/settle-free-visit`, { method: 'POST', auth: 'staff' })
+}
+
+// ADMIN-only reversal of a PAID appointment (record_refund_service) --
+// a back-office correction, not a queue-entry action, so it works
+// regardless of the appointment's current status (unlike payment/
+// waive/settle-free-visit above, all of which require CHECKED_IN).
+export function refundAppointmentPayment(
+  appointmentId: number,
+  amount: number,
+  reason: string,
+): Promise<PaymentActionResult> {
+  return request(`/appointments/${appointmentId}/refund-payment`, {
+    method: 'POST',
+    auth: 'staff',
+    body: { amount, reason },
+  })
+}
+
+// The itemized bill for this appointment -- consultation_fee plus any
+// ad-hoc invoice_line_items (migrations/0026) and the total record_
+// payment_service actually charges. Callable any time, same as
+// getAppointmentCharge above.
+export function getAppointmentInvoice(appointmentId: number): Promise<Invoice> {
+  return request(`/appointments/${appointmentId}/invoice`, { auth: 'staff' })
+}
+
+// ADMIN-only: add an ad-hoc charge to this appointment's bill. Only
+// possible before the bill is settled (payment_status UNPAID/FAILED) --
+// see add_invoice_line_item_service's docstring for why PAID/WAIVED/
+// REFUNDED reject this.
+export function addInvoiceLineItem(
+  appointmentId: number,
+  description: string,
+  amount: number,
+): Promise<Invoice> {
+  return request(`/appointments/${appointmentId}/invoice/line-items`, {
+    method: 'POST',
+    auth: 'staff',
+    body: { description, amount },
+  })
 }
 
 export function completeAdminAppointment(
