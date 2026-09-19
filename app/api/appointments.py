@@ -577,11 +577,6 @@ def visit_appointment(
                     status_code=409,
                     detail="Only a Confirmed appointment can be marked Checked In",
                 )
-            except svc_exc.AppointmentNotStarted:
-                raise HTTPException(
-                    status_code=409,
-                    detail="This appointment has not started yet",
-                )
 
             # Staff-initiated check-in notification (migrations/0012).
             # No token number here any more (Phase 4 decoupled token
@@ -654,13 +649,11 @@ def confirm_and_check_in_appointment(
     staff: dict = Depends(get_current_staff),
 ):
     """
-    The walk-in "Confirm & Check In" button -- composes confirm/visit/
-    arrive (see confirm_and_check_in_service's docstring) into one
-    round trip. Never bypasses mark_visited_service's start_at <= now
-    guard: if the appointment's slot is still in the future, this ends
-    up in the "arrived early" state instead (arrival_kind:
-    "arrived_early" in the response) rather than raising an error, so a
-    walk-in booked a few minutes out doesn't dead-end the front desk.
+    The walk-in "Confirm & Check In" button -- composes confirm/visit
+    (see confirm_and_check_in_service's docstring) into one round trip.
+    Always reaches CHECKED_IN: mark_visited_service has no start_at
+    guard to fall back from any more, so a walk-in booked a few minutes
+    out checks straight in instead of dead-ending the front desk.
     """
     with get_connection() as conn:
         with conn.cursor() as cur:
