@@ -5014,6 +5014,7 @@ a.link.danger {
 
 .admin-content-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-4);
@@ -5345,6 +5346,16 @@ a.link.danger {
   width: 100%;
 }
 
+/* Sits directly above the (absolutely positioned) results list below,
+   so it reads as "Existing patient found" / "N patients found" for
+   whatever's about to render, not a floating label of its own. */
+.book-patient-results-heading {
+  margin: var(--space-2) 0 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
 .book-patient-results {
   position: absolute;
   z-index: 5;
@@ -5572,6 +5583,53 @@ a.link.danger {
   justify-content: center;
   gap: 6px;
   width: 100%;
+}
+
+/* The OPD visit success screen (point 10) -- centered, unlike
+   .book-review-list's left-label/right-value row (built for the
+   Review step's sidebar card), since this sits inside .state-block's
+   own centered layout. */
+.opd-success-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  max-width: 360px;
+  margin: var(--space-2) 0;
+  text-align: left;
+}
+
+.opd-success-details > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.opd-success-details > div:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.opd-success-details dt {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.opd-success-details dd {
+  margin: 0;
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.opd-success-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  margin-top: var(--space-2);
 }
 
 @media (max-width: 1024px) {
@@ -6189,6 +6247,217 @@ a.link.danger {
   box-shadow: var(--shadow-md);
   width: 280px;
   max-width: calc(100vw - 2 * var(--space-4));
+}
+
+/* A purpose-built DOB control (OPD Patient Search & Registration
+   redesign, points 2-4) -- NOT a generic browser date input. The
+   typed text field is the primary, always-visible entry path; the
+   calendar-icon button opens a panel with direct month/year selection
+   (Select dropdowns) plus a year-grid "jump to decade" view, so
+   registering someone born in 1945 never means walking the calendar
+   back one month at a time. */
+.dob-picker-input-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.dob-picker-input-row input {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.dob-picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  flex-shrink: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease;
+}
+
+.dob-picker-trigger:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.dob-picker-error {
+  color: var(--color-danger);
+  font-size: 0.78rem;
+  margin: 4px 0 0;
+}
+
+.dob-picker-age {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+  margin: 4px 0 0;
+}
+
+.dob-picker-age strong {
+  color: var(--color-text);
+}
+
+.dob-picker-panel {
+  z-index: 1100;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-md);
+  width: 300px;
+  max-width: calc(100vw - 2 * var(--space-4));
+}
+
+.dob-picker-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.dob-picker-month-select {
+  flex: 1;
+}
+
+.dob-picker-year-button {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-weight: 700;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.dob-picker-year-button:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.dob-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin-bottom: var(--space-3);
+}
+
+.dob-picker-weekday {
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  padding: 4px 0;
+}
+
+.dob-picker-day {
+  aspect-ratio: 1;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.dob-picker-day:hover:not(:disabled) {
+  border-color: var(--color-primary);
+}
+
+.dob-picker-day:disabled {
+  color: var(--color-text-muted);
+  opacity: 0.4;
+  cursor: default;
+}
+
+.dob-picker-day.empty {
+  cursor: default;
+}
+
+.dob-picker-day.today {
+  box-shadow: inset 0 0 0 2px var(--color-warning);
+}
+
+.dob-picker-day.selected {
+  background: var(--color-primary);
+  border-color: var(--color-primary-hover);
+  color: var(--color-on-primary);
+  font-weight: 700;
+}
+
+.dob-picker-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dob-picker-decade-label {
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.dob-picker-year-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.dob-picker-year-cell {
+  padding: 0.5rem 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-size: 0.88rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.dob-picker-year-cell:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.dob-picker-year-cell:disabled {
+  color: var(--color-text-muted);
+  opacity: 0.4;
+  cursor: default;
+}
+
+.dob-picker-year-cell.selected {
+  background: var(--color-primary);
+  border-color: var(--color-primary-hover);
+  color: var(--color-on-primary);
+  font-weight: 700;
+}
+
+.dob-picker-year-search {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-3);
+}
+
+.dob-picker-year-search label {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+.dob-picker-year-search input {
+  margin-bottom: 0;
 }
 
 .filter-bar {

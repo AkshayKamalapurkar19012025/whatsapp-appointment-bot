@@ -32,13 +32,16 @@ def test_update_patient_changes_name_and_number(client, db_connection):
     body = response.json()
     # date_of_birth/gender (migrations/0023) round-trip as null here --
     # this test never set either, and PatientUpdate leaves them null
-    # rather than inventing a value when the caller omits them.
+    # rather than inventing a value when the caller omits them. uhid
+    # (migrations/0024) is derived from id and never changes across an
+    # update, same as id itself.
     assert body == {
         "id": patient["id"],
         "name": "Corrected Name",
         "whatsapp_number": "+919700000009",
         "date_of_birth": None,
         "gender": None,
+        "uhid": patient["uhid"],
     }
 
 

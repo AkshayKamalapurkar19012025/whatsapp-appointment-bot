@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { MagnifyingGlass, UsersThree } from '@phosphor-icons/react'
 import { ApiError, listPatients } from '../api'
 import type { Patient } from '../types'
-import { formatDateTime, formatPatientId } from '../format'
+import { formatDateTime } from '../format'
 import { useStaggerReveal } from '../useStaggerReveal'
 import PatientFormModal from './PatientFormModal'
 
@@ -29,8 +29,7 @@ export default function PatientsPanel() {
     return (
       p.name.toLowerCase().includes(searchNeedle) ||
       p.whatsapp_number.toLowerCase().includes(searchNeedle) ||
-      String(p.id).includes(searchNeedle) ||
-      formatPatientId(p.id).toLowerCase().includes(searchNeedle)
+      p.uhid.toLowerCase().includes(searchNeedle)
     )
   })
   const tbodyRef = useStaggerReveal<HTMLTableSectionElement>([patients])
@@ -71,10 +70,10 @@ export default function PatientsPanel() {
         <MagnifyingGlass size={16} aria-hidden="true" />
         <input
           type="search"
-          placeholder="Search by name, mobile number or patient ID…"
+          placeholder="Search by name, mobile number or UHID…"
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
-          aria-label="Search by name, mobile number or patient ID"
+          aria-label="Search by name, mobile number or UHID"
         />
       </label>
 
@@ -98,7 +97,7 @@ export default function PatientsPanel() {
           <thead>
             <tr>
               <th>Patient</th>
-              <th>Patient ID</th>
+              <th>UHID</th>
               <th>Mobile</th>
               <th>Last visit</th>
               <th>Visits</th>
@@ -113,7 +112,7 @@ export default function PatientsPanel() {
                   <td>
                     <strong>{p.name}</strong>
                   </td>
-                  <td className="muted">{formatPatientId(p.id)}</td>
+                  <td className="muted">{p.uhid}</td>
                   <td>{p.whatsapp_number}</td>
                   <td>{p.last_visit_at ? formatDateTime(p.last_visit_at) : <span className="muted">—</span>}</td>
                   <td>

@@ -474,3 +474,139 @@ def test_waive_is_idempotent(client, db_connection):
     assert second.json()["token_number"] == 1
     assert first.json()["token_just_issued"] is True
     assert second.json()["token_just_issued"] is False
+
+
+# ---------------------------------------------------------------------
+# Settle free visit (settle_free_visit_service, POST .../settle-free-visit)
+#
+# The OPD front-desk flow's "Payment Required? No" branch -- distinct
+# from waive-payment above, which is the ADMIN-only, 3-day-revisit
+# waiver for a REAL configured fee. This is for a visit with no fee
+# configured at all (consultation_fee == 0): seed_basic_doctor's
+# default, unless a test calls _set_fee, matching every other test in
+# this file -- these are the only tests in the suite that rely on that
+# zero-fee default meaning "nothing to collect" rather than "not yet
+# configured".
+# ---------------------------------------------------------------------
+
+
+def test_settle_free_visit_generates_token_without_payment(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Free Visit",
+        department_name="Free Visit Dept", appointment_type_name="Free Visit Type",
+    )
+    patient = _create_patient(client, admin_headers, "Free Visit Patient", "+919600000016")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+
+    response = client.post(f"/api/appointments/{appointment_id}/settle-free-visit", headers=admin_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["payment_status"] == "WAIVED"
+    assert body["payment_method"] is None
+    assert body["token_number"] == 1
+    assert body["token_just_issued"] is True
+    assert body["waive_reason"] == "No consultation fee configured for this visit"
+
+
+def test_settle_free_visit_accepts_plain_staff_role(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Free Visit Staff",
+        department_name="Free Visit Staff Dept", appointment_type_name="Free Visit Staff Type",
+    )
+    patient = _create_patient(client, admin_headers, "Free Visit Staff Patient", "+919600000017")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+
+    staff_headers = create_staff_and_get_headers(db_connection, role="STAFF")
+    response = client.post(f"/api/appointments/{appointment_id}/settle-free-visit", headers=staff_headers)
+    assert response.status_code == 200
+
+
+def test_settle_free_visit_is_idempotent(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Free Visit Idempotent",
+        department_name="Free Visit Idempotent Dept", appointment_type_name="Free Visit Idempotent Type",
+    )
+    patient = _create_patient(client, admin_headers, "Free Visit Idempotent Patient", "+919600000018")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+
+    first = client.post(f"/api/appointments/{appointment_id}/settle-free-visit", headers=admin_headers)
+    second = client.post(f"/api/appointments/{appointment_id}/settle-free-visit", headers=admin_headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["token_number"] == second.json()["token_number"] == 1
+    assert first.json()["token_just_issued"] is True
+    assert second.json()["token_just_issued"] is False
+
+
+def test_settle_free_visit_rejected_when_fee_is_configured(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Not Free",
+        department_name="Not Free Dept", appointment_type_name="Not Free Type",
+    )
+    _set_fee(client, admin_headers, seeded, 500)
+    patient = _create_patient(client, admin_headers, "Not Free Patient", "+919600000019")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+
+    response = client.post(f"/api/appointments/{appointment_id}/settle-free-visit", headers=admin_headers)
+    assert response.status_code == 409
+
+    # Must not have silently issued a token or changed payment_status.
+    charge_check = client.get(f"/api/appointments/{appointment_id}/charge", headers=admin_headers)
+    assert float(charge_check.json()["consultation_fee"]) == 500.0
+
+
+def test_settle_free_visit_rejected_when_already_paid(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Already Paid Free",
+        department_name="Already Paid Free Dept", appointment_type_name="Already Paid Free Type",
+    )
+    patient = _create_patient(client, admin_headers, "Already Paid Free Patient", "+919600000020")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+    paid = client.post(
+        f"/api/appointments/{appointment_id}/payment",
+        json={"method": "CASH", "outcome": "PAID"},
+        headers=admin_headers,
+    )
+    assert paid.status_code == 200
+
+    response = client.post(f"/api/appointments/{appointment_id}/settle-free-visit", headers=admin_headers)
+    assert response.status_code == 409
+
+
+def test_settle_free_visit_rejected_when_not_checked_in(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Free Not Checked In",
+        department_name="Free Not Checked In Dept", appointment_type_name="Free Not Checked In Type",
+    )
+    patient = _create_patient(client, admin_headers, "Free Not Checked In Patient", "+919600000021")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    # Deliberately not checked in yet.
+
+    response = client.post(f"/api/appointments/{appointment_id}/settle-free-visit", headers=admin_headers)
+    assert response.status_code == 409
+
+
+def test_settle_free_visit_requires_authentication(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Free No Auth",
+        department_name="Free No Auth Dept", appointment_type_name="Free No Auth Type",
+    )
+    patient = _create_patient(client, admin_headers, "Free No Auth Patient", "+919600000022")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+
+    response = client.post(f"/api/appointments/{appointment_id}/settle-free-visit")
+    assert response.status_code == 401

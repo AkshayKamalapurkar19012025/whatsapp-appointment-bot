@@ -5,13 +5,15 @@ import {
   confirmAndCheckInAdmin,
   createAdminAppointment,
   getAppConfig,
+  getDoctorDepartments,
   getSlotsForDate,
   listAllDoctors,
   listAppointmentTypesForDoctor,
-  listPatients,
+  searchPatientsAdmin,
+  settleFreeVisitAdmin,
 } from '../api'
-import type { ArrivalActionResult, AppointmentType, BookingSource, Doctor, Patient, Slot } from '../types'
-import { formatAvailability, formatDate, formatPatientId, formatTime } from '../format'
+import type { ArrivalActionResult, AppointmentType, BookingSource, Doctor, PaymentActionResult, Patient, Slot } from '../types'
+import { formatAvailability, formatDate, formatPreciseAge, formatTime } from '../format'
 import { isoDateToday } from './doctorSchedule'
 import AvailabilityBadge from '../AvailabilityBadge'
 import SlotGrid from '../SlotGrid'
@@ -39,18 +41,46 @@ function addDays(dateStr: string, days: number): string {
 // (which lists/filters/reschedules/cancels *existing* appointments) so
 // the two nav items land somewhere visibly different instead of the
 // same list with a form silently toggled open inside it.
-export default function BookAppointmentPanel({ onViewAppointments }: { onViewAppointments: () => void }) {
+export default function BookAppointmentPanel({
+  onViewAppointments,
+  onGoToQueue,
+  onGoToPatients,
+  autoOpenRegister,
+}: {
+  onViewAppointments: () => void
+  // Success screen's "View Queue" action (point 10) -- same doctor-
+  // scoped queue hand-off AdminApp.tsx's goToQueueForDoctor already
+  // gives DoctorsPanel/AppointmentsPanel. Optional: only shown once a
+  // queue token actually exists, so a caller that never needs it
+  // (there is currently only one) can omit it.
+  onGoToQueue?: (doctorId: number) => void
+  // Success screen's "View Patient" action -- routes to the Patients
+  // directory (no per-patient deep link exists yet in this app; adding
+  // one is outside this redesign's scope).
+  onGoToPatients?: () => void
+  // OPD Today's "New OPD Visit > Register New Patient" entry (see
+  // AppointmentsPanel.tsx) lands here instead of opening
+  // PatientFormModal directly -- point 1 of the OPD Patient Search &
+  // Registration redesign: registration is never the starting point of
+  // an OPD visit, the receptionist always searches first. This still
+  // opens the register modal for them (skipping the extra click), but
+  // only after landing on the search step, matching every other patient-
+  // registration entry point (Walk-in/Book Appointment's own "+
+  // Register new patient" button) instead of bypassing it.
+  autoOpenRegister?: boolean
+}) {
   const [doctors, setDoctors] = useState<Doctor[]>([])
   const [doctorsLoading, setDoctorsLoading] = useState(true)
-  const [patients, setPatients] = useState<Patient[]>([])
-  const [patientsLoading, setPatientsLoading] = useState(true)
   const [timezoneLabel, setTimezoneLabel] = useState<string | null>(null)
 
   const [bookingSource, setBookingSource] = useState<BookingSource>('WALK_IN')
 
   const [patientSearch, setPatientSearch] = useState('')
+  const [patientResults, setPatientResults] = useState<Patient[]>([])
+  const [patientResultsLoading, setPatientResultsLoading] = useState(false)
+  const [patientSearchError, setPatientSearchError] = useState<string | null>(null)
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
-  const [showRegisterModal, setShowRegisterModal] = useState(false)
+  const [showRegisterModal, setShowRegisterModal] = useState(Boolean(autoOpenRegister))
   // Opens PatientFormModal in edit mode for the already-selected patient
   // -- "verify/update details, then continue" without losing the
   // selection (unlike "Change", which clears it back to search).
@@ -78,8 +108,17 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
   const [busy, setBusy] = useState(false)
   const [justBooked, setJustBooked] = useState<{
     appointmentId: number
+    doctorId: number
     doctorName: string
+    patientId: number
     patientName: string
+    patientUhid: string
+    appointmentTypeName: string
+    // Snapshot of selectedType.consultation_fee at booking time -- the
+    // step 2 selection is cleared by resetForm() right after this is
+    // set, so the success screen (and the auto-settle-free-visit call
+    // below) need their own copy rather than reading selectedType.
+    consultationFee: number
     slot: Slot
     bookingSource: BookingSource
   } | null>(null)
@@ -89,20 +128,73 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
   const [arrivalResult, setArrivalResult] = useState<ArrivalActionResult | null>(null)
   const [arrivalBusy, setArrivalBusy] = useState(false)
   const [arrivalError, setArrivalError] = useState<string | null>(null)
+  // Payment must be configurable, not hardcoded mandatory (point 9): a
+  // walk-in whose selected appointment type has no consultation fee
+  // configured settles automatically the moment check-in succeeds
+  // (settle_free_visit_service), instead of forcing staff through a
+  // manual Collect Payment/Waive Charge step for a genuinely free
+  // visit. A nonzero fee is entirely unaffected -- that patient still
+  // goes through the ordinary payment flow on the Appointments page,
+  // same as before this redesign.
+  const [paymentSettleResult, setPaymentSettleResult] = useState<PaymentActionResult | null>(null)
+  const [paymentSettleError, setPaymentSettleError] = useState<string | null>(null)
+  // The success screen's "Department" line (point 10) -- fetched once
+  // justBooked is set, same "earliest-assigned = primary" convention
+  // DoctorWorkspace.tsx already uses, since an appointment itself
+  // carries no department (a doctor can offer the same appointment
+  // type across more than one).
+  const [justBookedDepartment, setJustBookedDepartment] = useState<string | null>(null)
 
   useEffect(() => {
     listAllDoctors()
       .then(setDoctors)
       .catch(() => undefined)
       .finally(() => setDoctorsLoading(false))
-    listPatients()
-      .then(setPatients)
-      .catch(() => undefined)
-      .finally(() => setPatientsLoading(false))
     getAppConfig()
       .then((c) => setTimezoneLabel(c.default_timezone))
       .catch(() => undefined)
   }, [])
+
+  // Backend-driven search (GET /patients/search), not a client-side
+  // filter over the whole registry -- point 2/7 of the redesign: the
+  // receptionist must be able to positively identify (or rule out) an
+  // existing patient by name, mobile number, or UHID before ever
+  // reaching the registration form, and that has to scale past however
+  // many patients this clinic has on file. Debounced (300ms) so every
+  // keystroke doesn't fire its own request; a stale response for a
+  // since-changed query is dropped via the `cancelled` guard, same
+  // pattern the slot-availability fetch above already uses.
+  useEffect(() => {
+    const needle = patientSearch.trim()
+    if (!needle) {
+      setPatientResults([])
+      setPatientResultsLoading(false)
+      setPatientSearchError(null)
+      return
+    }
+    let cancelled = false
+    setPatientResultsLoading(true)
+    setPatientSearchError(null)
+    const timer = setTimeout(() => {
+      searchPatientsAdmin(needle)
+        .then((results) => {
+          if (cancelled) return
+          setPatientResults(results)
+        })
+        .catch((err) => {
+          if (cancelled) return
+          setPatientSearchError(err instanceof ApiError ? err.message : 'Unable to search patients. Please try again.')
+          setPatientResults([])
+        })
+        .finally(() => {
+          if (!cancelled) setPatientResultsLoading(false)
+        })
+    }, 300)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [patientSearch])
 
   useEffect(() => {
     setAppointmentTypeId('')
@@ -122,6 +214,24 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
     setDate('')
     setSelectedSlot(null)
   }, [appointmentTypeId])
+
+  useEffect(() => {
+    if (!justBooked) {
+      setJustBookedDepartment(null)
+      return
+    }
+    let cancelled = false
+    getDoctorDepartments(justBooked.doctorId)
+      .then((assignments) => {
+        if (cancelled || assignments.length === 0) return
+        const earliest = assignments.reduce((min, d) => (d.assigned_at < min.assigned_at ? d : min), assignments[0])
+        setJustBookedDepartment(earliest.name)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [justBooked])
 
   const selectedType = types.find((t) => String(t.id) === appointmentTypeId) ?? null
   const selectedDoctor = doctors.find((d) => String(d.id) === doctorId) ?? null
@@ -157,32 +267,21 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
     // eslint-disable-next-line react-hooks/exhaustive-deps -- selectedType is derived from types+appointmentTypeId every render; .id is the only part that should retrigger this fetch
   }, [date, doctorId, selectedType?.id])
 
-  const searchNeedle = patientSearch.trim().toLowerCase()
-  const patientResults = searchNeedle
-    ? patients
-        .filter(
-          (p) =>
-            p.name.toLowerCase().includes(searchNeedle) ||
-            p.whatsapp_number.toLowerCase().includes(searchNeedle) ||
-            String(p.id).includes(searchNeedle),
-        )
-        .slice(0, 8)
-    : []
+  const searchNeedle = patientSearch.trim()
 
   function selectPatient(p: Patient) {
     setSelectedPatient(p)
     setPatientSearch('')
+    setPatientResults([])
   }
 
   function handlePatientRegistered(p: Patient) {
-    setPatients((prev) => [...prev, p])
     selectPatient(p)
   }
 
   // Updates the selected patient in place -- the appointment-in-
   // progress (doctor/type/date/slot already chosen) is untouched.
   function handlePatientEdited(p: Patient) {
-    setPatients((prev) => prev.map((existing) => (existing.id === p.id ? p : existing)))
     setSelectedPatient(p)
   }
 
@@ -227,7 +326,7 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
     // unreachable in normal use -- kept as a guard, not silently, so a
     // click that somehow gets through with an incomplete selection
     // surfaces an actual error instead of doing nothing.
-    if (!selectedPatient || !doctorId || !appointmentTypeId || !selectedSlot || !selectedDoctor) {
+    if (!selectedPatient || !doctorId || !appointmentTypeId || !selectedSlot || !selectedDoctor || !selectedType) {
       setError('Some required fields are missing. Please review your selection and try again.')
       return
     }
@@ -242,6 +341,11 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
         bookingSource,
       )
       setJustBooked({
+        doctorId: Number(doctorId),
+        patientId: selectedPatient.id,
+        patientUhid: selectedPatient.uhid,
+        appointmentTypeName: selectedType.name,
+        consultationFee: selectedType.consultation_fee,
         appointmentId: created.id,
         doctorName: selectedDoctor.name,
         patientName: selectedPatient.name,
@@ -250,6 +354,8 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
       })
       setArrivalResult(null)
       setArrivalError(null)
+      setPaymentSettleResult(null)
+      setPaymentSettleError(null)
       resetForm()
     } catch (err) {
       setError(
@@ -267,6 +373,14 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
   // result reached CHECKED_IN: arrival_kind says which of the two
   // branches actually happened, and the success screen below reflects
   // whichever one it was rather than always claiming "checked in."
+  //
+  // When it does reach CHECKED_IN and the selected appointment type has
+  // no consultation fee configured, this also fires settle-free-visit
+  // right away (point 9: payment is configurable, not hardcoded
+  // mandatory) -- the receptionist never sees a Collect Payment/Waive
+  // Charge step for a visit that was never going to charge anything. A
+  // nonzero fee never reaches this branch at all; that patient's
+  // payment step still happens on the Appointments page, unchanged.
   async function handleConfirmAndCheckIn() {
     if (!justBooked) return
     setArrivalBusy(true)
@@ -274,6 +388,14 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
     try {
       const result = await confirmAndCheckInAdmin(justBooked.appointmentId)
       setArrivalResult(result)
+      if (result.arrival_kind === 'checked_in' && justBooked.consultationFee === 0) {
+        try {
+          const settled = await settleFreeVisitAdmin(justBooked.appointmentId)
+          setPaymentSettleResult(settled)
+        } catch (err) {
+          setPaymentSettleError(err instanceof ApiError ? err.message : 'Could not settle this free visit automatically.')
+        }
+      }
     } catch (err) {
       setArrivalError(err instanceof ApiError ? err.message : 'Could not confirm and check in this appointment.')
     } finally {
@@ -297,23 +419,59 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
   if (justBooked) {
     return (
       <section>
-        <h2>Book Appointment</h2>
-        <div className="state-block empty">
+        <h2>OPD Visit Created Successfully</h2>
+        <div className="state-block empty opd-success">
           <span className="state-icon" aria-hidden="true">
             <CheckCircle size={28} weight="light" />
           </span>
-          <p>
-            Booked {justBooked.patientName} with {justBooked.doctorName} at {formatTime(justBooked.slot.start_at)} on{' '}
-            {formatDate(justBooked.slot.start_at)}.
-          </p>
+
+          <dl className="opd-success-details">
+            <div>
+              <dt>Patient</dt>
+              <dd>{justBooked.patientName}</dd>
+            </div>
+            <div>
+              <dt>UHID</dt>
+              <dd>{justBooked.patientUhid}</dd>
+            </div>
+            {paymentSettleResult?.token_number != null && (
+              <div>
+                <dt>Token</dt>
+                <dd>
+                  <strong>#{paymentSettleResult.token_number}</strong>
+                </dd>
+              </div>
+            )}
+            {justBookedDepartment && (
+              <div>
+                <dt>Department</dt>
+                <dd>{justBookedDepartment}</dd>
+              </div>
+            )}
+            <div>
+              <dt>Doctor</dt>
+              <dd>{justBooked.doctorName}</dd>
+            </div>
+            <div>
+              <dt>Appointment type</dt>
+              <dd>{justBooked.appointmentTypeName}</dd>
+            </div>
+            <div>
+              <dt>Date &amp; Time</dt>
+              <dd>
+                {formatDate(justBooked.slot.start_at)} · {formatTime(justBooked.slot.start_at)}
+              </dd>
+            </div>
+          </dl>
 
           {/* Walk-in only -- the patient is physically present, so
               reception can confirm and check them in immediately
               instead of finding this same appointment again on the
               Appointments page. Never claims the patient is queued:
-              arrival_kind decides which message shows below, and
-              payment/waiver (unchanged) still gates the actual queue
-              token either way. */}
+              arrival_kind decides which message shows below. A
+              configured (nonzero) fee still routes through the
+              ordinary Collect Payment/Waive Charge flow there --
+              this only fast-paths the genuinely free case. */}
           {justBooked.bookingSource === 'WALK_IN' && !arrivalResult && (
             <div style={{ marginTop: 8 }}>
               {arrivalError && <p className="error">{arrivalError}</p>}
@@ -325,26 +483,47 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
 
           {arrivalResult && (
             <p className="muted" style={{ marginTop: 4 }}>
-              {arrivalResult.arrival_kind === 'checked_in'
-                ? 'Checked in -- go to Appointments to collect payment or waive the fee and add them to the queue.'
-                : `Confirmed -- this patient will be eligible to check in once their ${formatTime(justBooked.slot.start_at)} appointment time arrives.`}
+              {arrivalResult.arrival_kind !== 'checked_in'
+                ? `Confirmed -- this patient will be eligible to check in once their ${formatTime(justBooked.slot.start_at)} appointment time arrives.`
+                : paymentSettleError
+                  ? paymentSettleError
+                  : paymentSettleResult?.token_number != null
+                    ? 'No payment required for this visit -- already in the queue.'
+                    : 'Checked in -- go to Appointments to collect payment or waive the fee and add them to the queue.'}
             </p>
           )}
 
-          <div style={{ display: 'flex', gap: 12, justifyContent: 'center', marginTop: 8 }}>
+          <div className="opd-success-actions">
+            {paymentSettleResult?.token_number != null && onGoToQueue && (
+              <button type="button" className="btn-secondary btn btn-sm" onClick={() => onGoToQueue(justBooked.doctorId)}>
+                View Queue
+              </button>
+            )}
+            {onGoToPatients && (
+              <button type="button" className="btn-secondary btn btn-sm" onClick={onGoToPatients}>
+                View Patient
+              </button>
+            )}
+            {paymentSettleResult?.token_number != null && (
+              <button type="button" className="btn-secondary btn btn-sm" onClick={() => window.print()}>
+                Print Token
+              </button>
+            )}
+            <button type="button" className="btn-secondary btn btn-sm" onClick={onViewAppointments}>
+              View Appointments
+            </button>
             <button
               type="button"
-              className="btn-secondary btn btn-sm"
+              className="btn btn-sm"
               onClick={() => {
                 setJustBooked(null)
                 setArrivalResult(null)
                 setArrivalError(null)
+                setPaymentSettleResult(null)
+                setPaymentSettleError(null)
               }}
             >
-              Book another
-            </button>
-            <button type="button" className="btn-secondary btn btn-sm" onClick={onViewAppointments}>
-              View appointments
+              Create Another Visit
             </button>
           </div>
         </div>
@@ -403,46 +582,71 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
                   <MagnifyingGlass size={16} aria-hidden="true" />
                   <input
                     type="search"
-                    placeholder="Search by name, phone number or patient ID…"
+                    placeholder="Search by name, mobile number, or UHID…"
                     value={patientSearch}
                     onChange={(e) => setPatientSearch(e.target.value)}
-                    aria-label="Search by name, phone number or patient ID"
+                    aria-label="Search by name, mobile number, or UHID"
                   />
                 </label>
 
-                {searchNeedle && patientsLoading && (
+                {searchNeedle && patientResultsLoading && (
                   <div className="book-patient-no-results">
                     <span className="spinner" aria-hidden="true" />
-                    <p className="muted">Loading patients…</p>
+                    <p className="muted">Searching…</p>
                   </div>
                 )}
 
-                {searchNeedle && !patientsLoading &&
+                {searchNeedle && !patientResultsLoading && patientSearchError && (
+                  <p className="error">{patientSearchError}</p>
+                )}
+
+                {searchNeedle && !patientResultsLoading && !patientSearchError &&
                   (patientResults.length > 0 ? (
-                    <ul className="book-patient-results">
-                      {patientResults.map((p) => (
-                        <li key={p.id}>
-                          <button type="button" className="book-patient-result" onClick={() => selectPatient(p)}>
-                            <span className="book-patient-avatar" aria-hidden="true">
-                              {p.name.slice(0, 2).toUpperCase()}
-                            </span>
-                            <span className="book-patient-result-info">
-                              <strong>{p.name}</strong>
-                              <span className="muted">
-                                {formatPatientId(p.id)} · {p.whatsapp_number}
-                              </span>
-                            </span>
-                            <span className="book-patient-result-hint" aria-hidden="true">
-                              Select <ArrowRight size={13} weight="bold" />
-                            </span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
+                    <>
+                      {/* Same list whether there's one match or several
+                          (points 2/7 of the redesign) -- one card reads
+                          as "Existing patient found", several as
+                          "Multiple patients found. Select the correct
+                          patient." Each row carries enough to tell two
+                          same-named patients apart: UHID, DOB + age,
+                          gender, mobile number. */}
+                      <p className="book-patient-results-heading">
+                        {patientResults.length === 1
+                          ? 'Existing patient found'
+                          : `${patientResults.length} patients found — select the correct one`}
+                      </p>
+                      <ul className="book-patient-results">
+                        {patientResults.map((p) => {
+                          const age = p.date_of_birth ? formatPreciseAge(p.date_of_birth) : null
+                          return (
+                            <li key={p.id}>
+                              <button type="button" className="book-patient-result" onClick={() => selectPatient(p)}>
+                                <span className="book-patient-avatar" aria-hidden="true">
+                                  {p.name.slice(0, 2).toUpperCase()}
+                                </span>
+                                <span className="book-patient-result-info">
+                                  <strong>{p.name}</strong>
+                                  <span className="muted">
+                                    {p.uhid}
+                                    {p.date_of_birth ? ` · ${formatDate(p.date_of_birth)}` : ''}
+                                    {age ? ` · ${age}` : ''}
+                                    {p.gender ? ` · ${p.gender.charAt(0)}${p.gender.slice(1).toLowerCase()}` : ''}
+                                  </span>
+                                  <span className="muted">{p.whatsapp_number}</span>
+                                </span>
+                                <span className="book-patient-result-hint" aria-hidden="true">
+                                  Select <ArrowRight size={13} weight="bold" />
+                                </span>
+                              </button>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    </>
                   ) : (
                     <div className="book-patient-no-results">
-                      <p>No patient found</p>
-                      <p className="muted">Try another name, phone number, or patient ID.</p>
+                      <p>No existing patient found</p>
+                      <p className="muted">{searchNeedle}</p>
                     </div>
                   ))}
 
@@ -472,7 +676,13 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
                     </span>
                     <div>
                       <strong>{selectedPatient.name}</strong>
-                      <div className="muted">{formatPatientId(selectedPatient.id)}</div>
+                      <div className="muted">
+                        {selectedPatient.uhid}
+                        {selectedPatient.date_of_birth ? ` · ${formatDate(selectedPatient.date_of_birth)}` : ''}
+                        {selectedPatient.gender
+                          ? ` · ${selectedPatient.gender.charAt(0)}${selectedPatient.gender.slice(1).toLowerCase()}`
+                          : ''}
+                      </div>
                       <div className="muted">{selectedPatient.whatsapp_number}</div>
                     </div>
                   </div>
@@ -645,7 +855,7 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
                     <>
                       <strong>{selectedPatient.name}</strong>
                       <span className="muted">
-                        {formatPatientId(selectedPatient.id)} · {selectedPatient.whatsapp_number}
+                        {selectedPatient.uhid} · {selectedPatient.whatsapp_number}
                       </span>
                     </>
                   ) : (
@@ -699,6 +909,25 @@ export default function BookAppointmentPanel({ onViewAppointments }: { onViewApp
                 <dt>Booking source</dt>
                 <dd>
                   <strong>{BOOKING_SOURCES.find((s) => s.key === bookingSource)?.label}</strong>
+                </dd>
+              </div>
+              {/* Payment is configurable per appointment type, never
+                  hardcoded mandatory (point 9) -- this reads the same
+                  consultation_fee the check-in step itself decides
+                  auto-settlement from, so what's shown here is never
+                  out of sync with what actually happens after booking. */}
+              <div>
+                <dt>Payment</dt>
+                <dd>
+                  {selectedType ? (
+                    selectedType.consultation_fee === 0 ? (
+                      <span className="muted">No payment required — free visit</span>
+                    ) : (
+                      <strong>₹{selectedType.consultation_fee} due at check-in</strong>
+                    )
+                  ) : (
+                    <span className="muted">Not selected</span>
+                  )}
                 </dd>
               </div>
             </dl>

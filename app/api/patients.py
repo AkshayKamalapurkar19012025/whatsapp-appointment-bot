@@ -34,7 +34,7 @@ def insert_patient(
         )
         VALUES (%s, %s, %s, %s)
         ON CONFLICT (whatsapp_number) DO NOTHING
-        RETURNING id, name, whatsapp_number, date_of_birth, gender
+        RETURNING id, name, whatsapp_number, date_of_birth, gender, uhid
         """,
         (
             name,
@@ -55,6 +55,7 @@ def insert_patient(
         "whatsapp_number": row[2],
         "date_of_birth": row[3].isoformat() if row[3] else None,
         "gender": row[4],
+        "uhid": row[5],
     }
 
 
@@ -150,10 +151,11 @@ def get_patients(staff: dict = Depends(get_current_staff)):
                     -- formatDateTime renders this in the viewer's own
                     -- local time instead, the same convention already
                     -- used for created_at elsewhere in this app).
-                    MAX(a.start_at) FILTER (WHERE NOT (a.status::text = ANY(ARRAY['CANCELLED', 'REJECTED'])))
+                    MAX(a.start_at) FILTER (WHERE NOT (a.status::text = ANY(ARRAY['CANCELLED', 'REJECTED']))),
+                    p.uhid
                 FROM patients p
                 LEFT JOIN appointments a ON a.patient_id = p.id
-                GROUP BY p.id, p.name, p.whatsapp_number, p.date_of_birth, p.gender
+                GROUP BY p.id, p.name, p.whatsapp_number, p.date_of_birth, p.gender, p.uhid
                 ORDER BY p.name
                 """
             )
@@ -180,6 +182,86 @@ def get_patients(staff: dict = Depends(get_current_staff)):
             "date_of_birth": row[4].isoformat() if row[4] else None,
             "gender": row[5],
             "last_visit_at": row[6].isoformat() if row[6] else None,
+            "uhid": row[7],
+        }
+        for row in rows
+    ]
+
+
+@router.get("/search")
+def search_patients(
+    q: str | None = None,
+    dob: date | None = None,
+    staff: dict = Depends(get_current_staff),
+):
+    """
+    Backend-driven patient lookup for the OPD "find patient before
+    registering" step -- unlike GET /patients above (the full master
+    registry, meant to be paged through/browsed client-side), this is
+    for typing a mobile number, name, or UHID at the front desk and
+    getting back only plausible matches, so staff can positively
+    identify an existing patient (and avoid creating a duplicate)
+    before ever reaching the registration form.
+
+    q matches name/whatsapp_number/uhid by substring (case-insensitive);
+    dob narrows to an exact date-of-birth match, for a "name + DOB"
+    search when a name alone is too common to disambiguate. At least
+    one of q/dob is required -- this is a lookup, not a second way to
+    list every patient (that's GET /patients, unchanged). Capped at 20
+    results: enough to show every plausible match at a front desk, not
+    a paginated browse.
+    """
+    if not q and not dob:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide a search term (q) and/or a date of birth (dob).",
+        )
+
+    conditions = []
+    params: list = []
+
+    if q:
+        needle = f"%{q.strip()}%"
+        conditions.append(
+            "(p.name ILIKE %s OR p.whatsapp_number ILIKE %s OR p.uhid ILIKE %s)"
+        )
+        params.extend([needle, needle, needle])
+
+    if dob:
+        conditions.append("p.date_of_birth = %s")
+        params.append(dob)
+
+    where_clause = " AND ".join(conditions)
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT
+                    p.id,
+                    p.name,
+                    p.whatsapp_number,
+                    p.date_of_birth,
+                    p.gender,
+                    p.uhid
+                FROM patients p
+                WHERE {where_clause}
+                ORDER BY p.name
+                LIMIT 20
+                """,
+                params,
+            )
+
+            rows = cur.fetchall()
+
+    return [
+        {
+            "id": row[0],
+            "name": row[1],
+            "whatsapp_number": row[2],
+            "date_of_birth": row[3].isoformat() if row[3] else None,
+            "gender": row[4],
+            "uhid": row[5],
         }
         for row in rows
     ]
@@ -271,7 +353,7 @@ def update_patient(
                     gender = %s,
                     updated_at = NOW()
                 WHERE id = %s
-                RETURNING id, name, whatsapp_number, date_of_birth, gender
+                RETURNING id, name, whatsapp_number, date_of_birth, gender, uhid
                 """,
                 (patient.name, patient.whatsapp_number, patient.date_of_birth, patient.gender, patient_id),
             )
@@ -284,4 +366,5 @@ def update_patient(
         "whatsapp_number": row[2],
         "date_of_birth": row[3].isoformat() if row[3] else None,
         "gender": row[4],
+        "uhid": row[5],
     }

@@ -52,7 +52,6 @@ import { accentClassFor } from '../cardAccent'
 import { isoDateToday } from './doctorSchedule'
 import AdminSlotPicker from './AdminSlotPicker'
 import AppointmentDetailsModal from './AppointmentDetailsModal'
-import PatientFormModal from './PatientFormModal'
 import { AppointmentActionButtons, buildAppointmentActions, type AppointmentActionHandlers, type QueuePosition } from './AppointmentActions'
 
 // Radix Select.Item disallows an empty-string value (reserved internally
@@ -296,6 +295,7 @@ function paymentCell(a: AdminAppointment) {
 
 export default function AppointmentsPanel({
   onBookAppointment,
+  onRegisterNewPatient,
   onGoToQueue,
   isAdmin,
 }: {
@@ -304,13 +304,18 @@ export default function AppointmentsPanel({
   // purely for viewing/filtering/managing appointments that already
   // exist. Also the destination for the "+ New OPD Visit" dropdown's
   // "Walk-in Registration" entry (that page already defaults its own
-  // booking-source picker to Walk-in) and "Register New Patient" entry
-  // -- there is no separate walk-in-only screen or patient-registration-
-  // only screen to route to; Book Appointment already covers all three,
-  // and "Register New Patient" additionally opens PatientFormModal
-  // directly from here (see showRegisterModal below), the same shared
-  // modal BookAppointmentPanel's own "+ Register new patient" uses.
+  // booking-source picker to Walk-in).
   onBookAppointment: () => void
+  // "+ New OPD Visit > Register New Patient" -- routes to Book
+  // Appointment's own find/register step (Step 1) instead of opening
+  // PatientFormModal directly from here (OPD Patient Search &
+  // Registration redesign, point 1: registration is never the starting
+  // point of an OPD visit -- staff always search for an existing
+  // patient first, even when they already know they need to register
+  // someone new). AdminApp.tsx wires this to the same navigation as
+  // onBookAppointment, plus a flag telling BookAppointmentPanel to open
+  // its own "+ Register new patient" modal once Step 1 is showing.
+  onRegisterNewPatient: () => void
   // Same "go to this doctor's live queue" hand-off DoctorsPanel's own
   // "View queue" action already uses (AdminApp.tsx's goToQueueForDoctor).
   onGoToQueue: (doctorId: number) => void
@@ -361,7 +366,6 @@ export default function AppointmentsPanel({
   const [detailsTarget, setDetailsTarget] = useState<AdminAppointment | null>(null)
   const [cancelTarget, setCancelTarget] = useState<AdminAppointment | null>(null)
   const [lifecycleBusyId, setLifecycleBusyId] = useState<number | null>(null)
-  const [showRegisterModal, setShowRegisterModal] = useState(false)
 
   const range = dateRangeFor(dateScope, customFrom, customTo)
   const isTodayScope = dateScope === 'today'
@@ -731,7 +735,7 @@ export default function AppointmentsPanel({
             <DropdownMenuContent align="end">
               <DropdownMenuItem onSelect={onBookAppointment}>Book Appointment</DropdownMenuItem>
               <DropdownMenuItem onSelect={onBookAppointment}>Walk-in Registration</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setShowRegisterModal(true)}>Register New Patient</DropdownMenuItem>
+              <DropdownMenuItem onSelect={onRegisterNewPatient}>Register New Patient</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -1138,9 +1142,6 @@ export default function AppointmentsPanel({
         />
       )}
 
-      {showRegisterModal && (
-        <PatientFormModal mode="create" title="Register new patient" onClose={() => setShowRegisterModal(false)} onSaved={() => setShowRegisterModal(false)} />
-      )}
     </section>
   )
 }
