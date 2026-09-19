@@ -6,8 +6,10 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.api.staff_auth import get_current_staff
 from app.db.connection import get_connection
+from app.services import exceptions as svc_exc
 from app.services.patient_identifiers import resolve_patient_by_identifier, write_phone_identifier
-from app.services.uhid import generate_uhid
+from app.services.patient_merge import merge_patients, unmerge_patients
+from app.services.uhid import generate_uhid, resolve_patient_by_uhid
 from app.utils.phone import normalize_whatsapp_number
 
 router = APIRouter(
@@ -320,3 +322,78 @@ def update_patient(
         "date_of_birth": row[3].isoformat() if row[3] else None,
         "gender": row[4],
     }
+
+
+# ---------------------------------------------------------------------
+# M8: merge, unmerge, retired-UHID resolution.
+# ---------------------------------------------------------------------
+
+class MergePatientsRequest(BaseModel):
+    retired_patient_id: int
+
+
+@router.post("/{patient_id}/merge")
+def merge_patients_endpoint(
+    patient_id: int,
+    body: MergePatientsRequest,
+    staff: dict = Depends(get_current_staff),
+):
+    """patient_id survives; body.retired_patient_id is folded into it
+    and never deleted -- see app/services/patient_merge.py."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                merge_id = merge_patients(
+                    cur,
+                    hospital_id=staff["hospital_id"],
+                    surviving_patient_id=patient_id,
+                    retired_patient_id=body.retired_patient_id,
+                    staff_id=staff["id"],
+                )
+            except svc_exc.CannotMergePatientIntoItself:
+                raise HTTPException(status_code=400, detail="Cannot merge a patient into itself")
+            except svc_exc.PatientNotFound:
+                raise HTTPException(status_code=404, detail="Patient not found")
+            except svc_exc.PatientAlreadyMerged:
+                raise HTTPException(
+                    status_code=409,
+                    detail="One of these patients has already been merged",
+                )
+
+    return {"merge_id": merge_id, "surviving_patient_id": patient_id, "retired_patient_id": body.retired_patient_id}
+
+
+@router.post("/merges/{merge_id}/unmerge")
+def unmerge_patients_endpoint(
+    merge_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                unmerge_patients(cur, merge_id)
+            except svc_exc.MergeNotFound:
+                raise HTTPException(status_code=404, detail="Merge not found")
+            except svc_exc.UnmergeNotPermitted:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Cannot unmerge: a clinical record has been created for the "
+                    "surviving patient since the merge",
+                )
+
+    return {"merge_id": merge_id, "unmerged": True}
+
+
+@router.get("/by-uhid/{uhid}")
+def get_patient_by_uhid(
+    uhid: str,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            resolved = resolve_patient_by_uhid(cur, staff["hospital_id"], uhid)
+
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="No patient found for this UHID")
+
+    return resolved

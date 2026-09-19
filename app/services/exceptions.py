@@ -163,3 +163,32 @@ class UsernameAlreadyExists(ServiceError):
 
 class StaffNotFound(ServiceError):
     pass
+
+
+# ---------------------------------------------------------------------
+# Patient merge/unmerge (M8) -- see app/services/patient_merge.py.
+# ---------------------------------------------------------------------
+
+class CannotMergePatientIntoItself(ServiceError):
+    pass
+
+
+class PatientAlreadyMerged(ServiceError):
+    """Raised when either patient named in a merge request already has
+    merged_into_id set -- a retired identity can't be merged again, and
+    can't absorb another patient either. Merge the *surviving* patient
+    from that earlier merge instead."""
+    pass
+
+
+class MergeNotFound(ServiceError):
+    pass
+
+
+class UnmergeNotPermitted(ServiceError):
+    """Raised when a clinical record (appointment or encounter) exists
+    for the surviving patient with created_at after the merge's own
+    created_at -- there's no way to tell whether it belongs to the
+    surviving identity or the retired one, so unmerge refuses rather
+    than guessing."""
+    pass

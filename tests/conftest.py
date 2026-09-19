@@ -44,6 +44,8 @@ APP_TABLES = [
     "staff",
     "encounters",
     "patient_identifiers",
+    "patient_merges",
+    "patient_duplicate_reviews",
     "appointments",
     "doctor_appointment_types",
     "doctor_blocks",
