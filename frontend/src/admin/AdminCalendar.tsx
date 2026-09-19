@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ApiError, getAdminCalendarMonth } from '../api'
 import MonthGrid from '../MonthGrid'
+import { isoDateToday } from './doctorSchedule'
 
 // The admin/staff equivalent of Calendar.tsx (patient booking), backed
 // by GET /appointments/calendar instead of GET /web/calendar -- no
@@ -19,9 +20,11 @@ export default function AdminCalendar({
   onSelectDate: (isoDate: string) => void
   selectedDate?: string | null
 }) {
-  const today = new Date()
-  const [year, setYear] = useState(today.getFullYear())
-  const [month, setMonth] = useState(today.getMonth() + 1)
+  // In the clinic's own configured timezone, not the viewer's device
+  // timezone -- see doctorSchedule.ts's isoDateToday for why.
+  const [todayYear, todayMonth] = isoDateToday().split('-').map(Number)
+  const [year, setYear] = useState(todayYear)
+  const [month, setMonth] = useState(todayMonth)
   const [dates, setDates] = useState<Record<string, boolean> | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -48,7 +51,7 @@ export default function AdminCalendar({
     }
   }, [doctorId, appointmentTypeId, year, month])
 
-  const isCurrentMonth = year === today.getFullYear() && month === today.getMonth() + 1
+  const isCurrentMonth = year === todayYear && month === todayMonth
 
   function goPrev() {
     if (isCurrentMonth) return

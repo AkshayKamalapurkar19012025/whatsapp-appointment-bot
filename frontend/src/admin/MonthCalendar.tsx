@@ -1,6 +1,7 @@
 import { useRef, useState, type ReactNode } from 'react'
 import { CalendarBlank } from '@phosphor-icons/react'
 import { usePreviewPopover } from '../usePreviewPopover'
+import { isoDateToday } from './doctorSchedule'
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -42,10 +43,16 @@ export default function MonthCalendar({
   onDateClick: (dateStr: string) => void
   renderCellContent: (dateStr: string, day: number) => ReactNode
 }) {
-  const today = new Date()
-  const todayIso = isoDate(today.getFullYear(), today.getMonth() + 1, today.getDate())
-  const [year, setYear] = useState(today.getFullYear())
-  const [month, setMonth] = useState(today.getMonth() + 1)
+  // In the clinic's own configured timezone, not the viewer's device
+  // timezone -- isoDateToday() (doctorSchedule.ts) is the one place
+  // that conversion happens now; this used to read new Date() directly,
+  // which meant "today"/the initial month here could disagree with the
+  // clinic's actual current date whenever the viewer's device clock was
+  // set to a different zone.
+  const todayIso = isoDateToday()
+  const [todayYear, todayMonth] = todayIso.split('-').map(Number)
+  const [year, setYear] = useState(todayYear)
+  const [month, setMonth] = useState(todayMonth)
   // Dismisses on an outside click or Escape, not just by clicking the
   // calendar icon again -- see ScheduleMonthView.tsx's own Slot
   // settings popover for the same fix and why (usePreviewPopover).
@@ -62,14 +69,14 @@ export default function MonthCalendar({
     setMonth((m) => (m === 12 ? (setYear((y) => y + 1), 1) : m + 1))
   }
   function goToday() {
-    setYear(today.getFullYear())
-    setMonth(today.getMonth() + 1)
+    setYear(todayYear)
+    setMonth(todayMonth)
     if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current)
     setHighlightedDate(todayIso)
     highlightTimeoutRef.current = setTimeout(() => setHighlightedDate(null), 2000)
   }
 
-  const yearOptions = Array.from({ length: 6 }, (_, i) => today.getFullYear() - 2 + i)
+  const yearOptions = Array.from({ length: 6 }, (_, i) => todayYear - 2 + i)
 
   const totalDays = daysInMonth(year, month)
   const leadingBlanks = firstWeekdayColumn(year, month)

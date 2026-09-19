@@ -1,23 +1,88 @@
 import type { DoctorBlockEntry, DoctorScheduleEntry } from '../types'
 import { formatTimeOfDay } from '../format'
+import { getAppConfig } from '../api'
 
 export const DAY_NAMES = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
+// The clinic's own configured timezone (app.config.DEFAULT_TIMEZONE), not
+// the viewer's device timezone -- same fetch-once/cache/fallback pattern
+// as LiveClock.tsx/useClinicToday.ts, and the same reason: a receptionist
+// (or a doctor checking their own workspace) whose device clock is set to
+// a different zone than the clinic should still see the clinic's own
+// current date/day-of-week/time, not their own. isoDateToday/
+// currentDayOfWeek/isAvailableNow below used to read the browser's clock
+// directly instead -- the exact bug class app/services/
+// availability_engine.py's own test_uses_doctor_timezone_not_utc_for_
+// past_date_check guards against server-side, just unguarded here.
+//
+// A plain module-level variable, not a hook: the three functions below
+// are called synchronously from render bodies, default parameters, and
+// plain utility code all over the admin app, not only from within a
+// mounted component, so they can't themselves be async or hook-based.
+// The fallback is used until the one-time fetch below resolves (the same
+// window LiveClock/useClinicToday already tolerate on first load); any
+// caller that re-renders or refetches after that -- which is all of
+// them, on their own normal data refresh -- picks up the corrected value
+// automatically, no further change needed on their part.
+const FALLBACK_TIMEZONE = 'Asia/Kolkata'
+let clinicTimezone = FALLBACK_TIMEZONE
+let timezoneLoadStarted = false
+
+function ensureClinicTimezoneLoading(): void {
+  if (timezoneLoadStarted) return
+  timezoneLoadStarted = true
+  getAppConfig()
+    .then((config) => {
+      clinicTimezone = config.default_timezone
+    })
+    .catch(() => {
+      // Keep the fallback -- same as LiveClock/useClinicToday's own
+      // .catch(() => FALLBACK_TIMEZONE).
+    })
+}
+
+// year/month/day + hour/minute "right now", read in the clinic's
+// timezone via one Intl.DateTimeFormat call -- the one place
+// isoDateToday/currentDayOfWeek/isAvailableNow all get this conversion
+// from, rather than three separate copies of it.
+function clinicNowParts(now: Date): { dateStr: string; hour: number; minute: number } {
+  ensureClinicTimezoneLoading()
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: clinicTimezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    })
+      .formatToParts(now)
+      .map((part) => [part.type, part.value]),
+  )
+  return {
+    dateStr: `${parts.year}-${parts.month}-${parts.day}`,
+    hour: Number(parts.hour),
+    minute: Number(parts.minute),
+  }
+}
+
 // Shared by the Doctors directory (today's-hours/availability column) and
 // the doctor workspace's Overview tab, so "what does today look like for
-// this doctor" is computed exactly one way, not two drifting copies.
-
+// this doctor" is computed exactly one way, not two drifting copies. In
+// the clinic's own configured timezone -- see clinicNowParts above.
 export function isoDateToday(): string {
-  const now = new Date()
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  return clinicNowParts(new Date()).dateStr
 }
 
 // 1=Monday..7=Sunday, matching doctor_schedule.day_of_week (see
 // DoctorDetail.tsx's original DAY_NAMES/dayOfWeekOccursInRange) -- the
-// opposite of JS's own Date.getDay() (0=Sunday..6=Saturday).
+// opposite of JS's own Date.getDay() (0=Sunday..6=Saturday). Derived from
+// isoDateToday() (day-of-week only depends on which calendar date it is,
+// not the time of day), so it gets the same clinic-timezone correction
+// for free rather than needing its own.
 export function currentDayOfWeek(): number {
-  const jsDay = new Date().getDay()
-  return jsDay === 0 ? 7 : jsDay
+  return dateToDayOfWeek(isoDateToday())
 }
 
 // Same 1=Monday..7=Sunday convention as currentDayOfWeek, for an
@@ -130,20 +195,22 @@ export function toMinutesSinceMidnight(hhmm: string): number {
 // Is this doctor inside one of today's working-hour windows right now,
 // and not inside an active one-off block? doctor_schedule.start_time/
 // end_time have no timezone of their own -- entered and read back as
-// plain HH:MM, the same "assume the browser's wall clock is this
-// doctor's IST wall clock" convention ScheduleSection's own <input
-// type="time"> already relies on. DoctorBlockEntry.start_at/end_at, by
-// contrast, are real ISO instants (entered "(IST)" but stored as an
-// absolute moment -- see BlocksSection), so comparing those against
-// `now.getTime()` is correct regardless of the viewer's own timezone.
+// plain HH:MM, meant as the clinic's own wall clock (currently always
+// Asia/Kolkata -- see clinicNowParts/FALLBACK_TIMEZONE above), not
+// whichever zone the viewer's device happens to be set to; date/day-of-
+// week/time-of-day below are all read that way accordingly.
+// DoctorBlockEntry.start_at/end_at, by contrast, are real ISO instants
+// (entered "(IST)" but stored as an absolute moment -- see BlocksSection),
+// so comparing those against `now.getTime()` is correct regardless of the
+// viewer's own timezone, with no conversion needed.
 export function isAvailableNow(
   scheduleEntries: DoctorScheduleEntry[],
   blocks: DoctorBlockEntry[],
   now: Date = new Date(),
 ): boolean {
-  const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-  const dayOfWeek = now.getDay() === 0 ? 7 : now.getDay()
-  const nowMinutes = now.getHours() * 60 + now.getMinutes()
+  const { dateStr, hour, minute } = clinicNowParts(now)
+  const dayOfWeek = dateToDayOfWeek(dateStr)
+  const nowMinutes = hour * 60 + minute
   const inWorkingHours = scheduleEntries.some(
     (e) =>
       e.active &&
