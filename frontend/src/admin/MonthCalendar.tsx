@@ -149,12 +149,22 @@ export default function MonthCalendar({
         {cells.map((day, i) => {
           if (day === null) return <div key={i} className="schedule-month-cell empty" />
           const dateStr = isoDate(year, month, day)
+          // A day that's already gone can't have its roster (Schedule
+          // tab) or time off (Time off tab) retroactively added/edited --
+          // both tabs' onDateClick opens exactly that kind of modal, pre-
+          // filled for dateStr. Disabling the cell here, once, covers
+          // both callers instead of each duplicating the same "is this in
+          // the past" check. Real appointment bookability is a separate,
+          // already-enforced concern (app/services/availability_engine.py)
+          // -- this only gates this roster-editing calendar.
+          const isPast = dateStr < todayIso
           return (
             <button
               key={i}
               type="button"
-              className={`schedule-month-cell${dateStr === highlightedDate ? ' highlighted' : ''}`}
+              className={`schedule-month-cell${dateStr === highlightedDate ? ' highlighted' : ''}${isPast ? ' past' : ''}`}
               onClick={() => onDateClick(dateStr)}
+              disabled={isPast}
             >
               <span className="schedule-month-cell-date">{day}</span>
               {renderCellContent(dateStr, day)}

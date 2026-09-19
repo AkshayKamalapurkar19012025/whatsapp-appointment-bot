@@ -3322,6 +3322,15 @@ a.link.danger {
   cursor: default;
 }
 
+/* Past dates can't have their roster/time off retroactively edited
+   (MonthCalendar.tsx disables the button outright) -- greyed out and
+   non-interactive, same opacity treatment as this app's other disabled
+   buttons (.btn:disabled), so it reads as "closed", not just unstyled. */
+.schedule-month-cell.past {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* Briefly rings today's cell after "Today" is clicked (ScheduleMonthView.tsx
    clears the highlight itself after ~2s) -- a fading pulse rather than a
    static outline, so it reads as "you just jumped here" instead of a
