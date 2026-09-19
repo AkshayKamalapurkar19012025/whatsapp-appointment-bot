@@ -46,6 +46,9 @@ from app.services.appointment_services import (
     record_payment_service,
     waive_consultation_fee_service,
     settle_free_visit_service,
+    record_refund_service,
+    get_invoice_service,
+    add_invoice_line_item_service,
 )
 from app.services.availability_engine import list_available_dates_in_range
 from app.services.notifications import KIND_CHECK_IN, KIND_QUEUE_TOKEN, send_mock_notification
@@ -113,6 +116,32 @@ class PaymentWaive(BaseModel):
         value = value.strip()
         if not value:
             raise ValueError("A reason is required to waive the consultation fee")
+        return value
+
+
+class PaymentRefund(BaseModel):
+    amount: float = Field(gt=0)
+    reason: str = Field(min_length=1, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("A reason is required to refund a payment")
+        return value
+
+
+class InvoiceLineItemCreate(BaseModel):
+    description: str = Field(min_length=1, max_length=200)
+    amount: float = Field(gt=0)
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("A description is required for an invoice line item")
         return value
 
 
@@ -681,6 +710,61 @@ def get_appointment_charge(
     return result
 
 
+@router.get("/{appointment_id}/invoice")
+def get_appointment_invoice(
+    appointment_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    """The itemized bill for this appointment -- consultation_fee plus
+    any ad-hoc line items, and the total record_payment_service will
+    actually charge. Same staff-readable posture as GET .../charge."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = get_invoice_service(cur, appointment_id)
+            except svc_exc.AppointmentNotFound:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            except svc_exc.AppointmentTypeNotAssigned:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This doctor/appointment-type combination no longer has a configured fee",
+                )
+
+    return result
+
+
+@router.post("/{appointment_id}/invoice/line-items")
+def add_appointment_invoice_line_item(
+    appointment_id: int,
+    line_item: InvoiceLineItemCreate,
+    admin: dict = Depends(require_role("ADMIN")),
+):
+    """ADMIN-only: add an ad-hoc charge (e.g. a dressing charge or a
+    minor procedure) to this appointment's bill, on top of its
+    consultation_fee. Only possible before the bill is settled -- see
+    add_invoice_line_item_service's docstring for why PAID/WAIVED/
+    REFUNDED reject this."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = add_invoice_line_item_service(
+                    cur,
+                    appointment_id,
+                    description=line_item.description,
+                    amount=line_item.amount,
+                    staff_id=admin["id"],
+                )
+            except svc_exc.AppointmentNotFound:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            except svc_exc.PaymentStateConflict:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Line items can only be added before the bill is paid, waived, or refunded",
+                )
+
+    return result
+
+
 def _notify_queue_token(cur, appointment_id: int, token_number: int) -> None:
     """Fires once, exactly when a token is newly issued (record_payment_
     service/waive_consultation_fee_service's token_just_issued flag) --
@@ -831,6 +915,44 @@ def settle_free_appointment_visit(
 
             if result["token_just_issued"]:
                 _notify_queue_token(cur, appointment_id, result["token_number"])
+
+    return result
+
+
+@router.post("/{appointment_id}/refund-payment")
+def refund_appointment_payment(
+    appointment_id: int,
+    refund: PaymentRefund,
+    admin: dict = Depends(require_role("ADMIN")),
+):
+    """
+    ADMIN-only reversal of a PAID appointment -- back-office correction,
+    not a queue-entry action (unlike payment/waive-payment/settle-free-
+    visit, this never touches token issuance; see record_refund_
+    service's docstring for why it isn't gated on appointment status).
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = record_refund_service(
+                    cur,
+                    appointment_id,
+                    amount=refund.amount,
+                    reason=refund.reason,
+                    staff_id=admin["id"],
+                )
+            except svc_exc.AppointmentNotFound:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            except svc_exc.PaymentStateConflict:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Only a Paid appointment's consultation fee can be refunded",
+                )
+            except svc_exc.RefundExceedsPayment:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Refund amount cannot exceed the amount actually paid",
+                )
 
     return result
 

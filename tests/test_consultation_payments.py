@@ -610,3 +610,411 @@ def test_settle_free_visit_requires_authentication(client, db_connection):
 
     response = client.post(f"/api/appointments/{appointment_id}/settle-free-visit")
     assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------
+# Refunds
+# ---------------------------------------------------------------------
+
+
+def _pay(client, admin_headers, appointment_id, method="CASH"):
+    response = client.post(
+        f"/api/appointments/{appointment_id}/payment",
+        json={"method": method, "outcome": "PAID"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+def test_refund_full_amount_succeeds(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Refund A",
+        department_name="Refund A Dept", appointment_type_name="Refund A Type",
+    )
+    _set_fee(client, admin_headers, seeded, 500)
+    patient = _create_patient(client, admin_headers, "Refund Patient A", "+919600000023")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+    _pay(client, admin_headers, appointment_id)
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/refund-payment",
+        json={"amount": 500, "reason": "Patient double-charged at front desk"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["payment_status"] == "REFUNDED"
+    assert float(body["refund_amount"]) == 500.0
+    assert body["refund_reason"] == "Patient double-charged at front desk"
+    assert body["refunded_at"] is not None
+    # The original payment record is preserved, not overwritten.
+    assert float(body["payment_amount"]) == 500.0
+
+
+def test_refund_partial_amount_succeeds(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Refund B",
+        department_name="Refund B Dept", appointment_type_name="Refund B Type",
+    )
+    _set_fee(client, admin_headers, seeded, 500)
+    patient = _create_patient(client, admin_headers, "Refund Patient B", "+919600000024")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+    _pay(client, admin_headers, appointment_id)
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/refund-payment",
+        json={"amount": 200, "reason": "Partial goodwill refund"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    assert float(response.json()["refund_amount"]) == 200.0
+
+
+def test_refund_rejected_when_not_paid(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Refund NoPay",
+        department_name="Refund NoPay Dept", appointment_type_name="Refund NoPay Type",
+    )
+    _set_fee(client, admin_headers, seeded, 500)
+    patient = _create_patient(client, admin_headers, "Refund NoPay Patient", "+919600000025")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+    # Deliberately never paid.
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/refund-payment",
+        json={"amount": 500, "reason": "Never actually paid"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 409
+
+
+def test_refund_rejected_when_already_refunded(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Refund Twice",
+        department_name="Refund Twice Dept", appointment_type_name="Refund Twice Type",
+    )
+    _set_fee(client, admin_headers, seeded, 500)
+    patient = _create_patient(client, admin_headers, "Refund Twice Patient", "+919600000026")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+    _pay(client, admin_headers, appointment_id)
+
+    first = client.post(
+        f"/api/appointments/{appointment_id}/refund-payment",
+        json={"amount": 500, "reason": "First refund"},
+        headers=admin_headers,
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        f"/api/appointments/{appointment_id}/refund-payment",
+        json={"amount": 500, "reason": "Second refund attempt"},
+        headers=admin_headers,
+    )
+    assert second.status_code == 409
+
+
+def test_refund_rejected_when_amount_exceeds_payment(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Refund TooMuch",
+        department_name="Refund TooMuch Dept", appointment_type_name="Refund TooMuch Type",
+    )
+    _set_fee(client, admin_headers, seeded, 500)
+    patient = _create_patient(client, admin_headers, "Refund TooMuch Patient", "+919600000027")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+    _pay(client, admin_headers, appointment_id)
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/refund-payment",
+        json={"amount": 501, "reason": "Trying to refund more than was paid"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 422
+
+
+def test_refund_requires_admin_role(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    staff_headers = create_staff_and_get_headers(db_connection, role="STAFF")
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Refund Role",
+        department_name="Refund Role Dept", appointment_type_name="Refund Role Type",
+    )
+    _set_fee(client, admin_headers, seeded, 500)
+    patient = _create_patient(client, admin_headers, "Refund Role Patient", "+919600000028")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+    _pay(client, admin_headers, appointment_id)
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/refund-payment",
+        json={"amount": 500, "reason": "Trying as plain staff"},
+        headers=staff_headers,
+    )
+    assert response.status_code == 403
+
+
+def test_refund_requires_positive_amount(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Refund Zero",
+        department_name="Refund Zero Dept", appointment_type_name="Refund Zero Type",
+    )
+    _set_fee(client, admin_headers, seeded, 500)
+    patient = _create_patient(client, admin_headers, "Refund Zero Patient", "+919600000029")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+    _pay(client, admin_headers, appointment_id)
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/refund-payment",
+        json={"amount": 0, "reason": "Zero amount refund"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 422
+
+
+def test_refund_requires_nonempty_reason(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Refund Reason",
+        department_name="Refund Reason Dept", appointment_type_name="Refund Reason Type",
+    )
+    _set_fee(client, admin_headers, seeded, 500)
+    patient = _create_patient(client, admin_headers, "Refund Reason Patient", "+919600000030")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+    _pay(client, admin_headers, appointment_id)
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/refund-payment",
+        json={"amount": 500, "reason": "   "},
+        headers=admin_headers,
+    )
+    assert response.status_code == 422
+
+
+def test_refund_allowed_after_visit_completed(client, db_connection):
+    """A refund is a back-office correction, not a queue-entry action --
+    unlike payment/waive/settle-free-visit, it must still work once the
+    appointment has moved past CHECKED_IN to COMPLETED (e.g. a billing
+    error noticed after the patient has already seen the doctor)."""
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Refund AfterComplete",
+        department_name="Refund AfterComplete Dept", appointment_type_name="Refund AfterComplete Type",
+    )
+    _set_fee(client, admin_headers, seeded, 500)
+    patient = _create_patient(client, admin_headers, "Refund AfterComplete Patient", "+919600000031")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+    _pay(client, admin_headers, appointment_id)
+
+    completed = client.post(f"/api/appointments/{appointment_id}/complete", headers=admin_headers)
+    assert completed.status_code == 200
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/refund-payment",
+        json={"amount": 500, "reason": "Billing error found after visit"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["payment_status"] == "REFUNDED"
+
+
+def test_refund_requires_authentication(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Refund NoAuth",
+        department_name="Refund NoAuth Dept", appointment_type_name="Refund NoAuth Type",
+    )
+    _set_fee(client, admin_headers, seeded, 500)
+    patient = _create_patient(client, admin_headers, "Refund NoAuth Patient", "+919600000032")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+    _pay(client, admin_headers, appointment_id)
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/refund-payment",
+        json={"amount": 500, "reason": "No auth header"},
+    )
+    assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------
+# Itemized invoicing: ad-hoc line items on top of the consultation fee
+# ---------------------------------------------------------------------
+
+
+def test_invoice_defaults_to_just_the_consultation_fee(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Invoice A",
+        department_name="Invoice A Dept", appointment_type_name="Invoice A Type",
+    )
+    _set_fee(client, admin_headers, seeded, 500)
+    patient = _create_patient(client, admin_headers, "Invoice Patient A", "+919600000033")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+
+    response = client.get(f"/api/appointments/{appointment_id}/invoice", headers=admin_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["line_items"] == []
+    assert float(body["consultation_fee"]) == 500.0
+    assert float(body["extra_charges_total"]) == 0.0
+    assert float(body["total_due"]) == 500.0
+    assert body["invoice_number"].startswith("INV-")
+
+
+def test_add_line_item_increases_total_due_and_amount_charged(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Invoice B",
+        department_name="Invoice B Dept", appointment_type_name="Invoice B Type",
+    )
+    _set_fee(client, admin_headers, seeded, 500)
+    patient = _create_patient(client, admin_headers, "Invoice Patient B", "+919600000034")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+
+    added = client.post(
+        f"/api/appointments/{appointment_id}/invoice/line-items",
+        json={"description": "Dressing charge", "amount": 150},
+        headers=admin_headers,
+    )
+    assert added.status_code == 200
+    assert len(added.json()["line_items"]) == 1
+    assert float(added.json()["total_due"]) == 650.0
+
+    invoice = client.get(f"/api/appointments/{appointment_id}/invoice", headers=admin_headers).json()
+    assert float(invoice["extra_charges_total"]) == 150.0
+    assert float(invoice["total_due"]) == 650.0
+
+    payment = client.post(
+        f"/api/appointments/{appointment_id}/payment",
+        json={"method": "CASH", "outcome": "PAID"},
+        headers=admin_headers,
+    )
+    assert payment.status_code == 200
+    assert float(payment.json()["payment_amount"]) == 650.0
+
+
+def test_multiple_line_items_sum_into_total_due(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Invoice C",
+        department_name="Invoice C Dept", appointment_type_name="Invoice C Type",
+    )
+    _set_fee(client, admin_headers, seeded, 500)
+    patient = _create_patient(client, admin_headers, "Invoice Patient C", "+919600000035")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+
+    client.post(
+        f"/api/appointments/{appointment_id}/invoice/line-items",
+        json={"description": "Dressing charge", "amount": 150},
+        headers=admin_headers,
+    )
+    client.post(
+        f"/api/appointments/{appointment_id}/invoice/line-items",
+        json={"description": "Injection charge", "amount": 75},
+        headers=admin_headers,
+    )
+
+    invoice = client.get(f"/api/appointments/{appointment_id}/invoice", headers=admin_headers).json()
+    assert len(invoice["line_items"]) == 2
+    assert float(invoice["extra_charges_total"]) == 225.0
+    assert float(invoice["total_due"]) == 725.0
+
+
+def test_line_item_rejected_after_payment(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Invoice Frozen",
+        department_name="Invoice Frozen Dept", appointment_type_name="Invoice Frozen Type",
+    )
+    _set_fee(client, admin_headers, seeded, 500)
+    patient = _create_patient(client, admin_headers, "Invoice Frozen Patient", "+919600000036")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+    client.post(
+        f"/api/appointments/{appointment_id}/payment",
+        json={"method": "CASH", "outcome": "PAID"},
+        headers=admin_headers,
+    )
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/invoice/line-items",
+        json={"description": "Too late charge", "amount": 100},
+        headers=admin_headers,
+    )
+    assert response.status_code == 409
+
+
+def test_line_item_requires_admin_role(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    staff_headers = create_staff_and_get_headers(db_connection, role="STAFF")
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Invoice Role",
+        department_name="Invoice Role Dept", appointment_type_name="Invoice Role Type",
+    )
+    patient = _create_patient(client, admin_headers, "Invoice Role Patient", "+919600000037")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/invoice/line-items",
+        json={"description": "Trying as plain staff", "amount": 100},
+        headers=staff_headers,
+    )
+    assert response.status_code == 403
+
+
+def test_line_item_requires_positive_amount(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Invoice Zero",
+        department_name="Invoice Zero Dept", appointment_type_name="Invoice Zero Type",
+    )
+    patient = _create_patient(client, admin_headers, "Invoice Zero Patient", "+919600000038")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/invoice/line-items",
+        json={"description": "Zero charge", "amount": 0},
+        headers=admin_headers,
+    )
+    assert response.status_code == 422
+
+
+def test_settle_free_visit_rejected_when_line_item_added(client, db_connection):
+    """A visit with a real ad-hoc charge on it isn't free just because
+    the base consultation_fee is 0."""
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Invoice NotFree",
+        department_name="Invoice NotFree Dept", appointment_type_name="Invoice NotFree Type",
+    )
+    # No fee configured -- consultation_fee defaults to 0.
+    patient = _create_patient(client, admin_headers, "Invoice NotFree Patient", "+919600000039")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+    client.post(
+        f"/api/appointments/{appointment_id}/invoice/line-items",
+        json={"description": "Dressing charge", "amount": 150},
+        headers=admin_headers,
+    )
+
+    response = client.post(f"/api/appointments/{appointment_id}/settle-free-visit", headers=admin_headers)
+    assert response.status_code == 409

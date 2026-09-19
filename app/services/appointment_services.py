@@ -67,6 +67,7 @@ from app.services.exceptions import (
     PaymentStateConflict,
     WaiverNotEligible,
     FreeVisitNotEligible,
+    RefundExceedsPayment,
 )
 
 logger = logging.getLogger(__name__)
@@ -1316,6 +1317,106 @@ def get_consultation_charge_service(cur, appointment_id: int):
     return {"appointment_id": appointment_id, "consultation_fee": row[0]}
 
 
+def _invoice_extra_charges_total(cur, appointment_id: int):
+    """Sum of this appointment's invoice_line_items (migrations/0026)
+    -- the ad-hoc charges added on top of its consultation_fee. Returns
+    0, not NULL, when there are none, so callers can add it to
+    consultation_fee unconditionally."""
+    cur.execute(
+        "SELECT COALESCE(SUM(amount), 0) FROM invoice_line_items WHERE appointment_id = %s",
+        (appointment_id,),
+    )
+    return cur.fetchone()[0]
+
+
+def get_invoice_service(cur, appointment_id: int):
+    """
+    The itemized bill for this appointment: its consultation_fee, every
+    ad-hoc line item added on top of it, and total_due -- exactly what
+    record_payment_service charges (get_consultation_charge_service's
+    return value plus _invoice_extra_charges_total). Same "callable any
+    time, independent of appointment status" contract as get_
+    consultation_charge_service, which this wraps.
+    """
+    charge = get_consultation_charge_service(cur, appointment_id)
+
+    cur.execute(
+        """
+        SELECT id, description, amount, added_by, created_at
+        FROM invoice_line_items
+        WHERE appointment_id = %s
+        ORDER BY created_at
+        """,
+        (appointment_id,),
+    )
+    line_items = [
+        {
+            "id": row[0],
+            "description": row[1],
+            "amount": row[2],
+            "added_by": row[3],
+            "created_at": row[4].isoformat(),
+        }
+        for row in cur.fetchall()
+    ]
+
+    cur.execute("SELECT invoice_number FROM appointments WHERE id = %s", (appointment_id,))
+    (invoice_number,) = cur.fetchone()
+
+    extra_charges_total = sum(item["amount"] for item in line_items)
+    total_due = charge["consultation_fee"] + extra_charges_total
+
+    return {
+        "appointment_id": appointment_id,
+        "invoice_number": invoice_number,
+        "consultation_fee": charge["consultation_fee"],
+        "line_items": line_items,
+        "extra_charges_total": extra_charges_total,
+        "total_due": total_due,
+    }
+
+
+def add_invoice_line_item_service(cur, appointment_id: int, *, description: str, amount, staff_id: int):
+    """
+    ADMIN adds an ad-hoc charge to an appointment's bill, on top of its
+    consultation_fee (migrations/0026) -- e.g. a dressing charge or a
+    minor procedure done during the same visit. ADMIN-gated at the API
+    layer (app/api/appointments.py), the same authority level waive/
+    refund require, since this changes how much money is owed.
+
+    Only allowed while payment_status is UNPAID or FAILED -- once PAID/
+    WAIVED/REFUNDED, the bill is frozen (payment_amount has already
+    been computed and recorded against the total as it stood at that
+    moment; adding a line item afterward would silently make payment_
+    amount wrong). Raises PaymentStateConflict in every other state,
+    the same exception record_payment_service/waive_consultation_fee_
+    service use for "this payment_status doesn't allow that action".
+    """
+    cur.execute(
+        "SELECT payment_status FROM appointments WHERE id = %s FOR UPDATE",
+        (appointment_id,),
+    )
+    row = cur.fetchone()
+
+    if row is None:
+        raise AppointmentNotFound()
+
+    (payment_status,) = row
+
+    if payment_status not in ("UNPAID", "FAILED"):
+        raise PaymentStateConflict()
+
+    cur.execute(
+        """
+        INSERT INTO invoice_line_items (appointment_id, description, amount, added_by)
+        VALUES (%s, %s, %s, %s)
+        """,
+        (appointment_id, description, amount, staff_id),
+    )
+
+    return get_invoice_service(cur, appointment_id)
+
+
 def _lock_appointment_for_payment(cur, appointment_id: int):
     """Shared row lookup/lock for record_payment_service and
     waive_consultation_fee_service -- both gate on the same two things
@@ -1372,6 +1473,11 @@ def record_payment_service(cur, appointment_id: int, *, method: str, outcome: st
     check-in itself. A FAILED outcome never does: the patient stays
     outside the queue until payment succeeds or is waived, per the
     core business rule.
+
+    amount charged is consultation_fee plus any ad-hoc invoice_line_
+    items added for this appointment (migrations/0026, add_invoice_
+    line_item_service) -- still never client-supplied, just a wider
+    server-side total than the original single-fee model.
     """
     payment_status, doctor_id, patient_id, visited_at, doctor_tz = _lock_appointment_for_payment(cur, appointment_id)
 
@@ -1386,7 +1492,7 @@ def record_payment_service(cur, appointment_id: int, *, method: str, outcome: st
     # for the front desk to see what's outstanding on retry. It does
     # not mean money changed hands; payment_status is what says that.
     charge = get_consultation_charge_service(cur, appointment_id)
-    amount = charge["consultation_fee"]
+    amount = charge["consultation_fee"] + _invoice_extra_charges_total(cur, appointment_id)
 
     cur.execute(
         """
@@ -1511,7 +1617,10 @@ def settle_free_visit_service(cur, appointment_id: int):
     overwritten), and FreeVisitNotEligible if the configured fee turns
     out to be nonzero (e.g. a stale client retrying after the fee was
     reconfigured) -- callers must not use this as a way to skip a real
-    charge.
+    charge. Also FreeVisitNotEligible if any ad-hoc invoice_line_items
+    (migrations/0026) have been added for this appointment: a visit
+    with a real extra charge on it isn't "free" just because the base
+    consultation_fee happens to be 0.
     """
     payment_status, doctor_id, patient_id, visited_at, doctor_tz = _lock_appointment_for_payment(cur, appointment_id)
 
@@ -1523,7 +1632,7 @@ def settle_free_visit_service(cur, appointment_id: int):
 
     charge = get_consultation_charge_service(cur, appointment_id)
 
-    if charge["consultation_fee"] != 0:
+    if charge["consultation_fee"] != 0 or _invoice_extra_charges_total(cur, appointment_id) != 0:
         raise FreeVisitNotEligible()
 
     cur.execute(
@@ -1546,11 +1655,79 @@ def settle_free_visit_service(cur, appointment_id: int):
     return {**_current_payment_record(cur, appointment_id), "token_just_issued": token_result["newly_generated"]}
 
 
+def record_refund_service(cur, appointment_id: int, *, amount, reason: str, staff_id: int):
+    """
+    ADMIN records a refund against a PAID appointment (see
+    app/api/appointments.py's require_role("ADMIN") on the endpoint --
+    the same authority level waive_consultation_fee_service requires,
+    since a refund reverses real money the same way a waiver forgives
+    it). Deliberately does not gate on appointments.status the way
+    record_payment_service/waive_consultation_fee_service do: those
+    exist to admit a patient to the queue, so they only make sense
+    while a visit is CHECKED_IN. A refund is a back-office correction
+    that can legitimately happen well after the visit is COMPLETED
+    (a billing error found days later, a patient dispute), so the only
+    precondition is payment_status = PAID.
+
+    Only ever reachable from PAID -- not idempotent/replayable like
+    record_payment_service or waive_consultation_fee_service, since a
+    second refund against an already-REFUNDED appointment is never a
+    harmless double-click; it's either a duplicate refund attempt (a
+    real bug to surface, not silently swallow) or a second partial
+    refund, which this simple model doesn't support. Both cases raise
+    PaymentStateConflict, same as the other payment-state guards.
+
+    amount must not exceed what was actually paid (payment_amount) --
+    raises RefundExceedsPayment otherwise. A full refund is the common
+    case (amount == payment_amount); a smaller amount is a deliberate
+    partial refund, left to the caller's/UI's discretion.
+    """
+    cur.execute(
+        """
+        SELECT payment_status, payment_amount
+        FROM appointments
+        WHERE id = %s
+        FOR UPDATE
+        """,
+        (appointment_id,),
+    )
+
+    row = cur.fetchone()
+
+    if row is None:
+        raise AppointmentNotFound()
+
+    payment_status, payment_amount = row
+
+    if payment_status != "PAID":
+        raise PaymentStateConflict()
+
+    if amount > payment_amount:
+        raise RefundExceedsPayment()
+
+    cur.execute(
+        """
+        UPDATE appointments
+        SET payment_status = 'REFUNDED',
+            refund_amount = %s,
+            refund_reason = %s,
+            refunded_by = %s,
+            refunded_at = NOW(),
+            updated_at = NOW()
+        WHERE id = %s
+        """,
+        (amount, reason, staff_id, appointment_id),
+    )
+
+    return _current_payment_record(cur, appointment_id)
+
+
 def _current_payment_record(cur, appointment_id: int):
     cur.execute(
         """
         SELECT id, payment_status, payment_method, payment_amount,
-               payment_recorded_at, waive_reason, token_number
+               payment_recorded_at, waive_reason, token_number,
+               refund_amount, refund_reason, refunded_at
         FROM appointments
         WHERE id = %s
         """,
@@ -1567,4 +1744,7 @@ def _current_payment_record(cur, appointment_id: int):
         "payment_recorded_at": row[4].isoformat() if row[4] else None,
         "waive_reason": row[5],
         "token_number": row[6],
+        "refund_amount": row[7],
+        "refund_reason": row[8],
+        "refunded_at": row[9].isoformat() if row[9] else None,
     }

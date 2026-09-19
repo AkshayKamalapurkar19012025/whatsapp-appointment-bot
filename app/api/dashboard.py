@@ -150,3 +150,175 @@ def get_dashboard_trends(
         "appointments": [{"date": day.isoformat(), "count": count} for day, count in appointment_counts],
         "patients": [{"date": day.isoformat(), "count": count} for day, count in patient_counts],
     }
+
+
+@router.get("/billing")
+def get_billing_report(
+    days: int = Query(default=14, ge=1, le=90),
+    staff: dict = Depends(get_current_staff),
+):
+    """
+    OPD billing reconciliation view backing a future front-desk/admin
+    "Billing" panel (no frontend for this yet -- see DashboardPanel.tsx
+    for where /stats and /trends are consumed; this endpoint exists so
+    that panel has a real API to build against). Staff-readable, same
+    posture as /stats and /trends above: GET /appointments already
+    returns payment_status/payment_method/payment_amount per row to any
+    STAFF session, so an aggregate over the same columns isn't more
+    sensitive.
+
+    Four independent pieces, not one combined query -- each answers a
+    different front-desk question and has a different natural time
+    scope:
+      * collections: money actually collected (PAID), bucketed by
+        payment_method and by doctor, over the trailing `days` days
+        (payment_recorded_at-scoped -- when it was collected, not when
+        the appointment was scheduled).
+      * outstanding: what's currently owed right now -- every CHECKED_IN
+        appointment still UNPAID or FAILED. Deliberately NOT time-scoped
+        by `days`: "who owes money today" means everyone outstanding,
+        not just the ones from this window.
+      * waivers: count + reasons for the trailing `days` days. No dollar
+        total -- waive_consultation_fee_service and settle_free_visit_
+        service both record payment_amount = 0 for a waived visit (see
+        their docstrings), so there is no real "amount waived" number to
+        report; fabricating one from doctor_appointment_types.
+        consultation_fee's *current* price would misrepresent what was
+        actually waived at the time.
+      * refunds: count + total refund_amount for the trailing `days`
+        days (refund_amount is actually recorded, unlike waivers, so a
+        real total is reportable here).
+    """
+    window_start = date.today() - timedelta(days=days - 1)
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT payment_method, COUNT(*), COALESCE(SUM(payment_amount), 0)
+                FROM appointments
+                WHERE payment_status = 'PAID'
+                  AND payment_recorded_at::date >= %s
+                GROUP BY payment_method
+                ORDER BY payment_method
+                """,
+                (window_start,),
+            )
+            collections_by_method = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT d.id, d.name, COUNT(*), COALESCE(SUM(a.payment_amount), 0)
+                FROM appointments a
+                JOIN doctors d ON d.id = a.doctor_id
+                WHERE a.payment_status = 'PAID'
+                  AND a.payment_recorded_at::date >= %s
+                GROUP BY d.id, d.name
+                ORDER BY d.name
+                """,
+                (window_start,),
+            )
+            collections_by_doctor = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT a.id, p.name, d.name, a.payment_status, a.visited_at
+                FROM appointments a
+                JOIN patients p ON p.id = a.patient_id
+                JOIN doctors d ON d.id = a.doctor_id
+                WHERE a.status = 'CHECKED_IN'
+                  AND a.payment_status IN ('UNPAID', 'FAILED')
+                ORDER BY a.visited_at
+                """
+            )
+            outstanding_rows = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT a.id, p.name, d.name, a.waive_reason, a.payment_recorded_at
+                FROM appointments a
+                JOIN patients p ON p.id = a.patient_id
+                JOIN doctors d ON d.id = a.doctor_id
+                WHERE a.payment_status = 'WAIVED'
+                  AND a.payment_recorded_at::date >= %s
+                ORDER BY a.payment_recorded_at DESC
+                """,
+                (window_start,),
+            )
+            waiver_rows = cur.fetchall()
+
+            cur.execute(
+                """
+                SELECT COUNT(*), COALESCE(SUM(refund_amount), 0)
+                FROM appointments
+                WHERE payment_status = 'REFUNDED'
+                  AND refunded_at::date >= %s
+                """,
+                (window_start,),
+            )
+            refund_count, refund_total = cur.fetchone()
+
+            cur.execute(
+                """
+                SELECT a.id, p.name, d.name, a.refund_amount, a.refund_reason, a.refunded_at
+                FROM appointments a
+                JOIN patients p ON p.id = a.patient_id
+                JOIN doctors d ON d.id = a.doctor_id
+                WHERE a.payment_status = 'REFUNDED'
+                  AND a.refunded_at::date >= %s
+                ORDER BY a.refunded_at DESC
+                """,
+                (window_start,),
+            )
+            refund_rows = cur.fetchall()
+
+    return {
+        "window_days": days,
+        "collections_by_method": [
+            {"method": method, "count": count, "amount": amount}
+            for method, count, amount in collections_by_method
+        ],
+        "collections_by_doctor": [
+            {"doctor_id": doctor_id, "doctor_name": doctor_name, "count": count, "amount": amount}
+            for doctor_id, doctor_name, count, amount in collections_by_doctor
+        ],
+        "total_collected": sum(amount for _, _, amount in collections_by_method),
+        "outstanding_unpaid": [
+            {
+                "appointment_id": row[0],
+                "patient_name": row[1],
+                "doctor_name": row[2],
+                "payment_status": row[3],
+                "visited_at": row[4].isoformat() if row[4] else None,
+            }
+            for row in outstanding_rows
+        ],
+        "waivers": {
+            "count": len(waiver_rows),
+            "records": [
+                {
+                    "appointment_id": row[0],
+                    "patient_name": row[1],
+                    "doctor_name": row[2],
+                    "reason": row[3],
+                    "waived_at": row[4].isoformat() if row[4] else None,
+                }
+                for row in waiver_rows
+            ],
+        },
+        "refunds": {
+            "count": refund_count,
+            "total_refunded": refund_total,
+            "records": [
+                {
+                    "appointment_id": row[0],
+                    "patient_name": row[1],
+                    "doctor_name": row[2],
+                    "refund_amount": row[3],
+                    "refund_reason": row[4],
+                    "refunded_at": row[5].isoformat() if row[5] else None,
+                }
+                for row in refund_rows
+            ],
+        },
+    }

@@ -15,6 +15,7 @@ TRUNCATE TABLE
     patient_otp_codes,
     patient_sessions,
     scheduling_sessions,
+    invoice_line_items,
     appointments,
     doctor_blocks,
     doctor_schedule,

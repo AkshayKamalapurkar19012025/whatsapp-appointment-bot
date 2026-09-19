@@ -104,6 +104,13 @@ class FreeVisitNotEligible(ServiceError):
     pass
 
 
+class RefundExceedsPayment(ServiceError):
+    """Raised by record_refund_service when the requested refund_amount
+    is greater than the appointment's recorded payment_amount -- a
+    refund can never return more money than was actually collected."""
+    pass
+
+
 # ---------------------------------------------------------------------
 # Patient authentication (WEB P2) -- see app/services/patient_auth.py.
 # ---------------------------------------------------------------------

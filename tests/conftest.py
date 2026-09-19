@@ -42,6 +42,7 @@ APP_TABLES = [
     "patient_otp_codes",
     "staff_sessions",
     "staff",
+    "invoice_line_items",
     "appointments",
     "doctor_appointment_types",
     "doctor_blocks",
