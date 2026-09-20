@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react'
-import { ApiError, completeAdminAppointment, getDoctorQueue } from '../api'
-import type { DoctorQueue } from '../types'
+import {
+  ApiError,
+  completeAdminAppointment,
+  getDoctorQueue,
+  holdQueueEntry,
+  recallQueueEntry,
+  setQueuePriority,
+} from '../api'
+import type { DoctorQueue, QueueEntry } from '../types'
 import { formatTime } from '../format'
 
 // Today's walk-in queue (ADMIN or STAFF) -- migrations/0012_appointment_
@@ -27,7 +34,17 @@ export default function QueueSection({ doctorId }: { doctorId: number }) {
   const [queue, setQueue] = useState<DoctorQueue | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [completingId, setCompletingId] = useState<number | null>(null)
+  // One row at a time can be "doing something" -- covers Mark
+  // completed/Skip/Recall/Priority alike, since they're mutually
+  // exclusive per row and this keeps the busy-state plumbing to one
+  // variable instead of four drifting copies.
+  const [busyId, setBusyId] = useState<number | null>(null)
+  // The one row currently showing the "why is this priority" reason
+  // input, opened by clicking Priority -- see startPriority/
+  // confirmPriority below. Not just a boolean: only one row's form is
+  // open at a time, and this doubles as which one.
+  const [priorityTargetId, setPriorityTargetId] = useState<number | null>(null)
+  const [priorityReason, setPriorityReason] = useState('')
 
   function load() {
     getDoctorQueue(doctorId)
@@ -45,17 +62,124 @@ export default function QueueSection({ doctorId }: { doctorId: number }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doctorId])
 
-  async function handleComplete(appointmentId: number) {
+  async function runAction(appointmentId: number, action: () => Promise<unknown>, failureMessage: string) {
     setError(null)
-    setCompletingId(appointmentId)
+    setBusyId(appointmentId)
     try {
-      await completeAdminAppointment(appointmentId)
+      await action()
       load()
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not mark the appointment completed')
+      setError(err instanceof ApiError ? err.message : failureMessage)
     } finally {
-      setCompletingId(null)
+      setBusyId(null)
     }
+  }
+
+  function handleComplete(appointmentId: number) {
+    return runAction(appointmentId, () => completeAdminAppointment(appointmentId), 'Could not mark the appointment completed')
+  }
+
+  function handleHold(appointmentId: number) {
+    return runAction(appointmentId, () => holdQueueEntry(appointmentId), 'Could not skip this patient')
+  }
+
+  function handleRecall(appointmentId: number) {
+    return runAction(appointmentId, () => recallQueueEntry(appointmentId), 'Could not recall this patient')
+  }
+
+  function startPriority(appointmentId: number) {
+    setPriorityTargetId(appointmentId)
+    setPriorityReason('')
+  }
+
+  function cancelPriority() {
+    setPriorityTargetId(null)
+    setPriorityReason('')
+  }
+
+  async function confirmPriority(appointmentId: number) {
+    if (!priorityReason.trim()) return
+    await runAction(
+      appointmentId,
+      () => setQueuePriority(appointmentId, true, priorityReason.trim()),
+      'Could not mark this patient priority',
+    )
+    setPriorityTargetId(null)
+    setPriorityReason('')
+  }
+
+  function handleRemovePriority(appointmentId: number) {
+    return runAction(appointmentId, () => setQueuePriority(appointmentId, false), 'Could not remove priority')
+  }
+
+  // Shared by the Waiting and Held tables -- Priority/Remove priority
+  // and Skip/Recall are the same actions in both, just swapping which
+  // one applies depending on whether this row is currently held.
+  function renderActions(entry: QueueEntry, held: boolean) {
+    if (priorityTargetId === entry.appointment_id) {
+      return (
+        <div className="queue-priority-form">
+          <input
+            type="text"
+            placeholder="Reason (required)"
+            value={priorityReason}
+            onChange={(e) => setPriorityReason(e.target.value)}
+            autoFocus
+          />
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={!priorityReason.trim() || busyId === entry.appointment_id}
+            onClick={() => confirmPriority(entry.appointment_id)}
+          >
+            {busyId === entry.appointment_id ? 'Saving…' : 'Confirm'}
+          </button>
+          <button type="button" className="btn-secondary btn btn-sm" onClick={cancelPriority}>
+            Cancel
+          </button>
+        </div>
+      )
+    }
+
+    const busy = busyId === entry.appointment_id
+
+    return (
+      <div className="queue-row-actions">
+        {held ? (
+          <button type="button" className="btn btn-sm" disabled={busy} onClick={() => handleRecall(entry.appointment_id)}>
+            {busy ? 'Saving…' : 'Recall'}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn-secondary btn btn-sm"
+            disabled={busy}
+            onClick={() => handleHold(entry.appointment_id)}
+          >
+            {busy ? 'Saving…' : 'Skip'}
+          </button>
+        )}
+        {entry.is_priority ? (
+          <button
+            type="button"
+            className="btn-secondary btn btn-sm"
+            disabled={busy}
+            onClick={() => handleRemovePriority(entry.appointment_id)}
+          >
+            Remove priority
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn-secondary btn btn-sm"
+            disabled={busy}
+            onClick={() => startPriority(entry.appointment_id)}
+          >
+            Priority
+          </button>
+        )}
+      </div>
+    )
   }
 
   return (
@@ -78,14 +202,20 @@ export default function QueueSection({ doctorId }: { doctorId: number }) {
               <>
                 <span className="queue-token-badge">#{queue.now_serving.token_number}</span>
                 <span>{queue.now_serving.patient_name}</span>
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  disabled={completingId === queue.now_serving.appointment_id}
-                  onClick={() => handleComplete(queue.now_serving!.appointment_id)}
-                >
-                  {completingId === queue.now_serving.appointment_id ? 'Saving…' : 'Mark completed'}
-                </button>
+                {queue.now_serving.is_priority && <span className="queue-priority-badge">Priority</span>}
+                <div className="queue-now-serving-actions">
+                  {renderActions(queue.now_serving, false)}
+                  {priorityTargetId !== queue.now_serving.appointment_id && (
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      disabled={busyId === queue.now_serving.appointment_id}
+                      onClick={() => handleComplete(queue.now_serving!.appointment_id)}
+                    >
+                      {busyId === queue.now_serving.appointment_id ? 'Saving…' : 'Mark completed'}
+                    </button>
+                  )}
+                </div>
               </>
             ) : (
               <span className="muted">Nobody waiting right now.</span>
@@ -101,14 +231,48 @@ export default function QueueSection({ doctorId }: { doctorId: number }) {
                     <th>Token</th>
                     <th>Patient</th>
                     <th>Checked in</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {queue.waiting.map((entry) => (
                     <tr key={entry.appointment_id}>
                       <td>#{entry.token_number}</td>
-                      <td>{entry.patient_name}</td>
+                      <td>
+                        {entry.patient_name}
+                        {entry.is_priority && <span className="queue-priority-badge">Priority</span>}
+                      </td>
                       <td>{formatTime(entry.visited_at)}</td>
+                      <td>{renderActions(entry, false)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+
+          {queue.held.length > 0 && (
+            <>
+              <h4>Held ({queue.held.length})</h4>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Token</th>
+                    <th>Patient</th>
+                    <th>Checked in</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {queue.held.map((entry) => (
+                    <tr key={entry.appointment_id}>
+                      <td>#{entry.token_number}</td>
+                      <td>
+                        {entry.patient_name}
+                        {entry.is_priority && <span className="queue-priority-badge">Priority</span>}
+                      </td>
+                      <td>{formatTime(entry.visited_at)}</td>
+                      <td>{renderActions(entry, true)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -140,9 +304,10 @@ export default function QueueSection({ doctorId }: { doctorId: number }) {
             </>
           )}
 
-          {queue.now_serving === null && queue.waiting.length === 0 && queue.completed.length === 0 && (
-            <p className="muted">No one has checked in today yet.</p>
-          )}
+          {queue.now_serving === null &&
+            queue.waiting.length === 0 &&
+            queue.held.length === 0 &&
+            queue.completed.length === 0 && <p className="muted">No one has checked in today yet.</p>}
         </>
       )}
     </div>

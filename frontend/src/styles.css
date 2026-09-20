@@ -5180,8 +5180,45 @@ a.link.danger {
   font-weight: 700;
 }
 
-.queue-now-serving .btn {
+.queue-now-serving-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   margin-left: auto;
+}
+
+.queue-row-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* The reason input opened by clicking Priority (QueueSection.tsx) --
+   replaces the row's normal action buttons in place until Confirm/
+   Cancel, rather than a separate modal, since this is a quick front-
+   desk action taken mid-queue-management. */
+.queue-priority-form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.queue-priority-form input {
+  min-width: 180px;
+}
+
+.queue-priority-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--space-2);
+  margin-left: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .pill.role-admin {
@@ -7626,4 +7663,65 @@ a.link.danger {
   display: flex;
   gap: var(--space-2);
   flex: 0 0 auto;
+}
+
+/* ===========================================================
+   Waiting-room display board (DisplayBoard.tsx, /display)
+   Fixed dark palette, independent of --color-* theme tokens --
+   see that component's own comment for why.
+   =========================================================== */
+
+.display-board {
+  min-height: 100vh;
+  padding: 4vh 4vw;
+  background: #0b1220;
+  color: #f4f6fb;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.display-board-header {
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-align: center;
+  margin-bottom: 4vh;
+  color: #ffffff;
+}
+
+.display-board-error,
+.display-board-empty {
+  text-align: center;
+  font-size: 1.5rem;
+  color: #9aa5c0;
+}
+
+.display-board-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 3vh 3vw;
+}
+
+.display-board-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5vh;
+  padding: 4vh 2vw;
+  background: #131c30;
+  border: 1px solid #22304d;
+  border-radius: 20px;
+}
+
+.display-board-doctor-name {
+  font-size: clamp(1.1rem, 2vw, 1.6rem);
+  font-weight: 700;
+  color: #b8c2de;
+  text-align: center;
+}
+
+.display-board-token {
+  font-size: clamp(3rem, 9vw, 7rem);
+  font-weight: 800;
+  color: #4ade80;
+  line-height: 1;
 }
