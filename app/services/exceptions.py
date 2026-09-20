@@ -75,6 +75,17 @@ class AppointmentNotStarted(ServiceError):
     pass
 
 
+class AppointmentSlotPassed(ServiceError):
+    """Raised by confirm_appointment_service when the Pending
+    appointment's status allows the transition but its scheduled
+    start_at has already gone by -- there's no live slot left to confirm
+    the patient into. The mirror image of AppointmentNotStarted (too
+    late instead of too early), and just as deliberately distinct from
+    InvalidStatusTransition: the status (PENDING) is fine, the slot just
+    isn't current any more."""
+    pass
+
+
 class PaymentStateConflict(ServiceError):
     """Raised by record_payment_service/waive_consultation_fee_service
     when payment_status is already in a state that makes the requested
@@ -91,6 +102,23 @@ class WaiverNotEligible(ServiceError):
     this check-in -- the clinic's waiver policy requires a genuine
     recent revisit, not just staff discretion. Not overridable by role:
     even an ADMIN cannot waive without a qualifying prior visit."""
+    pass
+
+
+class FreeVisitNotEligible(ServiceError):
+    """Raised by settle_free_visit_service when the appointment's
+    configured consultation_fee is not zero -- this endpoint only ever
+    auto-settles a visit with no fee configured; a real, nonzero fee
+    must go through record_payment_service (or, if the clinic's revisit
+    policy applies, waive_consultation_fee_service), never this
+    shortcut."""
+    pass
+
+
+class RefundExceedsPayment(ServiceError):
+    """Raised by record_refund_service when the requested refund_amount
+    is greater than the appointment's recorded payment_amount -- a
+    refund can never return more money than was actually collected."""
     pass
 
 

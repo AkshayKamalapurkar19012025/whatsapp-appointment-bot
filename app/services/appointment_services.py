@@ -64,8 +64,11 @@ from app.services.exceptions import (
     NotAppointmentOwner,
     InvalidStatusTransition,
     AppointmentNotStarted,
+    AppointmentSlotPassed,
     PaymentStateConflict,
     WaiverNotEligible,
+    FreeVisitNotEligible,
+    RefundExceedsPayment,
 )
 
 logger = logging.getLogger(__name__)
@@ -922,10 +925,52 @@ def _transition_appointment_status(cur, appointment_id: int, *, from_statuses, t
 
 
 def confirm_appointment_service(cur, appointment_id: int):
-    """Staff approves a Pending request."""
-    return _transition_appointment_status(
-        cur, appointment_id, from_statuses=("PENDING",), to_status="CONFIRMED"
+    """Staff approves a Pending request -- refused once the requested
+    slot's start_at has already gone by (AppointmentSlotPassed): a
+    request nobody actioned before its time passed has nothing left to
+    confirm the patient into. Doesn't reuse _transition_appointment_status
+    above, since it also needs this time check (same shape as
+    mark_visited_service's own AppointmentNotStarted check, mirrored)."""
+    cur.execute(
+        """
+        SELECT status, start_at
+        FROM appointments
+        WHERE id = %s
+        FOR UPDATE
+        """,
+        (appointment_id,),
     )
+
+    row = cur.fetchone()
+
+    if row is None:
+        raise AppointmentNotFound()
+
+    status, start_at = row
+
+    if status != "PENDING":
+        raise InvalidStatusTransition()
+
+    # start_at is TIMESTAMPTZ -- see mark_visited_service's identical
+    # comment on why comparing it directly against an aware UTC "now" is
+    # correct with no doctor-timezone conversion needed.
+    if start_at <= datetime.now(timezone.utc):
+        raise AppointmentSlotPassed()
+
+    cur.execute(
+        """
+        UPDATE appointments
+        SET status = %s,
+            updated_at = NOW()
+        WHERE id = %s
+        RETURNING id, status
+        """,
+        ("CONFIRMED", appointment_id),
+    )
+
+    result_row = cur.fetchone()
+
+    return {"id": result_row[0], "status": result_row[1]}
 
 
 def reject_appointment_service(cur, appointment_id: int):
@@ -1047,13 +1092,25 @@ def mark_visited_service(cur, appointment_id: int):
     successfully paid, unless waived"). token_number stays NULL on
     CHECKED_IN until then.
 
+    No longer gated on start_at: a Confirmed, physically-present
+    patient can be checked in whenever the front desk actually
+    processes them, regardless of their scheduled slot time (first-
+    come-first-served, not slot-order) -- queue order is, and always
+    was, check-in/payment order (generate_queue_token_service), not
+    scheduled time. Earlier revisions raised AppointmentNotStarted
+    here to keep an early arrival from jumping ahead of a patient whose
+    slot had actually arrived; that rule was deliberately dropped, not
+    an oversight -- see mark_no_show_service for the one remaining,
+    unrelated use of an AppointmentNotStarted-style time guard (you
+    can't mark someone a no-show before their slot has even happened).
+
     Doesn't reuse _transition_appointment_status above the way the
-    other three transitions do, since it also needs the AppointmentNotStarted
-    time check below.
+    other three transitions do, since it needs a wider RETURNING
+    (visited_at/doctor_id/patient_id, not just id/status).
     """
     cur.execute(
         """
-        SELECT status, start_at
+        SELECT status
         FROM appointments
         WHERE id = %s
         FOR UPDATE
@@ -1066,20 +1123,8 @@ def mark_visited_service(cur, appointment_id: int):
     if row is None:
         raise AppointmentNotFound()
 
-    status, start_at = row
-
-    if status != "CONFIRMED":
+    if row[0] != "CONFIRMED":
         raise InvalidStatusTransition()
-
-    # start_at is TIMESTAMPTZ -- an absolute instant, so comparing it
-    # directly against an aware "now" is correct regardless of which
-    # timezone either side happens to be labeled in -- no conversion to
-    # the doctor's local wall-clock time needed here (unlike the
-    # token-numbering "which doctor-local day is this" question inside
-    # generate_queue_token_service, which does need it, but that no
-    # longer runs from this function -- see the docstring above).
-    if start_at > datetime.now(timezone.utc):
-        raise AppointmentNotStarted()
 
     cur.execute(
         """
@@ -1109,18 +1154,18 @@ def mark_arrived_service(cur, appointment_id: int):
     """
     Staff records that a Confirmed patient has physically arrived at the
     front desk -- independent of whether their scheduled start_at has
-    passed yet. Deliberately NOT mark_visited_service: that function
-    (unchanged by this addition, guard included) still requires
-    start_at <= now before it will set status='CHECKED_IN', and still
-    means "formally checked in, at the front of the payment/queue
-    gate." arrived_at here means only "physically present" -- an early
-    arrival stays CONFIRMED with arrived_at set and visited_at still
-    NULL, so it can never generate a queue token
-    (generate_queue_token_service is only ever reached from
-    record_payment_service/waive_consultation_fee_service, both of
-    which require status='CHECKED_IN' -- see
-    _lock_appointment_for_payment) and never jumps ahead of patients
-    whose appointment time has actually arrived.
+    passed yet. Deliberately NOT mark_visited_service: recording an
+    arrival on its own still means only "physically present," never
+    "formally checked in, at the front of the payment/queue gate."
+    arrived_at here means only that -- an early arrival stays CONFIRMED
+    with arrived_at set and visited_at still NULL, so it can never
+    generate a queue token by itself (generate_queue_token_service is
+    only ever reached from record_payment_service/waive_consultation_
+    fee_service, both of which require status='CHECKED_IN' -- see
+    _lock_appointment_for_payment). mark_visited_service no longer
+    requires start_at <= now (see its own docstring), so front desk can
+    check this patient in for real -- and into the queue -- as soon as
+    they're ready, without waiting for their scheduled slot time.
 
     Idempotent: replaying this for an appointment that already has
     arrived_at set returns the existing value unchanged rather than
@@ -1182,25 +1227,17 @@ def mark_arrived_service(cur, appointment_id: int):
 def confirm_and_check_in_service(cur, appointment_id: int):
     """
     The walk-in "Confirm & Check In" action: composes confirm_
-    appointment_service, mark_visited_service, and mark_arrived_service
-    above -- none of their bodies duplicated or modified -- into the
-    one action reception wants for a walk-in, without ever weakening
-    mark_visited_service's start_at <= now guard.
+    appointment_service and mark_visited_service above -- neither body
+    duplicated or modified -- into the one action reception wants for a
+    walk-in.
 
-    Only reachable from PENDING or CONFIRMED.
-
-    If the appointment's start_at has already arrived, this reaches all
-    the way to CHECKED_IN, same as clicking Confirm then Check In
-    separately. If start_at is still in the future (e.g. a walk-in
-    booked for the earliest open slot, which may be a few minutes from
-    now rather than exactly now), mark_visited_service raises
-    AppointmentNotStarted -- rather than surfacing that as an error,
-    this falls back to mark_arrived_service instead: the appointment
-    ends up CONFIRMED with arrived_at set, exactly the "arrived early"
-    state, and staff check them in for real (the ordinary Check-In
-    action) once their time comes. Never generates a queue token
-    itself either way -- that still only happens via payment/waiver,
-    same as every other path.
+    Only reachable from PENDING or CONFIRMED. Always reaches CHECKED_IN
+    (arrival_kind stays "checked_in" in the response -- kept as a field
+    rather than removed so existing callers don't need a shape change --
+    since mark_visited_service no longer has a start_at guard that could
+    make this fall back to anything else; see that function's docstring
+    for why). Never generates a queue token itself either way -- that
+    still only happens via payment/waiver, same as every other path.
     """
     cur.execute(
         "SELECT status FROM appointments WHERE id = %s FOR UPDATE",
@@ -1220,27 +1257,16 @@ def confirm_and_check_in_service(cur, appointment_id: int):
     if status == "PENDING":
         confirm_appointment_service(cur, appointment_id)
 
-    try:
-        visit_result = mark_visited_service(cur, appointment_id)
-        return {
-            "id": visit_result["id"],
-            "status": visit_result["status"],
-            "arrival_kind": "checked_in",
-            "visited_at": visit_result["visited_at"],
-            "arrived_at": None,
-            "doctor_id": visit_result["doctor_id"],
-            "patient_id": visit_result["patient_id"],
-        }
-    except AppointmentNotStarted:
-        arrive_result = mark_arrived_service(cur, appointment_id)
-        return {
-            "id": arrive_result["id"],
-            "status": arrive_result["status"],
-            "arrival_kind": "arrived_early",
-            "visited_at": None,
-            "arrived_at": arrive_result["arrived_at"],
-            "start_at": arrive_result["start_at"],
-        }
+    visit_result = mark_visited_service(cur, appointment_id)
+    return {
+        "id": visit_result["id"],
+        "status": visit_result["status"],
+        "arrival_kind": "checked_in",
+        "visited_at": visit_result["visited_at"],
+        "arrived_at": None,
+        "doctor_id": visit_result["doctor_id"],
+        "patient_id": visit_result["patient_id"],
+    }
 
 
 def mark_completed_service(cur, appointment_id: int):
@@ -1344,6 +1370,106 @@ def get_consultation_charge_service(cur, appointment_id: int):
     return {"appointment_id": appointment_id, "consultation_fee": row[0]}
 
 
+def _invoice_extra_charges_total(cur, appointment_id: int):
+    """Sum of this appointment's invoice_line_items (migrations/0026)
+    -- the ad-hoc charges added on top of its consultation_fee. Returns
+    0, not NULL, when there are none, so callers can add it to
+    consultation_fee unconditionally."""
+    cur.execute(
+        "SELECT COALESCE(SUM(amount), 0) FROM invoice_line_items WHERE appointment_id = %s",
+        (appointment_id,),
+    )
+    return cur.fetchone()[0]
+
+
+def get_invoice_service(cur, appointment_id: int):
+    """
+    The itemized bill for this appointment: its consultation_fee, every
+    ad-hoc line item added on top of it, and total_due -- exactly what
+    record_payment_service charges (get_consultation_charge_service's
+    return value plus _invoice_extra_charges_total). Same "callable any
+    time, independent of appointment status" contract as get_
+    consultation_charge_service, which this wraps.
+    """
+    charge = get_consultation_charge_service(cur, appointment_id)
+
+    cur.execute(
+        """
+        SELECT id, description, amount, added_by, created_at
+        FROM invoice_line_items
+        WHERE appointment_id = %s
+        ORDER BY created_at
+        """,
+        (appointment_id,),
+    )
+    line_items = [
+        {
+            "id": row[0],
+            "description": row[1],
+            "amount": row[2],
+            "added_by": row[3],
+            "created_at": row[4].isoformat(),
+        }
+        for row in cur.fetchall()
+    ]
+
+    cur.execute("SELECT invoice_number FROM appointments WHERE id = %s", (appointment_id,))
+    (invoice_number,) = cur.fetchone()
+
+    extra_charges_total = sum(item["amount"] for item in line_items)
+    total_due = charge["consultation_fee"] + extra_charges_total
+
+    return {
+        "appointment_id": appointment_id,
+        "invoice_number": invoice_number,
+        "consultation_fee": charge["consultation_fee"],
+        "line_items": line_items,
+        "extra_charges_total": extra_charges_total,
+        "total_due": total_due,
+    }
+
+
+def add_invoice_line_item_service(cur, appointment_id: int, *, description: str, amount, staff_id: int):
+    """
+    ADMIN adds an ad-hoc charge to an appointment's bill, on top of its
+    consultation_fee (migrations/0026) -- e.g. a dressing charge or a
+    minor procedure done during the same visit. ADMIN-gated at the API
+    layer (app/api/appointments.py), the same authority level waive/
+    refund require, since this changes how much money is owed.
+
+    Only allowed while payment_status is UNPAID or FAILED -- once PAID/
+    WAIVED/REFUNDED, the bill is frozen (payment_amount has already
+    been computed and recorded against the total as it stood at that
+    moment; adding a line item afterward would silently make payment_
+    amount wrong). Raises PaymentStateConflict in every other state,
+    the same exception record_payment_service/waive_consultation_fee_
+    service use for "this payment_status doesn't allow that action".
+    """
+    cur.execute(
+        "SELECT payment_status FROM appointments WHERE id = %s FOR UPDATE",
+        (appointment_id,),
+    )
+    row = cur.fetchone()
+
+    if row is None:
+        raise AppointmentNotFound()
+
+    (payment_status,) = row
+
+    if payment_status not in ("UNPAID", "FAILED"):
+        raise PaymentStateConflict()
+
+    cur.execute(
+        """
+        INSERT INTO invoice_line_items (appointment_id, description, amount, added_by)
+        VALUES (%s, %s, %s, %s)
+        """,
+        (appointment_id, description, amount, staff_id),
+    )
+
+    return get_invoice_service(cur, appointment_id)
+
+
 def _lock_appointment_for_payment(cur, appointment_id: int):
     """Shared row lookup/lock for record_payment_service and
     waive_consultation_fee_service -- both gate on the same two things
@@ -1400,6 +1526,11 @@ def record_payment_service(cur, appointment_id: int, *, method: str, outcome: st
     check-in itself. A FAILED outcome never does: the patient stays
     outside the queue until payment succeeds or is waived, per the
     core business rule.
+
+    amount charged is consultation_fee plus any ad-hoc invoice_line_
+    items added for this appointment (migrations/0026, add_invoice_
+    line_item_service) -- still never client-supplied, just a wider
+    server-side total than the original single-fee model.
     """
     payment_status, doctor_id, patient_id, visited_at, doctor_tz = _lock_appointment_for_payment(cur, appointment_id)
 
@@ -1414,7 +1545,7 @@ def record_payment_service(cur, appointment_id: int, *, method: str, outcome: st
     # for the front desk to see what's outstanding on retry. It does
     # not mean money changed hands; payment_status is what says that.
     charge = get_consultation_charge_service(cur, appointment_id)
-    amount = charge["consultation_fee"]
+    amount = charge["consultation_fee"] + _invoice_extra_charges_total(cur, appointment_id)
 
     cur.execute(
         """
@@ -1509,11 +1640,147 @@ def waive_consultation_fee_service(cur, appointment_id: int, *, reason: str, sta
     return {**_current_payment_record(cur, appointment_id), "token_just_issued": token_result["newly_generated"]}
 
 
+def settle_free_visit_service(cur, appointment_id: int):
+    """
+    System-settles a CHECKED_IN visit that has no consultation fee
+    configured (consultation_fee = 0) -- the OPD front-desk flow's
+    "Payment Required? No" branch (see the OPD Patient Search &
+    Registration redesign report, point 9): a genuinely free visit
+    (₹0 appointment type, a policy-exempt follow-up, etc.) shouldn't
+    need staff to press a manual "waive" button and type a reason.
+
+    Deliberately NOT the same thing as waive_consultation_fee_service,
+    and never reuses its eligibility gate: that function's 3-day-
+    revisit rule is a distinct clinic policy for waiving a REAL,
+    nonzero charge, and requires ADMIN. This one has no discretion in
+    it at all -- it only ever fires when there is nothing to collect
+    in the first place (enforced below, not just assumed by the
+    caller), so any authenticated staff member can trigger it, and it
+    is not staff-attributed (payment_recorded_by stays NULL, matching
+    "no one waived anything, there was nothing to waive").
+
+    Kept entirely separate from mark_visited_service/record_payment_
+    service/waive_consultation_fee_service -- none of their behavior
+    changes, so every existing payment/queue-token test keeps testing
+    exactly what it already tests.
+
+    Idempotent on an already-WAIVED appointment, same replay guard as
+    waive_consultation_fee_service. Raises PaymentStateConflict for
+    PAID/REFUNDED (a settled real payment is never silently
+    overwritten), and FreeVisitNotEligible if the configured fee turns
+    out to be nonzero (e.g. a stale client retrying after the fee was
+    reconfigured) -- callers must not use this as a way to skip a real
+    charge. Also FreeVisitNotEligible if any ad-hoc invoice_line_items
+    (migrations/0026) have been added for this appointment: a visit
+    with a real extra charge on it isn't "free" just because the base
+    consultation_fee happens to be 0.
+    """
+    payment_status, doctor_id, patient_id, visited_at, doctor_tz = _lock_appointment_for_payment(cur, appointment_id)
+
+    if payment_status == "WAIVED":
+        return {**_current_payment_record(cur, appointment_id), "token_just_issued": False}
+
+    if payment_status in ("PAID", "REFUNDED"):
+        raise PaymentStateConflict()
+
+    charge = get_consultation_charge_service(cur, appointment_id)
+
+    if charge["consultation_fee"] != 0 or _invoice_extra_charges_total(cur, appointment_id) != 0:
+        raise FreeVisitNotEligible()
+
+    cur.execute(
+        """
+        UPDATE appointments
+        SET payment_status = 'WAIVED',
+            payment_method = NULL,
+            payment_amount = 0,
+            waive_reason = 'No consultation fee configured for this visit',
+            payment_recorded_by = NULL,
+            payment_recorded_at = NOW(),
+            updated_at = NOW()
+        WHERE id = %s
+        """,
+        (appointment_id,),
+    )
+
+    token_result = generate_queue_token_service(cur, appointment_id, doctor_id=doctor_id, doctor_tz=doctor_tz)
+
+    return {**_current_payment_record(cur, appointment_id), "token_just_issued": token_result["newly_generated"]}
+
+
+def record_refund_service(cur, appointment_id: int, *, amount, reason: str, staff_id: int):
+    """
+    ADMIN records a refund against a PAID appointment (see
+    app/api/appointments.py's require_permission("appointment.refund_payment")
+    on the endpoint -- the same authority level waive_consultation_fee_service requires,
+    since a refund reverses real money the same way a waiver forgives
+    it). Deliberately does not gate on appointments.status the way
+    record_payment_service/waive_consultation_fee_service do: those
+    exist to admit a patient to the queue, so they only make sense
+    while a visit is CHECKED_IN. A refund is a back-office correction
+    that can legitimately happen well after the visit is COMPLETED
+    (a billing error found days later, a patient dispute), so the only
+    precondition is payment_status = PAID.
+
+    Only ever reachable from PAID -- not idempotent/replayable like
+    record_payment_service or waive_consultation_fee_service, since a
+    second refund against an already-REFUNDED appointment is never a
+    harmless double-click; it's either a duplicate refund attempt (a
+    real bug to surface, not silently swallow) or a second partial
+    refund, which this simple model doesn't support. Both cases raise
+    PaymentStateConflict, same as the other payment-state guards.
+
+    amount must not exceed what was actually paid (payment_amount) --
+    raises RefundExceedsPayment otherwise. A full refund is the common
+    case (amount == payment_amount); a smaller amount is a deliberate
+    partial refund, left to the caller's/UI's discretion.
+    """
+    cur.execute(
+        """
+        SELECT payment_status, payment_amount
+        FROM appointments
+        WHERE id = %s
+        FOR UPDATE
+        """,
+        (appointment_id,),
+    )
+
+    row = cur.fetchone()
+
+    if row is None:
+        raise AppointmentNotFound()
+
+    payment_status, payment_amount = row
+
+    if payment_status != "PAID":
+        raise PaymentStateConflict()
+
+    if amount > payment_amount:
+        raise RefundExceedsPayment()
+
+    cur.execute(
+        """
+        UPDATE appointments
+        SET payment_status = 'REFUNDED',
+            refund_amount = %s,
+            refund_reason = %s,
+            refunded_by = %s,
+            refunded_at = NOW(),
+            updated_at = NOW()
+        WHERE id = %s
+        """,
+        (amount, reason, staff_id, appointment_id),
+    )
+
+    return _current_payment_record(cur, appointment_id)
+
+
 def _current_payment_record(cur, appointment_id: int):
     cur.execute(
         """
         SELECT id, payment_status, payment_method, payment_amount,
-               payment_recorded_at, waive_reason, token_number
+               payment_recorded_at, waive_reason, token_number,
+               refund_amount, refund_reason, refunded_at
         FROM appointments
         WHERE id = %s
         """,
@@ -1530,4 +1797,7 @@ def _current_payment_record(cur, appointment_id: int):
         "payment_recorded_at": row[4].isoformat() if row[4] else None,
         "waive_reason": row[5],
         "token_number": row[6],
+        "refund_amount": row[7],
+        "refund_reason": row[8],
+        "refunded_at": row[9].isoformat() if row[9] else None,
     }

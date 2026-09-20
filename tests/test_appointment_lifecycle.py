@@ -114,6 +114,47 @@ def test_confirm_already_confirmed_appointment_is_409(client, db_connection):
     assert response.status_code == 409
 
 
+def test_confirm_lapsed_pending_appointment_is_409(client, db_connection):
+    # create_appointment_service (the only normal way to get a PENDING
+    # row) refuses a past start_at outright, so the only way to get one
+    # -- a request nobody actioned before its own slot passed -- is to
+    # insert it directly, same as test_reschedule_service.py's own
+    # synthetic-row fixtures for states the service layer won't produce
+    # itself.
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client,
+        db_connection,
+        doctor_name="Dr. Confirm Lapsed",
+        department_name="Confirm Lapsed Dept",
+        appointment_type_name="Confirm Lapsed Type",
+    )
+    patient = client.post(
+        "/api/patients",
+        json={"name": "Confirm Lapsed Patient", "whatsapp_number": "+919900000001"},
+        headers=admin_headers,
+    ).json()
+
+    with db_connection.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO appointments (doctor_id, patient_id, appointment_type_id, start_at, end_at, status)
+            VALUES (%s, %s, %s, '2020-01-01T09:00:00+00:00', '2020-01-01T09:30:00+00:00', 'PENDING')
+            RETURNING id
+            """,
+            (seeded["doctor_id"], patient["id"], seeded["appointment_type_id"]),
+        )
+        appointment_id = cur.fetchone()[0]
+    db_connection.commit()
+
+    response = client.post(f"/api/appointments/{appointment_id}/confirm", headers=admin_headers)
+    assert response.status_code == 409
+
+    with db_connection.cursor() as cur:
+        cur.execute("SELECT status FROM appointments WHERE id = %s", (appointment_id,))
+        assert cur.fetchone()[0] == "PENDING"
+
+
 # ---------------------------------------------------------------------
 # Reject
 # ---------------------------------------------------------------------
@@ -205,41 +246,24 @@ def test_visit_pending_appointment_is_409(client, db_connection):
     assert response.status_code == 409
 
 
-def test_visit_future_confirmed_appointment_is_409(client, db_connection):
-    # _seed_and_schedule already schedules 10 days out, so this appointment
-    # hasn't started -- no start_at manipulation needed.
+def test_visit_future_confirmed_appointment_succeeds(client, db_connection):
+    # _seed_and_schedule already schedules 10 days out, so this
+    # appointment hasn't started -- no start_at manipulation needed.
+    # mark_visited_service is deliberately no longer gated on start_at
+    # (first-come-first-served check-in, not slot-order -- see its own
+    # docstring): a patient who's actually present can be checked in
+    # ahead of their scheduled time.
     ctx = _seed_and_schedule(client, db_connection, "Dr. Visit Future")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
 
     response = client.post(
         f"/api/appointments/{ctx['appointment']['id']}/visit", headers=ctx["admin_headers"]
     )
-    assert response.status_code == 409
-    assert "not started" in response.json()["detail"].lower()
-
-    with db_connection.cursor() as cur:
-        cur.execute("SELECT status FROM appointments WHERE id = %s", (ctx["appointment"]["id"],))
-        assert cur.fetchone()[0] == "CONFIRMED", "a rejected visit attempt must not change status"
-
-
-def test_visit_appointment_a_minute_before_start_is_409(client, db_connection):
-    # Boundary case: still-future by a small margin, not merely "far in
-    # the future" -- proves the check compares real instants, not dates.
-    ctx = _seed_and_schedule(client, db_connection, "Dr. Visit Boundary Future")
-    client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
-
-    future_start = datetime.now(dt_timezone.utc) + timedelta(minutes=1)
-    _set_start_at(db_connection, ctx["appointment"]["id"], future_start, future_start + timedelta(minutes=30))
-
-    response = client.post(
-        f"/api/appointments/{ctx['appointment']['id']}/visit", headers=ctx["admin_headers"]
-    )
-    assert response.status_code == 409
+    assert response.status_code == 200
+    assert response.json()["status"] == "CHECKED_IN"
 
 
 def test_visit_appointment_just_after_start_succeeds(client, db_connection):
-    # Boundary case: just started, not "long past" -- the other half of
-    # the same instant-comparison proof as the test above.
     ctx = _seed_and_schedule(client, db_connection, "Dr. Visit Boundary Past")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
 
@@ -253,14 +277,12 @@ def test_visit_appointment_just_after_start_succeeds(client, db_connection):
     assert response.json()["status"] == "CHECKED_IN"
 
 
-def test_visit_same_local_day_but_still_future_slot_is_409(client, db_connection):
-    # Guards against a naive "is it today (doctor-local)" check standing
-    # in for a real instant comparison: this appointment's start_at is
-    # later on the *same* doctor-local calendar day, several hours from
-    # now -- a date-only check would wrongly treat "today" as startable
-    # regardless of time-of-day. seed_basic_doctor's default timezone is
-    # Asia/Kolkata (UTC+5:30), deliberately not UTC, so this also proves
-    # the comparison isn't accidentally UTC-datebound either.
+def test_visit_same_local_day_but_still_future_slot_succeeds(client, db_connection):
+    # Same "still-future, same doctor-local day" scenario the old
+    # start_at guard used to reject -- now expected to succeed, proving
+    # the guard is gone entirely rather than just loosened for some
+    # cases. seed_basic_doctor's default timezone is Asia/Kolkata
+    # (UTC+5:30), deliberately not UTC.
     ctx = _seed_and_schedule(client, db_connection, "Dr. Visit Same Day Future")
     client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=ctx["admin_headers"])
 
@@ -274,7 +296,8 @@ def test_visit_same_local_day_but_still_future_slot_is_409(client, db_connection
     response = client.post(
         f"/api/appointments/{ctx['appointment']['id']}/visit", headers=ctx["admin_headers"]
     )
-    assert response.status_code == 409
+    assert response.status_code == 200
+    assert response.json()["status"] == "CHECKED_IN"
 
 
 def test_visit_cancelled_appointment_is_409(client, db_connection):

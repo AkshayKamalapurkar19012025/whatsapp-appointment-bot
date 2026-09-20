@@ -2,7 +2,7 @@
 M4-M5 (HospitalOS build plan): dual-write patient_identifiers alongside
 the authoritative patients.whatsapp_number column, and the single new
 read path (resolve_patient_by_identifier) readers migrate onto one at a
-time -- see migrations/0026_patient_identifiers.sql for the schema and
+time -- see migrations/0029_patient_identifiers.sql for the schema and
 why it's structured the way it is.
 
 During M4-M5 the column stays authoritative: write_phone_identifier is
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # yet at the two call sites that need this -- web OTP verify and the
 # WhatsApp flow's own get_patient(), both keyed only on a phone number
 # before any patient/session exists. There is exactly one hospital in
-# this deployment (see migrations/0024), so hardcoding it here is
+# this deployment (see migrations/0027), so hardcoding it here is
 # equivalent to every other unscoped read/write in the codebase today,
 # not a new limitation. Revisit once those two entry points have a real
 # way to resolve which hospital an incoming phone number belongs to

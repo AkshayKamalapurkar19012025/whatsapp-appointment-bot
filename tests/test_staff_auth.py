@@ -5,7 +5,7 @@ the same generic message -- no username enumeration), inactive account,
 account lockout after repeated failures and its expiry, session
 expiry/logout/deactivation invalidation, unauthorized requests, and the
 require_permission RBAC dependency (403 for the wrong role, 200/201 for
-the right one, formerly require_role -- see P1.a/migrations/0029)
+the right one, formerly require_role -- see P1.a/migrations/0031)
 exercised through the real staff.manage-gated account-management
 endpoints -- not just unit-tested in isolation.
 """

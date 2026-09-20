@@ -21,6 +21,13 @@ export interface Patient {
   // existed, or who simply hasn't had them added yet.
   date_of_birth: string | null
   gender: PatientGender | null
+  // "HOS-0000123" (migrations/0024) -- the patient's permanent
+  // hospital identifier, derived from id and never mutated. This, not
+  // whatsapp_number, is what the OPD find/register flow treats as a
+  // patient's real identity; whatsapp_number stays a separate
+  // search/contact attribute. Always present (a stored generated
+  // column), unlike the appointment_count/last_visit_at fields above.
+  uhid: string
 }
 
 // ONLINE covers both the patient web app and WhatsApp self-service
@@ -314,6 +321,76 @@ export interface AdminAppointment {
   // early." See format.ts's describeArrival().
   arrived_at: string | null
   booking_source: BookingSource | null
+  // Refund fields (migrations/0025) -- null until record_refund_service
+  // runs. refund_amount can be less than payment_amount (a partial
+  // refund); payment_amount itself is left untouched by a refund, so
+  // both are visible at once.
+  refund_amount: number | null
+  refund_reason: string | null
+  refunded_at: string | null
+  // Permanent per-appointment identifier (migrations/0026), e.g.
+  // "INV-00000123" -- always present, independent of payment_status.
+  invoice_number: string
+}
+
+// GET /appointments/{id}/invoice -- consultation_fee plus any ad-hoc
+// invoice_line_items (migrations/0026), and the total record_payment_
+// service actually charges.
+export interface InvoiceLineItem {
+  id: number
+  description: string
+  amount: number
+  added_by: number
+  created_at: string
+}
+
+export interface Invoice {
+  appointment_id: number
+  invoice_number: string
+  consultation_fee: number
+  line_items: InvoiceLineItem[]
+  extra_charges_total: number
+  total_due: number
+}
+
+// GET /dashboard/billing -- see app/api/dashboard.py's own docstring on
+// this endpoint for why each section has the scope it has (collections:
+// trailing window; outstanding: current state; waivers/refunds:
+// trailing window).
+export interface BillingReport {
+  window_days: number
+  collections_by_method: { method: string | null; count: number; amount: number }[]
+  collections_by_doctor: { doctor_id: number; doctor_name: string; count: number; amount: number }[]
+  total_collected: number
+  outstanding_unpaid: {
+    appointment_id: number
+    patient_name: string
+    doctor_name: string
+    payment_status: string
+    visited_at: string | null
+  }[]
+  waivers: {
+    count: number
+    records: {
+      appointment_id: number
+      patient_name: string
+      doctor_name: string
+      reason: string | null
+      waived_at: string | null
+    }[]
+  }
+  refunds: {
+    count: number
+    total_refunded: number
+    records: {
+      appointment_id: number
+      patient_name: string
+      doctor_name: string
+      refund_amount: number
+      refund_reason: string | null
+      refunded_at: string | null
+    }[]
+  }
 }
 
 export interface AdminAppointmentActionResult {
@@ -366,10 +443,15 @@ export interface PaymentActionResult {
   payment_recorded_at: string | null
   waive_reason: string | null
   token_number: number | null
+  refund_amount: number | null
+  refund_reason: string | null
+  refunded_at: string | null
   // True only when this call is what just generated the token (not an
   // idempotent replay) -- lets the UI show the "you're in the queue"
-  // confirmation exactly once.
-  token_just_issued: boolean
+  // confirmation exactly once. Absent from record_refund_service's
+  // response (POST .../refund-payment) -- a refund never touches queue
+  // tokens, so there's nothing for this flag to mean there.
+  token_just_issued?: boolean
 }
 
 export interface DashboardStats {

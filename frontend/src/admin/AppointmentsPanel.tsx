@@ -9,6 +9,7 @@ import {
   Clock,
   FunnelSimple,
   HourglassMedium,
+  ListNumbers,
   MagnifyingGlass,
   Plus,
   ArrowClockwise,
@@ -47,12 +48,11 @@ import {
   visitAdminAppointment,
 } from '../api'
 import type { AdminAppointment, Department, Doctor, DoctorQueue, Patient, Slot } from '../types'
-import { formatAgeGender, formatDate, formatPatientId, formatTime } from '../format'
+import { formatAgeGender, formatDate, formatPatientId, formatTime, hasStarted } from '../format'
 import { accentClassFor } from '../cardAccent'
 import { isoDateToday } from './doctorSchedule'
 import AdminSlotPicker from './AdminSlotPicker'
 import AppointmentDetailsModal from './AppointmentDetailsModal'
-import PatientFormModal from './PatientFormModal'
 import { AppointmentActionButtons, buildAppointmentActions, type AppointmentActionHandlers, type QueuePosition } from './AppointmentActions'
 
 // Radix Select.Item disallows an empty-string value (reserved internally
@@ -81,6 +81,7 @@ const PAGE_SIZE = 8
 // and the per-doctor queue endpoint already return.
 type OpdStatus =
   | 'BOOKED'
+  | 'LAPSED'
   | 'CONFIRMED'
   | 'ARRIVED'
   | 'WAITING'
@@ -108,8 +109,10 @@ const PRIMARY_TABS: { key: StatusFilter; label: string }[] = [
 
 const MORE_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'BOOKED', label: 'Booked' },
+  { key: 'LAPSED', label: 'Lapsed' },
   { key: 'CONFIRMED', label: 'Confirmed' },
   { key: 'ARRIVED', label: 'Arrived' },
+  { key: 'CHECKED_IN', label: 'Checked In' },
   { key: 'REJECTED', label: 'Rejected' },
 ]
 
@@ -193,10 +196,20 @@ function durationBetween(startAt: string, endAt: string): number {
 function opdStatus(a: AdminAppointment, queuePosition: Map<number, QueuePosition>, isTodayScope: boolean): OpdStatus {
   switch (a.status) {
     case 'PENDING':
-      return 'BOOKED'
+      return hasStarted(a.start_at) ? 'LAPSED' : 'BOOKED'
     case 'CONFIRMED':
       return a.arrived_at ? 'ARRIVED' : 'CONFIRMED'
     case 'CHECKED_IN': {
+      // Outside today, this is the only place a stale entry -- checked
+      // in on some earlier day, never paid/waived into the queue or
+      // completed -- becomes visible at all: get_doctor_queue
+      // (app/api/doctors.py) scopes strictly to the doctor's current
+      // local day, so it drops off that view the moment the day rolls
+      // over, with no other surface. Kept as its own raw 'CHECKED_IN'
+      // bucket (MORE_TABS below) rather than folded into
+      // Waiting/Arrived/In Consultation -- those three only mean
+      // anything relative to today's live queue, which a past day's
+      // straggler was never part of.
       if (!isTodayScope) return 'CHECKED_IN'
       if (a.payment_status === 'UNPAID' || a.payment_status === 'FAILED') return 'ARRIVED'
       return queuePosition.get(a.id) === 'serving' ? 'IN_CONSULTATION' : 'WAITING'
@@ -216,6 +229,7 @@ function opdStatus(a: AdminAppointment, queuePosition: Map<number, QueuePosition
 
 const STATUS_PILL_LABEL: Record<OpdStatus, string> = {
   BOOKED: 'Booked',
+  LAPSED: 'Lapsed',
   CONFIRMED: 'Confirmed',
   ARRIVED: 'Arrived',
   WAITING: 'Waiting',
@@ -230,9 +244,12 @@ const STATUS_PILL_LABEL: Record<OpdStatus, string> = {
 // Reuses the existing lifecycle-status color tokens (styles.css's
 // "Status pills" block) everywhere a direct equivalent already exists
 // -- only WAITING and IN_CONSULTATION are genuinely new buckets with
-// no prior single-word status to borrow a class from.
+// no prior single-word status to borrow a class from. LAPSED borrows
+// NO_SHOW's color (same "expected, but nothing happened by the time
+// that stopped being possible" shape), not a new one.
 const STATUS_PILL_CLASS: Record<OpdStatus, string> = {
   BOOKED: 'pill status-pending',
+  LAPSED: 'pill status-no_show',
   CONFIRMED: 'pill status-confirmed',
   ARRIVED: 'pill status-arrived',
   WAITING: 'pill status-waiting',
@@ -296,7 +313,9 @@ function paymentCell(a: AdminAppointment) {
 
 export default function AppointmentsPanel({
   onBookAppointment,
+  onRegisterNewPatient,
   onGoToQueue,
+  onViewQueue,
   isAdmin,
 }: {
   // Routes to the dedicated Book Appointment section (see AdminApp.tsx)
@@ -304,16 +323,26 @@ export default function AppointmentsPanel({
   // purely for viewing/filtering/managing appointments that already
   // exist. Also the destination for the "+ New OPD Visit" dropdown's
   // "Walk-in Registration" entry (that page already defaults its own
-  // booking-source picker to Walk-in) and "Register New Patient" entry
-  // -- there is no separate walk-in-only screen or patient-registration-
-  // only screen to route to; Book Appointment already covers all three,
-  // and "Register New Patient" additionally opens PatientFormModal
-  // directly from here (see showRegisterModal below), the same shared
-  // modal BookAppointmentPanel's own "+ Register new patient" uses.
+  // booking-source picker to Walk-in).
   onBookAppointment: () => void
+  // "+ New OPD Visit > Register New Patient" -- routes to Book
+  // Appointment's own find/register step (Step 1) instead of opening
+  // PatientFormModal directly from here (OPD Patient Search &
+  // Registration redesign, point 1: registration is never the starting
+  // point of an OPD visit -- staff always search for an existing
+  // patient first, even when they already know they need to register
+  // someone new). AdminApp.tsx wires this to the same navigation as
+  // onBookAppointment, plus a flag telling BookAppointmentPanel to open
+  // its own "+ Register new patient" modal once Step 1 is showing.
+  onRegisterNewPatient: () => void
   // Same "go to this doctor's live queue" hand-off DoctorsPanel's own
   // "View queue" action already uses (AdminApp.tsx's goToQueueForDoctor).
   onGoToQueue: (doctorId: number) => void
+  // Routes to the standalone Queue section with no doctor preselected
+  // (QueuePanel falls back to the last-viewed/first active doctor) --
+  // Queue's own former sidebar entry (AdminApp.tsx), now reached only
+  // from inside this OPD workspace, same as Book Appointment.
+  onViewQueue: () => void
   // Gates "Waive Charge" (patient arrival workflow Phase 3) -- same
   // prop DoctorsPanel/DepartmentsPanel/AppointmentTypesPanel already
   // take from AdminApp.tsx.
@@ -361,7 +390,6 @@ export default function AppointmentsPanel({
   const [detailsTarget, setDetailsTarget] = useState<AdminAppointment | null>(null)
   const [cancelTarget, setCancelTarget] = useState<AdminAppointment | null>(null)
   const [lifecycleBusyId, setLifecycleBusyId] = useState<number | null>(null)
-  const [showRegisterModal, setShowRegisterModal] = useState(false)
 
   const range = dateRangeFor(dateScope, customFrom, customTo)
   const isTodayScope = dateScope === 'today'
@@ -722,6 +750,9 @@ export default function AppointmentsPanel({
           <button type="button" className="icon-btn" aria-label="Refresh" onClick={load} disabled={loading}>
             <ArrowClockwise size={17} weight="bold" className={loading ? 'opd-refresh-spinning' : undefined} />
           </button>
+          <button type="button" className="btn btn-secondary btn-sm" onClick={onViewQueue}>
+            <ListNumbers size={15} weight="bold" /> Queue
+          </button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button type="button" className="btn btn-sm">
@@ -731,7 +762,7 @@ export default function AppointmentsPanel({
             <DropdownMenuContent align="end">
               <DropdownMenuItem onSelect={onBookAppointment}>Book Appointment</DropdownMenuItem>
               <DropdownMenuItem onSelect={onBookAppointment}>Walk-in Registration</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setShowRegisterModal(true)}>Register New Patient</DropdownMenuItem>
+              <DropdownMenuItem onSelect={onRegisterNewPatient}>Register New Patient</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -1138,9 +1169,6 @@ export default function AppointmentsPanel({
         />
       )}
 
-      {showRegisterModal && (
-        <PatientFormModal mode="create" title="Register new patient" onClose={() => setShowRegisterModal(false)} onSaved={() => setShowRegisterModal(false)} />
-      )}
     </section>
   )
 }

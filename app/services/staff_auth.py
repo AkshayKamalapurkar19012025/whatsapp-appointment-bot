@@ -225,7 +225,7 @@ def get_staff_by_session_token(cur, token: str) -> dict:
 
     # hospital_id (M2): request-scoped tenant context, resolved here so
     # every endpoint depending on get_current_staff has it available --
-    # not used to filter anything yet (see migrations/0024's own
+    # not used to filter anything yet (see migrations/0027's own
     # docstring).
     return {"id": staff_id, "username": username, "role": role, "hospital_id": hospital_id}
 

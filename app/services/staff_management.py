@@ -15,7 +15,7 @@ P1.a: create_staff_account dual-writes staff_roles alongside staff.role
 -- staff.role stays authoritative here (this module still reads/writes
 only that column for everything else), staff_roles is what
 require_permission actually resolves against. See
-migrations/0029_rbac_decomposition.sql for the backfill covering every
+migrations/0031_rbac_decomposition.sql for the backfill covering every
 account created before this.
 """
 

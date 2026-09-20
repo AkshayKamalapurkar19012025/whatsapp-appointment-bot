@@ -1,8 +1,15 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from '@phosphor-icons/react'
-import type { AdminAppointment } from '../types'
-import { ApiError, recordAppointmentPayment, waiveAppointmentPayment } from '../api'
+import type { AdminAppointment, Invoice } from '../types'
+import {
+  addInvoiceLineItem,
+  ApiError,
+  getAppointmentInvoice,
+  recordAppointmentPayment,
+  refundAppointmentPayment,
+  waiveAppointmentPayment,
+} from '../api'
 import { describeArrival, formatDate, formatDateTime, formatTime } from '../format'
 import { AppointmentActionButtons, buildAppointmentActions, type AppointmentActionHandlers } from './AppointmentActions'
 
@@ -41,9 +48,86 @@ function PaymentSection({
   const [error, setError] = useState<string | null>(null)
   const [justIssuedToken, setJustIssuedToken] = useState<number | null>(null)
 
-  const current = { ...appointment, ...override }
+  // The itemized bill (migrations/0026) -- fetched whenever this
+  // section is showing at all, not just while a charge is still
+  // collectible, so a PAID/REFUNDED visit that had ad-hoc charges added
+  // before settlement still shows what actually made up the total.
+  const [invoice, setInvoice] = useState<Invoice | null>(null)
+  const [showLineItemForm, setShowLineItemForm] = useState(false)
+  const [lineItemDescription, setLineItemDescription] = useState('')
+  const [lineItemAmount, setLineItemAmount] = useState('')
+  const [lineItemBusy, setLineItemBusy] = useState(false)
+  const [lineItemError, setLineItemError] = useState<string | null>(null)
 
-  if (current.status !== 'CHECKED_IN' && current.status !== 'COMPLETED') return null
+  const [showRefundForm, setShowRefundForm] = useState(false)
+  const [refundAmount, setRefundAmount] = useState('')
+  const [refundReason, setRefundReason] = useState('')
+  const [refundBusy, setRefundBusy] = useState(false)
+  const [refundError, setRefundError] = useState<string | null>(null)
+
+  const current = { ...appointment, ...override }
+  const sectionApplies = current.status === 'CHECKED_IN' || current.status === 'COMPLETED'
+
+  useEffect(() => {
+    if (!sectionApplies) return
+    let cancelled = false
+    getAppointmentInvoice(appointment.id)
+      .then((result) => {
+        if (!cancelled) setInvoice(result)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+    // Re-fetches on every payment_status change (a line item add, a
+    // payment, a refund all move it) so the breakdown never goes stale
+    // without a manual refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appointment.id, sectionApplies, current.payment_status])
+
+  if (!sectionApplies) return null
+
+  async function submitLineItem(e: React.FormEvent) {
+    e.preventDefault()
+    setLineItemError(null)
+    const amount = Number(lineItemAmount)
+    if (!lineItemDescription.trim() || !(amount > 0)) return
+    setLineItemBusy(true)
+    try {
+      const result = await addInvoiceLineItem(appointment.id, lineItemDescription.trim(), amount)
+      setInvoice(result)
+      setLineItemDescription('')
+      setLineItemAmount('')
+      setShowLineItemForm(false)
+    } catch (err) {
+      setLineItemError(err instanceof ApiError ? err.message : 'Could not add this charge')
+    } finally {
+      setLineItemBusy(false)
+    }
+  }
+
+  async function submitRefund(e: React.FormEvent) {
+    e.preventDefault()
+    setRefundError(null)
+    const amount = Number(refundAmount)
+    if (!refundReason.trim() || !(amount > 0)) return
+    setRefundBusy(true)
+    try {
+      const result = await refundAppointmentPayment(appointment.id, amount, refundReason.trim())
+      setOverride({
+        payment_status: result.payment_status,
+        refund_amount: result.refund_amount,
+        refund_reason: result.refund_reason,
+        refunded_at: result.refunded_at,
+      })
+      setShowRefundForm(false)
+      onUpdated()
+    } catch (err) {
+      setRefundError(err instanceof ApiError ? err.message : 'Could not record the refund')
+    } finally {
+      setRefundBusy(false)
+    }
+  }
 
   async function submitPayment(outcome: 'PAID' | 'FAILED') {
     setError(null)
@@ -104,10 +188,29 @@ function PaymentSection({
         </p>
       )}
 
-      <div className="payment-summary-row">
-        <span>Consultation Fee</span>
-        <strong>₹{appointment.consultation_fee}</strong>
-      </div>
+      {invoice && invoice.line_items.length > 0 ? (
+        <>
+          <div className="payment-summary-row">
+            <span>Consultation Fee</span>
+            <span>₹{invoice.consultation_fee}</span>
+          </div>
+          {invoice.line_items.map((item) => (
+            <div className="payment-summary-row" key={item.id}>
+              <span className="muted">{item.description}</span>
+              <span>₹{item.amount}</span>
+            </div>
+          ))}
+          <div className="payment-summary-row">
+            <span>Total Due</span>
+            <strong>₹{invoice.total_due}</strong>
+          </div>
+        </>
+      ) : (
+        <div className="payment-summary-row">
+          <span>Consultation Fee</span>
+          <strong>₹{appointment.consultation_fee}</strong>
+        </div>
+      )}
       <div className="payment-summary-row">
         <span>Payment Status</span>
         <span className={`pill payment-${current.payment_status.toLowerCase()}`}>
@@ -121,9 +224,52 @@ function PaymentSection({
       {current.payment_status === 'WAIVED' && current.waive_reason && (
         <p className="muted payment-waive-reason">Reason: {current.waive_reason}</p>
       )}
+      {current.payment_status === 'REFUNDED' && current.refund_reason && (
+        <p className="muted payment-waive-reason">
+          Refunded ₹{current.refund_amount} · {current.refund_reason}
+          {current.refunded_at && ` · ${formatDateTime(current.refunded_at)}`}
+        </p>
+      )}
 
       {needsAction && (
         <div className="payment-form">
+          {isAdmin && !showLineItemForm && (
+            <button type="button" className="link" onClick={() => setShowLineItemForm(true)}>
+              + Add charge
+            </button>
+          )}
+          {isAdmin && showLineItemForm && (
+            <form className="inline-form wrap" onSubmit={submitLineItem}>
+              {lineItemError && <p className="error">{lineItemError}</p>}
+              <label className="inline-label">
+                Description
+                <input
+                  value={lineItemDescription}
+                  onChange={(e) => setLineItemDescription(e.target.value)}
+                  placeholder="e.g. Dressing charge"
+                  required
+                />
+              </label>
+              <label className="inline-label">
+                Amount
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={lineItemAmount}
+                  onChange={(e) => setLineItemAmount(e.target.value)}
+                  required
+                />
+              </label>
+              <button type="submit" className="btn btn-sm" disabled={lineItemBusy || !lineItemDescription.trim() || !(Number(lineItemAmount) > 0)}>
+                {lineItemBusy ? 'Adding…' : 'Add charge'}
+              </button>
+              <button type="button" className="btn-secondary btn btn-sm" onClick={() => setShowLineItemForm(false)}>
+                Cancel
+              </button>
+            </form>
+          )}
+
           {!showWaiveForm && (
             <>
               <label className="inline-label">
@@ -178,6 +324,56 @@ function PaymentSection({
                 {busy ? 'Saving…' : 'Confirm Waiver'}
               </button>
               <button type="button" className="btn-secondary btn btn-sm" onClick={() => setShowWaiveForm(false)}>
+                Cancel
+              </button>
+            </form>
+          )}
+        </div>
+      )}
+
+      {isAdmin && current.payment_status === 'PAID' && (
+        <div className="payment-form">
+          {!showRefundForm && (
+            <button
+              type="button"
+              className="btn-secondary btn-outline-danger btn btn-sm"
+              onClick={() => {
+                setRefundAmount(current.payment_amount != null ? String(current.payment_amount) : '')
+                setShowRefundForm(true)
+              }}
+            >
+              Refund
+            </button>
+          )}
+          {showRefundForm && (
+            <form className="inline-form wrap" onSubmit={submitRefund}>
+              {refundError && <p className="error">{refundError}</p>}
+              <label className="inline-label">
+                Amount
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  max={current.payment_amount ?? undefined}
+                  value={refundAmount}
+                  onChange={(e) => setRefundAmount(e.target.value)}
+                  required
+                />
+              </label>
+              <label className="inline-label" style={{ width: '100%' }}>
+                Reason for refund
+                <textarea
+                  value={refundReason}
+                  onChange={(e) => setRefundReason(e.target.value)}
+                  placeholder="e.g. Patient double-charged at front desk"
+                  required
+                  rows={2}
+                />
+              </label>
+              <button type="submit" className="btn btn-sm" disabled={refundBusy || !refundReason.trim()}>
+                {refundBusy ? 'Saving…' : 'Confirm Refund'}
+              </button>
+              <button type="button" className="btn-secondary btn btn-sm" onClick={() => setShowRefundForm(false)}>
                 Cancel
               </button>
             </form>

@@ -10,7 +10,7 @@ from app.services import exceptions as svc_exc
 from app.services.patient_duplicate_detection import decide_duplicate_review, find_duplicate_candidates
 from app.services.patient_identifiers import resolve_patient_by_identifier, write_phone_identifier
 from app.services.patient_merge import merge_patients, unmerge_patients
-from app.services.uhid import generate_uhid, resolve_patient_by_uhid
+from app.services.uhid import resolve_patient_by_uhid
 from app.utils.phone import normalize_whatsapp_number
 
 router = APIRouter(
@@ -35,14 +35,20 @@ def insert_patient(
     M7 (in progress): ON CONFLICT (whatsapp_number) is gone -- it needs
     a matching unique/exclusion constraint or index to target, so it
     becomes invalid SQL the moment patients.whatsapp_number's UNIQUE
-    constraint is actually dropped (see migrations/0027's follow-up
-    report for the rest of that migration). Until that drop ships, the
-    constraint is still live, so the same race this used to resolve via
-    DO NOTHING can still raise UniqueViolation here -- caught below and
-    treated exactly the same way (nothing created, caller decides what
-    that means). Once the constraint is gone this except simply never
-    fires again; two patients sharing a number then both insert
-    successfully, which is the point of dropping it.
+    constraint is actually dropped, whenever that eventually ships (out
+    of scope for this pass -- the constraint itself is untouched).
+    Until that drop ships, the constraint is still live, so the same
+    race this used to resolve via DO NOTHING can still raise
+    UniqueViolation here -- caught below and treated exactly the same
+    way (nothing created, caller decides what that means). Once the
+    constraint is gone this except simply never fires again; two
+    patients sharing a number then both insert successfully, which is
+    the point of dropping it.
+
+    uhid (migrations/0024_patient_uhid.sql) is GENERATED ALWAYS AS
+    (...) STORED, derived from id -- already present on the row the
+    INSERT below returns, no separate assignment step needed the way
+    date_of_birth/gender/government_id (actual input) are.
     """
     try:
         cur.execute(
@@ -55,7 +61,7 @@ def insert_patient(
                 government_id
             )
             VALUES (%s, %s, %s, %s, %s)
-            RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id, government_id
+            RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id, government_id, uhid
             """,
             (
                 name,
@@ -76,20 +82,14 @@ def insert_patient(
         cur, hospital_id=row[5], patient_id=row[0], whatsapp_number=row[2]
     )
 
-    # M6: assign this patient's permanent UHID at creation time -- see
-    # app/services/uhid.py. Unlike whatsapp_number, never regenerated or
-    # touched again once assigned (update_patient does not call this).
-    uhid = generate_uhid(cur, row[5])
-    cur.execute("UPDATE patients SET uhid = %s WHERE id = %s", (uhid, row[0]))
-
     return {
         "id": row[0],
         "name": row[1],
         "whatsapp_number": row[2],
         "date_of_birth": row[3].isoformat() if row[3] else None,
         "gender": row[4],
-        "uhid": uhid,
         "government_id": row[6],
+        "uhid": row[7],
     }
 
 
@@ -191,8 +191,6 @@ def get_patients(staff: dict = Depends(get_current_staff)):
                     -- local time instead, the same convention already
                     -- used for created_at elsewhere in this app).
                     MAX(a.start_at) FILTER (WHERE NOT (a.status::text = ANY(ARRAY['CANCELLED', 'REJECTED']))),
-                    -- M6: nullable -- a patient created before this
-                    -- column existed and not yet backfilled has none.
                     p.uhid
                 FROM patients p
                 LEFT JOIN appointments a ON a.patient_id = p.id
@@ -224,6 +222,85 @@ def get_patients(staff: dict = Depends(get_current_staff)):
             "gender": row[5],
             "last_visit_at": row[6].isoformat() if row[6] else None,
             "uhid": row[7],
+        }
+        for row in rows
+    ]
+
+
+@router.get("/search")
+def search_patients(
+    q: str | None = None,
+    dob: date | None = None,
+    staff: dict = Depends(get_current_staff),
+):
+    """
+    Backend-driven patient lookup for the OPD "find patient before
+    registering" step -- unlike GET /patients above (the full master
+    registry, meant to be paged through/browsed client-side), this is
+    for typing a mobile number, name, or UHID at the front desk and
+    getting back only plausible matches, so staff can positively
+    identify an existing patient (and avoid creating a duplicate)
+    before ever reaching the registration form.
+
+    q matches name/whatsapp_number/uhid by substring (case-insensitive);
+    dob narrows to an exact date-of-birth match, for a "name + DOB"
+    search when a name alone is too common to disambiguate. At least
+    one of q/dob is required -- this is a lookup, not a second way to
+    list every patient (that's GET /patients, unchanged). Capped at 20
+    results: enough to show every plausible match at a front desk, not
+    a paginated browse.
+    """
+    if not q and not dob:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide a search term (q) and/or a date of birth (dob).",
+        )
+
+    conditions = []
+    params: list = []
+
+    if q:
+        needle = f"%{q.strip()}%"
+        conditions.append(
+            "(p.name ILIKE %s OR p.whatsapp_number ILIKE %s OR p.uhid ILIKE %s)"
+        )
+        params.extend([needle, needle, needle])
+
+    if dob:
+        conditions.append("p.date_of_birth = %s")
+        params.append(dob)
+
+    where_clause = " AND ".join(conditions)
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT
+                    p.id,
+                    p.name,
+                    p.whatsapp_number,
+                    p.date_of_birth,
+                    p.gender,
+                    p.uhid
+                FROM patients p
+                WHERE {where_clause}
+                ORDER BY p.name
+                LIMIT 20
+                """,
+                params,
+            )
+
+            rows = cur.fetchall()
+
+    return [
+        {
+            "id": row[0],
+            "name": row[1],
+            "whatsapp_number": row[2],
+            "date_of_birth": row[3].isoformat() if row[3] else None,
+            "gender": row[4],
+            "uhid": row[5],
         }
         for row in rows
     ]
@@ -323,7 +400,7 @@ def update_patient(
                     government_id = %s,
                     updated_at = NOW()
                 WHERE id = %s
-                RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id, government_id
+                RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id, government_id, uhid
                 """,
                 (
                     patient.name,
@@ -349,6 +426,7 @@ def update_patient(
         "date_of_birth": row[3].isoformat() if row[3] else None,
         "gender": row[4],
         "government_id": row[6],
+        "uhid": row[7],
     }
 
 

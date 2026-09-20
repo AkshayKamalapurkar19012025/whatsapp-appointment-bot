@@ -1,6 +1,6 @@
 """
 Tests for P1.b (HospitalOS build plan) -- audit log
-(migrations/0031_audit_log.sql, app/services/audit_log.py). Scoping note
+(migrations/0033_audit_log.sql, app/services/audit_log.py). Scoping note
 (not in the plan's literal text, which wasn't available when this was
 built -- see the commit message): every require_permission(...)-gated
 mutation P1.a wired RBAC into, plus break-glass grant/review, writes one

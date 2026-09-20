@@ -42,7 +42,13 @@ function SelectContent({ className, children, position = 'popper', ...props }: R
       <SelectPrimitive.Content
         position={position}
         className={cn(
-          'select-content-anim z-50 max-h-72 min-w-[8rem] overflow-hidden rounded-[var(--radius-md)]',
+          // z-[1100]: higher than .modal-overlay's plain-CSS z-index:1000
+          // (styles.css) -- same fix already applied to dropdown-menu.tsx
+          // and time-combobox.tsx, for the same reason (Tailwind's z-50 =
+          // z-index 50 loses to that plain-CSS 1000, so this popover would
+          // render behind any modal that hosts a Select, visible nowhere
+          // and unclickable even though it's technically "open").
+          'select-content-anim z-[1100] max-h-72 min-w-[8rem] overflow-hidden rounded-[var(--radius-md)]',
           'border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)]',
           position === 'popper' && 'w-[var(--radix-select-trigger-width)]',
           className,

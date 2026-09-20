@@ -77,7 +77,6 @@ from app.services.patient_identifiers import (
     write_phone_identifier,
 )
 from app.services.sms_provider import send_otp_sms
-from app.services.uhid import generate_uhid
 
 logger = logging.getLogger(__name__)
 
@@ -242,14 +241,15 @@ def verify_otp(cur, whatsapp_number: str, code: str, name: str | None = None):
         # needs a matching unique/exclusion constraint or index to
         # target, so it becomes invalid SQL the moment
         # patients.whatsapp_number's UNIQUE constraint is actually
-        # dropped (see migrations/0027's follow-up report for the rest
-        # of that migration). Until that drop ships, the constraint is
-        # still live, so the same race this used to resolve via DO
-        # NOTHING can still raise UniqueViolation here -- caught below
-        # and funneled into the exact same race-recovery read as before.
-        # Once the constraint is gone this except simply never fires
-        # again; two patients sharing a number then both insert
-        # successfully, which is the point of dropping it.
+        # dropped, whenever that eventually ships (out of scope for this
+        # pass -- the constraint itself is untouched). Until that drop
+        # ships, the constraint is still live, so the same race this
+        # used to resolve via DO NOTHING can still raise UniqueViolation
+        # here -- caught below and funneled into the exact same
+        # race-recovery read as before. Once the constraint is gone this
+        # except simply never fires again; two patients sharing a number
+        # then both insert successfully, which is the point of dropping
+        # it.
         try:
             cur.execute(
                 """
@@ -286,11 +286,9 @@ def verify_otp(cur, whatsapp_number: str, code: str, name: str | None = None):
                 patient_id=patient_row[0],
                 whatsapp_number=patient_row[2],
             )
-            # M6: assign this patient's permanent UHID at creation time
-            # -- see app/services/uhid.py. Same "not on the race-recovery
-            # branch" reasoning as above.
-            uhid = generate_uhid(cur, patient_row[3])
-            cur.execute("UPDATE patients SET uhid = %s WHERE id = %s", (uhid, patient_row[0]))
+            # uhid needs no equivalent step here -- it's a GENERATED
+            # column (migrations/0024_patient_uhid.sql), already set on
+            # patient_row the moment the INSERT above returned it.
 
     patient = {
         "id": patient_row[0],
@@ -363,7 +361,7 @@ def get_patient_by_session_token(cur, token: str):
 
     # hospital_id (M2): request-scoped tenant context, resolved here so
     # every endpoint depending on get_current_patient has it available --
-    # not used to filter anything yet (see migrations/0024's own
+    # not used to filter anything yet (see migrations/0027's own
     # docstring).
     return {
         "id": patient_id,

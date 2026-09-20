@@ -1,6 +1,6 @@
 """
 M8 (HospitalOS build plan): patient merge and unmerge -- see
-migrations/0028_patient_merge_and_duplicate_detection.sql for the schema
+migrations/0030_patient_merge_and_duplicate_detection.sql for the schema
 and the two gaps between this work order's text and what exists in this
 codebase today. In particular: merge_patients() rewrites exactly the
 three patient-scoped tables that exist today (appointments, encounters,

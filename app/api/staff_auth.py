@@ -1,6 +1,6 @@
 """
 Staff/admin authentication + RBAC (WEB P5, decomposed into permissions
-by P1.a -- see migrations/0029_rbac_decomposition.sql).
+by P1.a -- see migrations/0031_rbac_decomposition.sql).
 
 Endpoints:
   POST /api/auth/staff/login                      -- username+password -> session token
@@ -126,7 +126,7 @@ def require_permission(permission_name: str):
     for no/invalid session at all.
 
     Resolved through staff_roles -> role_permissions -> permissions
-    (migrations/0029_rbac_decomposition.sql), or an active,
+    (migrations/0031_rbac_decomposition.sql), or an active,
     non-expired break_glass_grants row for this exact permission --
     never a direct staff["role"] string comparison, which is the one
     thing this replaces staff-wide.

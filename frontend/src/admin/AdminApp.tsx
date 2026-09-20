@@ -2,11 +2,10 @@ import { useEffect, useState } from 'react'
 import {
   Buildings,
   CalendarCheck,
-  CalendarPlus,
   ChartLineUp,
+  CurrencyInr,
   Gauge,
   GearSix,
-  ListNumbers,
   ShieldCheck,
   Stethoscope,
   Tag,
@@ -22,6 +21,7 @@ import AppointmentTypesPanel from './AppointmentTypesPanel'
 import StaffAccountsPanel from './StaffAccountsPanel'
 import PatientsPanel from './PatientsPanel'
 import AppointmentsPanel from './AppointmentsPanel'
+import BillingPanel from './BillingPanel'
 import BookAppointmentPanel from './BookAppointmentPanel'
 import QueuePanel from './QueuePanel'
 import AdminSidebar, { type AdminSidebarItem } from './AdminSidebar'
@@ -37,6 +37,7 @@ type Section =
   | 'appointment-types'
   | 'patients'
   | 'staff-accounts'
+  | 'billing'
 
 // Nothing in this component clears staff/getStaffToken() when `section`
 // changes -- switching sections is a plain in-memory state update, same
@@ -60,6 +61,16 @@ export default function AdminApp() {
   // clean remount on every nav click, same as switching sections
   // already does naturally.
   const [navResetKey, setNavResetKey] = useState(0)
+  // Set right before navigating to 'book-appointment' from the "+ New
+  // OPD Visit > Register New Patient" entry (AppointmentsPanel's
+  // onRegisterNewPatient) -- tells BookAppointmentPanel to open its own
+  // "+ Register new patient" modal once its find/register step is
+  // showing, instead of a second, separate patient-registration screen.
+  // navResetKey's remount-on-every-goTo means this never needs
+  // resetting back to false: the next 'book-appointment' nav (from
+  // "Book Appointment"/"Walk-in Registration", which set it false right
+  // before navigating) always starts BookAppointmentPanel fresh.
+  const [autoOpenRegisterOnBook, setAutoOpenRegisterOnBook] = useState(false)
 
   useEffect(() => {
     if (!getStaffToken()) {
@@ -88,6 +99,16 @@ export default function AdminApp() {
   function goTo(target: Section) {
     setSection(target)
     setNavResetKey((n) => n + 1)
+  }
+
+  function goToRegisterNewPatient() {
+    setAutoOpenRegisterOnBook(true)
+    goTo('book-appointment')
+  }
+
+  function goToBookAppointment() {
+    setAutoOpenRegisterOnBook(false)
+    goTo('book-appointment')
   }
 
   // Shared by DoctorsPanel's "View queue" and AppointmentsPanel's
@@ -137,7 +158,9 @@ export default function AdminApp() {
   // has a backend or a panel behind it today, and inventing one wasn't
   // in scope here -- but the requested menu named them explicitly, so
   // they stay visible (with a plain "Coming soon" label) rather than a
-  // silently incomplete menu or a dead-end click.
+  // silently incomplete menu or a dead-end click. Billing is the one
+  // "Reports" entry that's real (GET /dashboard/billing), so it's not
+  // marked disabled.
   const menuItems: AdminSidebarItem[] = [
     {
       key: 'dashboard',
@@ -151,24 +174,14 @@ export default function AdminApp() {
       key: 'appointments',
       label: 'Appointments',
       icon: <CalendarCheck size={20} weight="regular" />,
-      active: section === 'appointments',
+      // Also "active" while parked on Book Appointment or Queue -- both
+      // are reached only as actions from inside this workspace now (the
+      // "+ New OPD Visit" dropdown and the header's Queue button/per-row
+      // "Open Queue"), not separate top-level destinations, so the nav
+      // shouldn't go dark while a staff member is mid-booking or
+      // watching a doctor's queue.
+      active: section === 'appointments' || section === 'book-appointment' || section === 'queue',
       onSelect: () => goTo('appointments'),
-      group: 'Main',
-    },
-    {
-      key: 'book-appointment',
-      label: 'Book Appointment',
-      icon: <CalendarPlus size={20} weight="regular" />,
-      active: section === 'book-appointment',
-      onSelect: () => goTo('book-appointment'),
-      group: 'Main',
-    },
-    {
-      key: 'queue',
-      label: 'Queue',
-      icon: <ListNumbers size={20} weight="regular" />,
-      active: section === 'queue',
-      onSelect: () => goTo('queue'),
       group: 'Main',
     },
     {
@@ -216,6 +229,14 @@ export default function AdminApp() {
         ]
       : []),
     {
+      key: 'billing',
+      label: 'Billing',
+      icon: <CurrencyInr size={20} weight="regular" />,
+      active: section === 'billing',
+      onSelect: () => goTo('billing'),
+      group: 'Reports',
+    },
+    {
       key: 'analytics',
       label: 'Analytics',
       icon: <ChartLineUp size={20} weight="regular" />,
@@ -243,7 +264,7 @@ export default function AdminApp() {
             <DashboardPanel
               key={navResetKey}
               staffName={staff.username}
-              onBookAppointment={() => goTo('book-appointment')}
+              onBookAppointment={goToBookAppointment}
               onGoToDoctors={() => goTo('doctors')}
               onGoToPatients={() => goTo('patients')}
             />
@@ -251,20 +272,29 @@ export default function AdminApp() {
           {section === 'appointments' && (
             <AppointmentsPanel
               key={navResetKey}
-              onBookAppointment={() => goTo('book-appointment')}
+              onBookAppointment={goToBookAppointment}
+              onRegisterNewPatient={goToRegisterNewPatient}
               onGoToQueue={goToQueueForDoctor}
+              onViewQueue={() => goTo('queue')}
               isAdmin={isAdmin}
             />
           )}
           {section === 'book-appointment' && (
-            <BookAppointmentPanel key={navResetKey} onViewAppointments={() => goTo('appointments')} />
+            <BookAppointmentPanel
+              key={navResetKey}
+              onViewAppointments={() => goTo('appointments')}
+              onGoToQueue={goToQueueForDoctor}
+              onGoToPatients={() => goTo('patients')}
+              autoOpenRegister={autoOpenRegisterOnBook}
+            />
           )}
-          {section === 'queue' && <QueuePanel key={navResetKey} />}
+          {section === 'queue' && <QueuePanel key={navResetKey} onBack={() => goTo('appointments')} />}
           {section === 'doctors' && <DoctorsPanel key={navResetKey} isAdmin={isAdmin} onGoToQueue={goToQueueForDoctor} />}
           {section === 'departments' && <DepartmentsPanel key={navResetKey} isAdmin={isAdmin} />}
           {section === 'appointment-types' && <AppointmentTypesPanel key={navResetKey} isAdmin={isAdmin} />}
           {section === 'patients' && <PatientsPanel key={navResetKey} />}
           {section === 'staff-accounts' && isAdmin && <StaffAccountsPanel key={navResetKey} />}
+          {section === 'billing' && <BillingPanel key={navResetKey} />}
         </main>
       </div>
     </div>

@@ -1,6 +1,6 @@
 """
 Tests for P1.a (HospitalOS build plan) -- RBAC decomposition
-(migrations/0029_rbac_decomposition.sql, migrations/0030_break_glass_
+(migrations/0031_rbac_decomposition.sql, migrations/0032_break_glass_
 grants.sql). test_admin_rbac.py already proves every existing ADMIN-only
 call site behaves identically after the require_role -> require_permission
 swap; these tests cover the new mechanism itself: that the resolver

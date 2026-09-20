@@ -2,7 +2,7 @@
 CI coverage test for M2 (HospitalOS build plan): every table holding its
 own hospital-scoped business data must carry a hospital_id column, so a
 new table can't silently be added without that decision being made. See
-migrations/0024_hospital_tenant_context.sql for the nine tables
+migrations/0027_hospital_tenant_context.sql for the nine tables
 retrofitted so far and this file's own EXEMPT_TABLES for why every other
 existing table doesn't need one.
 """
@@ -23,7 +23,7 @@ EXEMPT_TABLES = {
     "patient_otp_codes",
     "staff_sessions",
     "mock_sms_outbox",
-    # P1.a RBAC (migrations/0029_rbac_decomposition.sql): roles/
+    # P1.a RBAC (migrations/0031_rbac_decomposition.sql): roles/
     # permissions/role_permissions are a fixed, code-level catalogue --
     # one permission name per resource-area router, wired directly into
     # require_permission() call sites -- not hospital-configurable data.
@@ -34,10 +34,15 @@ EXEMPT_TABLES = {
     "permissions",
     "role_permissions",
     # Child of staff (staff_id FK, and staff itself is hospital-scoped
-    # since migrations/0024) -- tenant derivable through it, same
+    # since migrations/0027) -- tenant derivable through it, same
     # category as doctor_education above.
     "staff_roles",
     "break_glass_grants",
+    # Child of appointments (appointment_id FK, NOT NULL) -- tenant
+    # derivable through it, same category as doctor_education. From
+    # main's independently-shipped billing/invoicing work, which
+    # predates this coverage test existing on that line of development.
+    "invoice_line_items",
 }
 
 

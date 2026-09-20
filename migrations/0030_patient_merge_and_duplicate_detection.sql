@@ -17,7 +17,7 @@
 -- 2. Step 1's four detection signals include "government ID," which no
 --    prior migration ever added a column for. Added here
 --    (patients.government_id, nullable, never required) since it's a
---    genuine, low-risk gap to close -- migrations/0026's own comment
+--    genuine, low-risk gap to close -- migrations/0029's own comment
 --    already anticipated a GOVT_ID identifier kind for exactly this
 --    work order, which this migration also adds.
 

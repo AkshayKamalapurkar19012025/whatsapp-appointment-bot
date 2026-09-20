@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as PopoverPrimitive from '@radix-ui/react-popover'
 import { CalendarBlank, X } from '@phosphor-icons/react'
 import MonthGrid from '../MonthGrid'
 import { formatDate, isoDateOnly } from '../format'
+import { isoDateToday } from './doctorSchedule'
 
 function daysInMonth(year: number, month: number): number {
   return new Date(year, month, 0).getDate()
@@ -34,13 +35,19 @@ export default function AdminDatePicker({
   onChange: (isoDate: string) => void
   placeholder?: string
 }) {
-  const today = new Date()
-  const todayIso = isoDateOnly(today.getFullYear(), today.getMonth() + 1, today.getDate())
+  // In the clinic's own configured timezone, not the viewer's device
+  // timezone -- see doctorSchedule.ts's isoDateToday for why (this used
+  // to read new Date() directly, so which dates counted as "past" here
+  // could disagree with the clinic's actual current date).
+  const todayIso = isoDateToday()
+  const [todayYear, todayMonth] = todayIso.split('-').map(Number)
   const [open, setOpen] = useState(false)
-  const [year, setYear] = useState(today.getFullYear())
-  const [month, setMonth] = useState(today.getMonth() + 1)
+  const [year, setYear] = useState(todayYear)
+  const [month, setMonth] = useState(todayMonth)
+  const triggerRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
 
-  const isCurrentMonth = year === today.getFullYear() && month === today.getMonth() + 1
+  const isCurrentMonth = year === todayYear && month === todayMonth
 
   const dates: Record<string, boolean> = {}
   const total = daysInMonth(year, month)
@@ -62,8 +69,33 @@ export default function AdminDatePicker({
     setMonth(d.getMonth() + 1)
   }
 
+  // Radix's own outside-click dismissal (its DismissableLayer stack)
+  // only ever reacts for the most-recently-opened layer -- with two
+  // independent AdminDatePicker instances on the same page (Configure
+  // Schedule's Start/End date pair), opening the second one leaves the
+  // first sitting open indefinitely, even on a plain click elsewhere in
+  // the modal. Same fix MonthGrid.tsx/usePreviewPopover already use
+  // elsewhere in this app for the identical class of bug: a manual,
+  // capture-phase document listener, checked against both the trigger
+  // and the panel -- Popover.Portal renders the panel into
+  // document.body, so it's never a DOM descendant of the trigger to
+  // check containment against alone. onInteractOutside below hands
+  // dismissal to this listener instead of Radix's own layer stack, so
+  // there's exactly one mechanism deciding "is this click outside."
+  useEffect(() => {
+    if (!open) return
+    function handleOutside(event: MouseEvent) {
+      const target = event.target as Node
+      if (triggerRef.current?.contains(target)) return
+      if (panelRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    document.addEventListener('click', handleOutside, true)
+    return () => document.removeEventListener('click', handleOutside, true)
+  }, [open])
+
   return (
-    <div className="admin-date-picker">
+    <div className="admin-date-picker" ref={triggerRef}>
       <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
         <PopoverPrimitive.Anchor asChild>
           <button
@@ -88,10 +120,12 @@ export default function AdminDatePicker({
         )}
         <PopoverPrimitive.Portal>
           <PopoverPrimitive.Content
+            ref={panelRef}
             side="bottom"
             align="start"
             sideOffset={4}
             onOpenAutoFocus={(e) => e.preventDefault()}
+            onInteractOutside={(e) => e.preventDefault()}
             className="admin-date-picker-panel"
           >
             <MonthGrid

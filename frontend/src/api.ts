@@ -8,6 +8,7 @@ import type {
   AppointmentTypeDetail,
   AppointmentTypeSummary,
   ScheduledAppointment,
+  BillingReport,
   BookingSource,
   CalendarMonth,
   DashboardStats,
@@ -21,6 +22,7 @@ import type {
   DoctorQueue,
   DoctorScheduleEntry,
   DoctorWithSlots,
+  Invoice,
   MyAppointmentsResponse,
   Patient,
   PatientGender,
@@ -77,6 +79,33 @@ export class ApiError extends Error {
   }
 }
 
+// FastAPI's own automatic request-validation errors (a bad type/missing
+// field caught by Pydantic before a route body even runs) return `detail`
+// as a list of {loc, msg, type} objects, not the plain string every
+// hand-written `HTTPException(detail="...")` in this app's routes uses --
+// callers here have only ever seen the plain-string shape, so `detail`
+// landing as an array/object was silently becoming "[object Object]"
+// once coerced into an Error's message. Reduces either shape down to one
+// readable string; unrecognized shapes fall back to the caller's default
+// rather than ever surfacing an unstringified object.
+function stringifyErrorDetail(detail: unknown): string | undefined {
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    const messages = detail.map((entry) => {
+      if (typeof entry === 'string') return entry
+      if (entry && typeof entry === 'object' && 'msg' in entry) {
+        const e = entry as { loc?: unknown[]; msg?: unknown }
+        const field = Array.isArray(e.loc) ? e.loc[e.loc.length - 1] : null
+        return field ? `${field}: ${e.msg}` : String(e.msg)
+      }
+      return null
+    })
+    const joined = messages.filter((m): m is string => m !== null).join('; ')
+    return joined || undefined
+  }
+  return undefined
+}
+
 async function request<T>(
   path: string,
   options: { method?: string; body?: unknown; auth?: boolean | 'staff' } = {},
@@ -111,7 +140,7 @@ async function request<T>(
     let detail = response.statusText
     try {
       const errorBody = await response.json()
-      detail = errorBody.detail ?? detail
+      detail = stringifyErrorDetail(errorBody.detail) ?? detail
     } catch {
       // Non-JSON error body -- fall back to statusText.
     }
@@ -334,6 +363,10 @@ export function getDashboardTrends(days = 14): Promise<DashboardTrends> {
   return request(`/dashboard/trends?days=${days}`, { auth: 'staff' })
 }
 
+export function getBillingReport(days = 14): Promise<BillingReport> {
+  return request(`/dashboard/billing?days=${days}`, { auth: 'staff' })
+}
+
 // -- WEB P11: staff accounts (ADMIN only) -----------------------------------
 
 export function listStaffAccounts(): Promise<StaffAccount[]> {
@@ -523,7 +556,7 @@ export async function uploadDoctorPhoto(
     let detail = response.statusText
     try {
       const errorBody = await response.json()
-      detail = errorBody.detail ?? detail
+      detail = stringifyErrorDetail(errorBody.detail) ?? detail
     } catch {
       // Non-JSON error body -- fall back to statusText.
     }
@@ -739,6 +772,19 @@ export function listPatients(): Promise<Patient[]> {
   return request('/patients', { auth: 'staff' })
 }
 
+// GET /patients/search -- the OPD find/register step's backend lookup
+// (name/phone/UHID substring, optional exact DOB match), unlike
+// listPatients above (the whole registry, filtered client-side by
+// PatientsPanel's directory table). At least one of query/dob is
+// required server-side; returns [] rather than 404 when nothing
+// matches.
+export function searchPatientsAdmin(query: string, dob?: string | null): Promise<Patient[]> {
+  const params = new URLSearchParams()
+  if (query.trim()) params.set('q', query.trim())
+  if (dob) params.set('dob', dob)
+  return request(`/patients/search?${params.toString()}`, { auth: 'staff' })
+}
+
 export function createPatientAdmin(
   name: string,
   whatsappNumber: string,
@@ -911,6 +957,57 @@ export function waiveAppointmentPayment(
     method: 'POST',
     auth: 'staff',
     body: { reason },
+  })
+}
+
+// POST .../settle-free-visit -- the OPD flow's "Payment Required? No"
+// branch (settle_free_visit_service): auto-settles a CHECKED_IN visit
+// whose configured consultation fee is 0, generating its queue token
+// without a manual Collect Payment/Waive Charge step. Distinct from
+// waiveAppointmentPayment above (ADMIN-only, 3-day-revisit policy for
+// a REAL fee) -- any staff role can call this, and the backend itself
+// refuses it if the fee turns out to be nonzero.
+export function settleFreeVisitAdmin(appointmentId: number): Promise<PaymentActionResult> {
+  return request(`/appointments/${appointmentId}/settle-free-visit`, { method: 'POST', auth: 'staff' })
+}
+
+// ADMIN-only reversal of a PAID appointment (record_refund_service) --
+// a back-office correction, not a queue-entry action, so it works
+// regardless of the appointment's current status (unlike payment/
+// waive/settle-free-visit above, all of which require CHECKED_IN).
+export function refundAppointmentPayment(
+  appointmentId: number,
+  amount: number,
+  reason: string,
+): Promise<PaymentActionResult> {
+  return request(`/appointments/${appointmentId}/refund-payment`, {
+    method: 'POST',
+    auth: 'staff',
+    body: { amount, reason },
+  })
+}
+
+// The itemized bill for this appointment -- consultation_fee plus any
+// ad-hoc invoice_line_items (migrations/0026) and the total record_
+// payment_service actually charges. Callable any time, same as
+// getAppointmentCharge above.
+export function getAppointmentInvoice(appointmentId: number): Promise<Invoice> {
+  return request(`/appointments/${appointmentId}/invoice`, { auth: 'staff' })
+}
+
+// ADMIN-only: add an ad-hoc charge to this appointment's bill. Only
+// possible before the bill is settled (payment_status UNPAID/FAILED) --
+// see add_invoice_line_item_service's docstring for why PAID/WAIVED/
+// REFUNDED reject this.
+export function addInvoiceLineItem(
+  appointmentId: number,
+  description: string,
+  amount: number,
+): Promise<Invoice> {
+  return request(`/appointments/${appointmentId}/invoice/line-items`, {
+    method: 'POST',
+    auth: 'staff',
+    body: { description, amount },
   })
 }
 

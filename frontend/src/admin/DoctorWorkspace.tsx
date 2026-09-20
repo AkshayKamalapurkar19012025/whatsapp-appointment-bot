@@ -969,14 +969,17 @@ function DepartmentAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmin: bo
       )}
       {isAdmin && unassigned.length > 0 && (
         <form className="inline-form wrap assign-form-card" onSubmit={handleAssign}>
-          <select value={selected} onChange={(e) => setSelected(e.target.value)} required>
-            <option value="">Add department…</option>
-            {unassigned.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </select>
+          <label className="inline-label">
+            Department
+            <select value={selected} onChange={(e) => setSelected(e.target.value)} required>
+              <option value="">Add department…</option>
+              {unassigned.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          </label>
           <button type="submit" className="btn btn-sm">
             + Add department
           </button>
@@ -1203,14 +1206,17 @@ function AppointmentTypeAssignment({ doctor, isAdmin }: { doctor: Doctor; isAdmi
 
       {isAdmin && showForm && unassigned.length > 0 && (
         <form className="inline-form wrap assign-form-card" onSubmit={handleAssign}>
-          <select value={selected} onChange={(e) => setSelected(e.target.value)} required>
-            <option value="">Add appointment type…</option>
-            {unassigned.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+          <label className="inline-label">
+            Appointment type
+            <select value={selected} onChange={(e) => setSelected(e.target.value)} required>
+              <option value="">Add appointment type…</option>
+              {unassigned.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
 
           <label className="inline-label">
             Duration

@@ -46,6 +46,7 @@ APP_TABLES = [
     "patient_identifiers",
     "patient_merges",
     "patient_duplicate_reviews",
+    "invoice_line_items",
     "appointments",
     "doctor_appointment_types",
     "doctor_blocks",

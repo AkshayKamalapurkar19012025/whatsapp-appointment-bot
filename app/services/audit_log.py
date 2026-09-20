@@ -1,6 +1,6 @@
 """
 Audit log (P1.b): a single append-only record of who did what, to which
-resource, and when -- see migrations/0031_audit_log.sql. Called from
+resource, and when -- see migrations/0033_audit_log.sql. Called from
 every require_permission(...)-gated write endpoint (app/api/staff_auth.py
 and the doctor/department/appointment-type/etc. CRUD routers P1.a wired
 RBAC into), plus break-glass grant/review.

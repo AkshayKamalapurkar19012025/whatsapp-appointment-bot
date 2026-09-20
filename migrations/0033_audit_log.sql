@@ -2,12 +2,12 @@
 -- recording who did what, to which resource, and when -- wired into
 -- every mutation P1.a's RBAC decomposition gated behind
 -- require_permission(...), plus break-glass grant/review
--- (migrations/0030 already called for "someone auditing break-glass
+-- (migrations/0032 already called for "someone auditing break-glass
 -- usage" -- this is that mechanism, generalized to the rest of the
 -- RBAC-gated surface rather than built as a break-glass-only table).
 --
 -- Deliberately NOT retrofitted with a DEFAULT 1 hospital_id the way
--- migrations/0024's nine existing tables were -- that default existed
+-- migrations/0027's nine existing tables were -- that default existed
 -- purely so already-populated tables didn't need a backfill statement.
 -- This table starts empty; every INSERT from here on supplies
 -- hospital_id explicitly from the acting staff member's own session
