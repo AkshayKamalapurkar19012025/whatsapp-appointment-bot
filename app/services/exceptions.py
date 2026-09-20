@@ -86,6 +86,31 @@ class AppointmentSlotPassed(ServiceError):
     pass
 
 
+class QueueEntryNotInQueue(ServiceError):
+    """Raised by hold_queue_entry_service/recall_queue_entry_service/
+    set_priority_service when the target appointment isn't actually a
+    live queue entry -- not CHECKED_IN, or CHECKED_IN but never issued a
+    token (see generate_queue_token_service's payment/waiver gate).
+    Holding, recalling, or prioritizing only makes sense for someone
+    who's actually in the doctor's queue today."""
+    pass
+
+
+class QueueEntryNotHeld(ServiceError):
+    """Raised by recall_queue_entry_service when the target appointment
+    isn't currently held -- recalling something that was never skipped
+    is almost certainly a stale click against a queue view that's moved
+    on, not a real intent."""
+    pass
+
+
+class PriorityReasonRequired(ServiceError):
+    """Raised by set_priority_service when turning priority on without a
+    reason. The whole point of a priority override is that it's
+    accountable -- who did it, and why -- not a silent queue-jump."""
+    pass
+
+
 class PaymentStateConflict(ServiceError):
     """Raised by record_payment_service/waive_consultation_fee_service
     when payment_status is already in a state that makes the requested

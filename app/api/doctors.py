@@ -731,11 +731,19 @@ def get_doctor_queue(
     query that actually surfaces the queue to a doctor, not just at
     write time.
 
-    Split into "now serving" (the lowest still-waiting token -- this
-    app has no separate "in consultation" status, so the
-    lowest-numbered CHECKED_IN row still waiting is the working
-    definition of who's up), the rest of the CHECKED_IN rows waiting
-    behind them, and today's already-Completed patients for reference.
+    Split into "now serving" (the front of the serving order among
+    CHECKED_IN rows that are neither held nor already served -- see
+    below), "waiting" (the rest of that same order), "held" (skipped via
+    hold_queue_entry_service -- see migrations/0027 -- shown separately
+    so staff can find and recall them), and today's already-Completed
+    patients for reference.
+
+    Serving order is priority-first, then token_number (both migrations/
+    0027) -- a priority-flagged entry is called ahead of earlier token
+    numbers, and a held entry is excluded entirely until recalled, but
+    neither ever changes anyone's actual token_number. That ordering is
+    expressed directly in the SQL's ORDER BY, not recomputed in Python,
+    so the "waiting" list this returns is already in call order.
 
     "Today" is the doctor's own local calendar day, matching every other
     per-doctor-per-day cut in this app (dashboard stats, this queue's own
@@ -760,14 +768,15 @@ def get_doctor_queue(
 
             cur.execute(
                 """
-                SELECT a.id, a.status, a.token_number, a.visited_at, p.id, p.name
+                SELECT a.id, a.status, a.token_number, a.visited_at, p.id, p.name,
+                       a.queue_held_at, a.is_priority
                 FROM appointments a
                 JOIN patients p ON p.id = a.patient_id
                 WHERE a.doctor_id = %s
                   AND a.status IN ('CHECKED_IN', 'COMPLETED')
                   AND a.token_number IS NOT NULL
                   AND (a.visited_at AT TIME ZONE %s)::date = %s
-                ORDER BY a.token_number
+                ORDER BY a.is_priority DESC, a.token_number
                 """,
                 (doctor_id, doctor_tz, today),
             )
@@ -786,17 +795,25 @@ def get_doctor_queue(
             "visited_at": convert_to_timezone(row[3], doctor_tz).isoformat(),
             "patient_id": row[4],
             "patient_name": row[5],
+            "is_priority": row[7],
         }
 
-    waiting = [entry(r) for r in rows if r[1] == "CHECKED_IN"]
+    checked_in_rows = [r for r in rows if r[1] == "CHECKED_IN"]
     completed = [entry(r) for r in rows if r[1] == "COMPLETED"]
-    now_serving = waiting.pop(0) if waiting else None
+
+    # Query's own ORDER BY already puts these in call order (priority
+    # first, then token_number) -- held/not-held is the only split left
+    # to do here.
+    held = [entry(r) for r in checked_in_rows if r[6] is not None]
+    active = [entry(r) for r in checked_in_rows if r[6] is None]
+    now_serving = active.pop(0) if active else None
 
     return {
         "doctor_id": doctor_id,
         "doctor_name": doctor_name,
         "date": today.isoformat(),
         "now_serving": now_serving,
-        "waiting": waiting,
+        "waiting": active,
+        "held": held,
         "completed": completed,
     }
