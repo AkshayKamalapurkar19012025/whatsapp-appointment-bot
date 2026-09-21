@@ -7101,6 +7101,53 @@ a.link.danger {
   font-size: 0.85rem;
 }
 
+.patient-timeline-modal {
+  max-width: 860px;
+}
+
+.patient-timeline-visit-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.patient-timeline-visit-header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.patient-timeline-visit-body {
+  margin-top: var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--color-border);
+}
+
+.patient-timeline-visit-body h4 {
+  margin: var(--space-3) 0 var(--space-2);
+}
+
+.patient-timeline-visit-body h4:first-child {
+  margin-top: 0;
+}
+
+.patient-timeline-vitals-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  font-size: 0.9rem;
+}
+
 .doctor-profile-header {
   display: flex;
   align-items: flex-start;

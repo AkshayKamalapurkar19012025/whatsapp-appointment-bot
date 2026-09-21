@@ -852,3 +852,173 @@ export interface UnbilledSources {
   orders: UnbilledOrder[]
   dispenses: UnbilledDispense[]
 }
+
+// OPD/HIMS master spec Phase 10 (section 44) -- Patient 360 / unified
+// timeline. GET /patients/{id}/timeline (app/services/patient_timeline_
+// service.py), a read-only aggregation over the tables above, shaped by
+// visit rather than as one flat event list. Each Timeline* type here is
+// a deliberately leaner projection of its full counterpart above (e.g.
+// TimelineConsultation omits created_by/updated_at) -- exactly the
+// columns that service selects, not a duplicate of the full record.
+export interface TimelineVitals {
+  id: number
+  encounter_id: number
+  recorded_by: number
+  bp_systolic: number | null
+  bp_diastolic: number | null
+  pulse: number | null
+  temperature_celsius: number | null
+  spo2: number | null
+  respiratory_rate: number | null
+  weight_kg: number | null
+  height_cm: number | null
+  bmi: number | null
+  pain_score: number | null
+  chief_complaint: string | null
+  priority: VitalsPriority
+  nursing_notes: string | null
+  recorded_at: string
+}
+
+export interface TimelineConsultation {
+  id: number
+  encounter_id: number
+  doctor_id: number
+  status: 'DRAFT' | 'COMPLETED'
+  chief_complaint: string | null
+  history_notes: string | null
+  examination_notes: string | null
+  diagnosis: string | null
+  clinical_notes: string | null
+  follow_up_date: string | null
+  follow_up_reason: string | null
+  started_at: string
+  completed_at: string | null
+}
+
+export interface TimelineOrderResult {
+  id: number
+  order_id: number
+  parameter: string
+  result_value: string
+  unit: string | null
+  reference_range: string | null
+  is_abnormal: boolean
+  is_critical: boolean
+  sequence: number
+  recorded_at: string
+}
+
+export interface TimelineOrder {
+  id: number
+  encounter_id: number
+  order_type: OrderType
+  description: string
+  clinical_indication: string | null
+  priority: OrderPriority
+  status: 'ORDERED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
+  external_destination: string | null
+  result_text: string | null
+  ordering_doctor_id: number
+  cancel_reason: string | null
+  ordered_at: string
+  completed_at: string | null
+  cancelled_at: string | null
+  results: TimelineOrderResult[]
+}
+
+export interface TimelineDispense {
+  id: number
+  prescription_item_id: number
+  quantity: number
+  unit_price: number
+  amount: number
+  dispensed_at: string
+}
+
+export interface TimelinePrescriptionItem {
+  id: number
+  prescription_id: number
+  medicine_name: string
+  generic_name: string | null
+  dosage: string | null
+  route: string | null
+  frequency: string | null
+  duration: string | null
+  quantity: number
+  quantity_dispensed: number
+  food_instructions: string | null
+  special_instructions: string | null
+  dispenses: TimelineDispense[]
+}
+
+export interface TimelinePrescription {
+  id: number
+  encounter_id: number
+  doctor_id: number
+  status: PrescriptionStatus
+  notes: string | null
+  prescribed_at: string | null
+  cancel_reason: string | null
+  cancelled_at: string | null
+  items: TimelinePrescriptionItem[]
+}
+
+export interface TimelineCharge {
+  id: number
+  invoice_id: number
+  description: string
+  amount: number
+  source_type: ChargeSourceType
+  status: ChargeStatus
+  created_at: string
+}
+
+export interface TimelinePayment {
+  id: number
+  invoice_id: number
+  receipt_number: string
+  amount: number
+  method: BillPaymentMethod
+  status: BillPaymentRecordStatus
+  refunded_amount: number
+  recorded_at: string
+}
+
+export interface TimelineInvoice {
+  id: number
+  encounter_id: number
+  invoice_number: string
+  discount_amount: number
+  tax_rate: number
+  status: BillStatus
+  created_at: string
+  charges: TimelineCharge[]
+  payments: TimelinePayment[]
+}
+
+export interface TimelineVisit {
+  encounter_id: number
+  status: 'OPEN' | 'CLOSED'
+  started_at: string
+  closed_at: string | null
+  doctor_id: number
+  doctor_name: string
+  appointment_id: number | null
+  token_number: number | null
+  appointment_status: string | null
+  appointment_type_name: string | null
+  vitals: TimelineVitals[]
+  consultation: TimelineConsultation | null
+  orders: TimelineOrder[]
+  prescription: TimelinePrescription | null
+  invoice: TimelineInvoice | null
+}
+
+export interface PatientTimeline {
+  patient_id: number
+  patient_name: string
+  patient_uhid: string
+  redirected_from: { patient_id: number; uhid: string } | null
+  visits: TimelineVisit[]
+}

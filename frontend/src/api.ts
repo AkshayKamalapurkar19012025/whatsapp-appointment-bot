@@ -42,6 +42,7 @@ import type {
   MyAppointmentsResponse,
   Patient,
   PatientGender,
+  PatientTimeline,
   PaymentActionResult,
   Staff,
   StaffAccount,
@@ -946,6 +947,13 @@ export function updatePatientAdmin(
       gender: gender || null,
     },
   })
+}
+
+// OPD/HIMS master spec Phase 10 (section 44) -- Patient 360 / unified
+// timeline: every visit (encounter) for this patient, most recent
+// first, each with its vitals/consultation/orders/prescription/billing.
+export function getPatientTimeline(patientId: number): Promise<PatientTimeline> {
+  return request(`/patients/${patientId}/timeline`, { auth: 'staff' })
 }
 
 // -- WEB P11: admin appointment management (ADMIN or STAFF, WEB P9) --------

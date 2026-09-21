@@ -10,6 +10,7 @@ from app.services import exceptions as svc_exc
 from app.services.patient_duplicate_detection import decide_duplicate_review, find_duplicate_candidates
 from app.services.patient_identifiers import resolve_patient_by_identifier, write_phone_identifier
 from app.services.patient_merge import merge_patients, unmerge_patients
+from app.services.patient_timeline_service import get_patient_timeline_service
 from app.services.uhid import resolve_patient_by_uhid
 from app.utils.phone import normalize_whatsapp_number
 
@@ -503,6 +504,28 @@ def get_patient_by_uhid(
         raise HTTPException(status_code=404, detail="No patient found for this UHID")
 
     return resolved
+
+
+@router.get("/{patient_id}/timeline")
+def get_patient_timeline(
+    patient_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    """
+    OPD/HIMS master spec Phase 10 (section 44): Patient 360 / unified
+    timeline -- one visit (encounter) per entry, most recent first, each
+    carrying everything that happened during it (vitals, consultation,
+    orders + results, prescription + dispensing, billing). Read-only,
+    same bare get_current_staff tier as every other endpoint in this
+    router (see migrations/0031_rbac_decomposition.sql's own note on
+    which patients.py endpoints it deliberately left ungated).
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                return get_patient_timeline_service(cur, patient_id, hospital_id=staff["hospital_id"])
+            except svc_exc.PatientNotFound:
+                raise HTTPException(status_code=404, detail="Patient not found")
 
 
 class DuplicateReviewDecision(BaseModel):

@@ -5,7 +5,7 @@ import type { Patient } from '../types'
 import { formatDateTime } from '../format'
 import { useStaggerReveal } from '../useStaggerReveal'
 import PatientFormModal from './PatientFormModal'
-import PatientVisitHistoryModal from './PatientVisitHistoryModal'
+import PatientTimelineModal from './PatientTimelineModal'
 
 // The patient MASTER REGISTRY -- "who is this person", not a booking
 // workflow. Deliberately no permanent first-time/recurring status or
@@ -23,9 +23,10 @@ export default function PatientsPanel() {
   // edit mode for that row (PATCH /patients/{id}). Both share the exact
   // same modal/component -- there is no second patient form anywhere.
   const [formTarget, setFormTarget] = useState<'add' | Patient | null>(null)
-  // Opens PatientVisitHistoryModal for the clicked row -- the "N
-  // visits" count on its own was a dead end (no way to see when or
-  // with which doctor); this is the drill-in.
+  // Opens PatientTimelineModal for the clicked row -- the "N visits"
+  // count on its own was a dead end (no way to see when, with which
+  // doctor, or what actually happened); this is the drill-in (OPD/HIMS
+  // master spec Phase 10, section 44's Patient 360 view).
   const [historyTarget, setHistoryTarget] = useState<Patient | null>(null)
 
   const searchNeedle = searchText.trim().toLowerCase()
@@ -151,7 +152,7 @@ export default function PatientsPanel() {
         />
       )}
 
-      {historyTarget && <PatientVisitHistoryModal patient={historyTarget} onClose={() => setHistoryTarget(null)} />}
+      {historyTarget && <PatientTimelineModal patient={historyTarget} onClose={() => setHistoryTarget(null)} />}
     </section>
   )
 }
