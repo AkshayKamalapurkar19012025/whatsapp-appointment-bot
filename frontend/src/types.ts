@@ -739,3 +739,116 @@ export interface PharmacyStockInput {
   quantity_on_hand: number
   unit_price: number
 }
+
+// OPD/HIMS master spec Phase 9 (migrations/0033_billing_invoices.sql)
+// -- a new, encounter-scoped invoice/charge/payment model, deliberately
+// separate from the existing Invoice/InvoiceLineItem above (the
+// consultation_fee/payment_status flow). Named "Bill"/"Charge"/"Payment"
+// here (not "Invoice") to avoid colliding with those existing types --
+// see app/api/billing.py's module docstring for why the API routes
+// themselves use /bill, not /invoice, for the same reason.
+export type BillStatus = 'OPEN' | 'VOID'
+export type ChargeStatus = 'ACTIVE' | 'VOIDED'
+export type ChargeSourceType = 'CONSULTATION' | 'LAB' | 'RADIOLOGY' | 'PROCEDURE' | 'SERVICE' | 'PHARMACY' | 'OTHER'
+export type BillPaymentStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID'
+export type BillPaymentMethod = 'CASH' | 'UPI' | 'CARD' | 'BANK_TRANSFER' | 'INSURANCE' | 'OTHER'
+export type BillPaymentRecordStatus = 'COMPLETED' | 'VOIDED'
+
+export interface BillCharge {
+  id: number
+  invoice_id: number
+  description: string
+  amount: number
+  source_type: ChargeSourceType
+  source_order_id: number | null
+  source_dispense_id: number | null
+  status: ChargeStatus
+  voided_by: number | null
+  void_reason: string | null
+  voided_at: string | null
+  created_by: number
+  created_at: string
+  updated_at: string
+}
+
+export interface BillChargeInput {
+  description: string
+  amount: number
+  source_type?: ChargeSourceType
+  source_order_id?: number
+  source_dispense_id?: number
+}
+
+export interface BillPayment {
+  id: number
+  invoice_id: number
+  receipt_number: string
+  amount: number
+  method: BillPaymentMethod
+  transaction_id: string | null
+  status: BillPaymentRecordStatus
+  refunded_amount: number
+  refund_reason: string | null
+  refunded_by: number | null
+  refunded_at: string | null
+  voided_by: number | null
+  void_reason: string | null
+  voided_at: string | null
+  recorded_by: number
+  recorded_at: string
+}
+
+export interface BillPaymentInput {
+  amount: number
+  method: BillPaymentMethod
+  transaction_id?: string
+}
+
+// GET/PATCH .../bill -- the full invoice summary, with its charges/
+// payments and the totals computed server-side by _compute_totals
+// (discount applied before tax; balance/payment_status derived from
+// ACTIVE charges and COMPLETED-minus-refunded payments, never stored).
+export interface BillSummary {
+  id: number
+  encounter_id: number
+  invoice_number: string
+  discount_amount: number
+  discount_reason: string | null
+  tax_rate: number
+  status: BillStatus
+  voided_by: number | null
+  void_reason: string | null
+  voided_at: string | null
+  created_by: number
+  created_at: string
+  updated_at: string
+  charges: BillCharge[]
+  payments: BillPayment[]
+  gross_amount: number
+  taxable_amount: number
+  tax_amount: number
+  net_amount: number
+  paid_amount: number
+  balance: number
+  payment_status: BillPaymentStatus
+}
+
+export interface UnbilledOrder {
+  order_id: number
+  order_type: OrderType
+  description: string
+  priority: OrderPriority
+}
+
+export interface UnbilledDispense {
+  dispense_id: number
+  medicine_name: string
+  quantity: number
+  amount: number
+  dispensed_at: string
+}
+
+export interface UnbilledSources {
+  orders: UnbilledOrder[]
+  dispenses: UnbilledDispense[]
+}

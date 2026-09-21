@@ -377,3 +377,89 @@ class DuplicateStockBatch(ServiceError):
     almost certainly a mistake, not a real restock, so this is refused
     rather than silently summed into the existing row's quantity."""
     pass
+
+
+# ---------------------------------------------------------------------
+# Billing (OPD/HIMS master spec Phase 9) -- see
+# app/services/billing_services.py. A new, encounter-scoped invoice/
+# charge/payment model, independent of appointments.payment_status --
+# see migrations/0033_billing_invoices.sql's header for why.
+# ---------------------------------------------------------------------
+
+class InvoiceNotFound(ServiceError):
+    pass
+
+
+class InvoiceVoided(ServiceError):
+    """Raised when adding a charge or recording a payment against an
+    invoice that's already VOID -- a voided invoice is closed, the same
+    way a cancelled prescription/order is."""
+    pass
+
+
+class InvoiceNotVoidable(ServiceError):
+    """Raised by void_invoice_service when the invoice already has a
+    non-voided payment recorded -- once real money has been received
+    against an invoice, voiding the invoice itself would misrepresent
+    what happened; individual charges/payments can still be voided or
+    refunded, but not the invoice as a whole."""
+    pass
+
+
+class ChargeNotFound(ServiceError):
+    pass
+
+
+class ChargeAlreadyVoided(ServiceError):
+    pass
+
+
+class DuplicateCharge(ServiceError):
+    """Raised by add_charge_service when the given source_order_id or
+    source_dispense_id already has a charge linked to it -- an order or
+    a dispense gets billed exactly once (the DB's partial unique
+    indexes are the backstop; this is the caller-friendly version)."""
+    pass
+
+
+class InvalidChargeSource(ServiceError):
+    """Raised by add_charge_service when the given source_order_id/
+    source_dispense_id doesn't belong to this invoice's own encounter
+    -- prevents billing one patient's visit for another's order/dispense
+    via a guessed id."""
+    pass
+
+
+class PaymentNotFound(ServiceError):
+    pass
+
+
+class PaymentAlreadyVoided(ServiceError):
+    pass
+
+
+class PaymentExceedsBalance(ServiceError):
+    """Raised by record_invoice_payment_service when the requested
+    amount is more than the invoice's current outstanding balance --
+    this is also what makes a duplicate-click on "record payment"
+    self-correcting: the first click settles the balance to zero, so a
+    second one for the same amount is refused rather than silently
+    accepted as a second, real payment."""
+    pass
+
+
+class DuplicateTransactionId(ServiceError):
+    """Raised by record_invoice_payment_service when the given
+    transaction_id already belongs to another payment (any invoice) --
+    the actual "prevent duplicate payments" mechanism (master spec
+    section 41) for any method with a real external reference to check
+    against (UPI/card/bank transfer); the DB's partial unique index is
+    the backstop, this is the caller-friendly version."""
+    pass
+
+
+class PaymentRefundExceedsAmount(ServiceError):
+    """Raised by refund_invoice_payment_service when the requested
+    refund would exceed what's left to refund on this specific payment
+    (amount - refunded_amount already recorded)."""
+    pass

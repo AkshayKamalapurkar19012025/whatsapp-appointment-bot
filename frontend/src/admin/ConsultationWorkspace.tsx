@@ -25,8 +25,9 @@ import type {
 } from '../types'
 import { formatAgeGender, formatDateTime } from '../format'
 import PrescriptionPanel from './PrescriptionPanel'
+import AppointmentBillingPanel from './AppointmentBillingPanel'
 
-type Tab = 'triage' | 'consultation' | 'orders' | 'prescription'
+type Tab = 'triage' | 'consultation' | 'orders' | 'prescription' | 'billing'
 
 const ORDER_TYPE_LABELS: Record<OrderType, string> = {
   LAB: 'Laboratory',
@@ -140,9 +141,11 @@ function consultationFormFromRecord(c: Consultation): ConsultationFormState {
 // copy of it.
 export default function ConsultationWorkspace({
   appointmentId,
+  isAdmin,
   onBack,
 }: {
   appointmentId: number
+  isAdmin: boolean
   onBack: () => void
 }) {
   const [tab, setTab] = useState<Tab>('triage')
@@ -457,11 +460,16 @@ export default function ConsultationWorkspace({
       )}
 
       {notCheckedIn && (
-        <div className="state-block">
-          <Warning size={20} weight="regular" />
-          This patient isn&apos;t currently checked in. Triage and consultation become available once they&apos;ve
-          checked in and a queue token has been issued.
-        </div>
+        <>
+          <div className="state-block">
+            <Warning size={20} weight="regular" />
+            This patient isn&apos;t currently checked in. Triage and consultation become available once they&apos;ve
+            checked in and a queue token has been issued. Billing doesn&apos;t require check-in, so it&apos;s
+            available below.
+          </div>
+          <h4>Billing</h4>
+          <AppointmentBillingPanel appointmentId={appointmentId} isAdmin={isAdmin} />
+        </>
       )}
 
       {!notCheckedIn && (
@@ -494,6 +502,13 @@ export default function ConsultationWorkspace({
               onClick={() => setTab('prescription')}
             >
               Prescription
+            </button>
+            <button
+              type="button"
+              className={tab === 'billing' ? 'tab active' : 'tab'}
+              onClick={() => setTab('billing')}
+            >
+              Billing
             </button>
           </div>
 
@@ -1067,6 +1082,8 @@ export default function ConsultationWorkspace({
               appointmentCheckedIn={encounter.appointment_status === 'CHECKED_IN'}
             />
           )}
+
+          {tab === 'billing' && <AppointmentBillingPanel appointmentId={appointmentId} isAdmin={isAdmin} />}
         </>
       )}
     </section>

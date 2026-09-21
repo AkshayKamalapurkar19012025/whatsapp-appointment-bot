@@ -36,6 +36,7 @@ from app.api.queue_display import router as queue_display_router
 from app.api.clinical import router as clinical_router
 from app.api.orders import router as orders_router
 from app.api.pharmacy import prescription_router, pharmacy_router
+from app.api.billing import router as billing_router
 
 configure_logging()
 access_logger = logging.getLogger("app.access")
@@ -225,6 +226,11 @@ app.include_router(
 
 app.include_router(
     pharmacy_router,
+    prefix="/api",
+)
+
+app.include_router(
+    billing_router,
     prefix="/api",
 )
 

@@ -326,6 +326,7 @@ export default function AdminApp() {
             <ConsultationWorkspace
               key={navResetKey}
               appointmentId={consultationAppointmentId}
+              isAdmin={isAdmin}
               onBack={() => goTo('queue')}
             />
           )}
