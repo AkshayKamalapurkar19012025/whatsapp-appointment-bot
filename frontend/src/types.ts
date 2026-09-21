@@ -578,6 +578,34 @@ export type OrderType = 'LAB' | 'RADIOLOGY' | 'PROCEDURE' | 'SERVICE' | 'EXTERNA
 export type OrderPriority = 'ROUTINE' | 'URGENT' | 'STAT'
 export type OrderStatus = 'ORDERED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
 
+// OPD/HIMS master spec Phase 7 (migrations/0031_order_results.sql).
+// One shape for both a lab panel's individual values (parameter e.g.
+// "Hemoglobin", unit/reference_range meaningful) and a radiology
+// report's narrative sections (parameter e.g. "Findings", unit/
+// reference_range left null) -- see that migration's header.
+export interface OrderResultItem {
+  id: number
+  order_id: number
+  parameter: string
+  result_value: string
+  unit: string | null
+  reference_range: string | null
+  is_abnormal: boolean
+  is_critical: boolean
+  sequence: number
+  recorded_by: number
+  recorded_at: string
+}
+
+export interface OrderResultItemInput {
+  parameter: string
+  result_value: string
+  unit?: string
+  reference_range?: string
+  is_abnormal?: boolean
+  is_critical?: boolean
+}
+
 export interface ClinicalOrder {
   id: number
   encounter_id: number
@@ -595,6 +623,7 @@ export interface ClinicalOrder {
   ordered_at: string
   completed_at: string | null
   cancelled_at: string | null
+  results: OrderResultItem[]
 }
 
 export interface OrderInput {

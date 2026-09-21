@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { ArrowLeft, CheckCircle, Warning } from '@phosphor-icons/react'
 import {
   ApiError,
@@ -9,6 +9,7 @@ import {
   getLatestVitals,
   getOrCreateConsultation,
   listOrders,
+  recordOrderResult,
   recordVitals,
   saveConsultationDraft,
 } from '../api'
@@ -17,6 +18,7 @@ import type {
   Consultation,
   EncounterSummary,
   OrderPriority,
+  OrderResultItemInput,
   OrderType,
   Vitals,
   VitalsPriority,
@@ -184,6 +186,11 @@ export default function ConsultationWorkspace({
   const [cancelTargetId, setCancelTargetId] = useState<number | null>(null)
   const [cancelReason, setCancelReason] = useState('')
   const [cancelling, setCancelling] = useState(false)
+  // OPD/HIMS master spec Phase 7 -- the one order currently showing its
+  // result-entry form, same one-row-at-a-time pattern as cancelTargetId.
+  const [resultTargetId, setResultTargetId] = useState<number | null>(null)
+  const [resultItems, setResultItems] = useState<OrderResultItemInput[]>([])
+  const [resultSaving, setResultSaving] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -354,6 +361,48 @@ export default function ConsultationWorkspace({
       setOrderError(err instanceof ApiError ? err.message : 'Could not cancel this order')
     } finally {
       setCancelling(false)
+    }
+  }
+
+  function blankResultItem(): OrderResultItemInput {
+    return { parameter: '', result_value: '', unit: '', reference_range: '', is_abnormal: false, is_critical: false }
+  }
+
+  function startRecordResult(orderId: number) {
+    setResultTargetId(orderId)
+    setResultItems([blankResultItem()])
+  }
+
+  function cancelRecordResult() {
+    setResultTargetId(null)
+    setResultItems([])
+  }
+
+  function updateResultItem(index: number, patch: Partial<OrderResultItemInput>) {
+    setResultItems((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)))
+  }
+
+  async function handleSaveResult(orderId: number) {
+    const items = resultItems
+      .filter((item) => item.parameter.trim() && item.result_value.trim())
+      .map((item) => ({
+        ...item,
+        unit: item.unit?.trim() || undefined,
+        reference_range: item.reference_range?.trim() || undefined,
+      }))
+    if (items.length === 0) return
+
+    setResultSaving(true)
+    setOrderError(null)
+    try {
+      const updated = await recordOrderResult(appointmentId, orderId, items)
+      setOrders((prev) => prev.map((o) => (o.id === orderId ? updated : o)))
+      setResultTargetId(null)
+      setResultItems([])
+    } catch (err) {
+      setOrderError(err instanceof ApiError ? err.message : 'Could not record the result')
+    } finally {
+      setResultSaving(false)
     }
   }
 
@@ -803,68 +852,201 @@ export default function ConsultationWorkspace({
                     </tr>
                   </thead>
                   <tbody>
-                    {orders.map((order) => (
-                      <tr key={order.id}>
-                        <td>{ORDER_TYPE_LABELS[order.order_type]}</td>
-                        <td>
-                          {order.description}
-                          {order.order_type === 'EXTERNAL_REFERRAL' && order.external_destination && (
-                            <div className="muted">to {order.external_destination}</div>
+                    {orders.map((order) => {
+                      const actionable = order.status === 'ORDERED' || order.status === 'IN_PROGRESS'
+                      return (
+                        <Fragment key={order.id}>
+                          <tr>
+                            <td>{ORDER_TYPE_LABELS[order.order_type]}</td>
+                            <td>
+                              {order.description}
+                              {order.order_type === 'EXTERNAL_REFERRAL' && order.external_destination && (
+                                <div className="muted">to {order.external_destination}</div>
+                              )}
+                              {order.status === 'CANCELLED' && order.cancel_reason && (
+                                <div className="muted">Cancelled: {order.cancel_reason}</div>
+                              )}
+                            </td>
+                            <td>{order.priority}</td>
+                            <td>
+                              <span className={`pill status-${order.status.toLowerCase()}`}>{order.status}</span>
+                            </td>
+                            <td>{formatDateTime(order.ordered_at)}</td>
+                            <td>
+                              {actionable &&
+                                (cancelTargetId === order.id ? (
+                                  <div className="queue-priority-form">
+                                    <input
+                                      type="text"
+                                      placeholder="Reason (required)"
+                                      value={cancelReason}
+                                      onChange={(e) => setCancelReason(e.target.value)}
+                                      autoFocus
+                                    />
+                                    <button
+                                      type="button"
+                                      className="btn btn-sm"
+                                      disabled={!cancelReason.trim() || cancelling}
+                                      onClick={() => handleCancelOrder(order.id)}
+                                    >
+                                      {cancelling ? 'Cancelling…' : 'Confirm'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn-secondary btn btn-sm"
+                                      onClick={() => {
+                                        setCancelTargetId(null)
+                                        setCancelReason('')
+                                      }}
+                                    >
+                                      Back
+                                    </button>
+                                  </div>
+                                ) : resultTargetId === order.id ? null : (
+                                  <div className="queue-row-actions">
+                                    <button
+                                      type="button"
+                                      className="btn btn-sm"
+                                      onClick={() => startRecordResult(order.id)}
+                                    >
+                                      Record result
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn-danger btn btn-sm"
+                                      onClick={() => {
+                                        setCancelTargetId(order.id)
+                                        setCancelReason('')
+                                      }}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ))}
+                            </td>
+                          </tr>
+
+                          {resultTargetId === order.id && (
+                            <tr>
+                              <td colSpan={6}>
+                                {resultItems.map((item, index) => (
+                                  <div key={index} className="doctor-form-grid">
+                                    <label className="inline-label">
+                                      Parameter
+                                      <input
+                                        type="text"
+                                        value={item.parameter}
+                                        placeholder="e.g. Hemoglobin, Findings"
+                                        onChange={(e) => updateResultItem(index, { parameter: e.target.value })}
+                                      />
+                                    </label>
+                                    <label className="inline-label">
+                                      Result
+                                      <input
+                                        type="text"
+                                        value={item.result_value}
+                                        onChange={(e) => updateResultItem(index, { result_value: e.target.value })}
+                                      />
+                                    </label>
+                                    <label className="inline-label">
+                                      Unit
+                                      <input
+                                        type="text"
+                                        value={item.unit ?? ''}
+                                        onChange={(e) => updateResultItem(index, { unit: e.target.value })}
+                                      />
+                                    </label>
+                                    <label className="inline-label">
+                                      Reference range
+                                      <input
+                                        type="text"
+                                        value={item.reference_range ?? ''}
+                                        onChange={(e) =>
+                                          updateResultItem(index, { reference_range: e.target.value })
+                                        }
+                                      />
+                                    </label>
+                                    <label className="inline-label checkbox-label">
+                                      <input
+                                        type="checkbox"
+                                        checked={item.is_abnormal ?? false}
+                                        onChange={(e) => updateResultItem(index, { is_abnormal: e.target.checked })}
+                                      />
+                                      Abnormal
+                                    </label>
+                                    <label className="inline-label checkbox-label">
+                                      <input
+                                        type="checkbox"
+                                        checked={item.is_critical ?? false}
+                                        onChange={(e) => updateResultItem(index, { is_critical: e.target.checked })}
+                                      />
+                                      Critical
+                                    </label>
+                                  </div>
+                                ))}
+                                <div className="doctor-quick-actions">
+                                  <button
+                                    type="button"
+                                    className="btn-secondary btn btn-sm"
+                                    onClick={() => setResultItems((prev) => [...prev, blankResultItem()])}
+                                  >
+                                    + Add parameter
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-sm"
+                                    disabled={
+                                      resultSaving ||
+                                      !resultItems.some((i) => i.parameter.trim() && i.result_value.trim())
+                                    }
+                                    onClick={() => handleSaveResult(order.id)}
+                                  >
+                                    {resultSaving ? 'Saving…' : 'Save result'}
+                                  </button>
+                                  <button type="button" className="btn-secondary btn btn-sm" onClick={cancelRecordResult}>
+                                    Cancel
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
                           )}
-                          {order.status === 'CANCELLED' && order.cancel_reason && (
-                            <div className="muted">Cancelled: {order.cancel_reason}</div>
+
+                          {order.results.length > 0 && (
+                            <tr>
+                              <td colSpan={6}>
+                                <table className="data-table">
+                                  <thead>
+                                    <tr>
+                                      <th>Parameter</th>
+                                      <th>Result</th>
+                                      <th>Unit</th>
+                                      <th>Reference range</th>
+                                      <th></th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {order.results.map((r) => (
+                                      <tr key={r.id}>
+                                        <td>{r.parameter}</td>
+                                        <td>{r.result_value}</td>
+                                        <td>{r.unit ?? ''}</td>
+                                        <td>{r.reference_range ?? ''}</td>
+                                        <td>
+                                          {r.is_critical && <span className="pill status-cancelled">Critical</span>}
+                                          {!r.is_critical && r.is_abnormal && (
+                                            <span className="pill status-pending">Abnormal</span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </td>
+                            </tr>
                           )}
-                        </td>
-                        <td>{order.priority}</td>
-                        <td>
-                          <span className={`pill status-${order.status.toLowerCase()}`}>{order.status}</span>
-                        </td>
-                        <td>{formatDateTime(order.ordered_at)}</td>
-                        <td>
-                          {(order.status === 'ORDERED' || order.status === 'IN_PROGRESS') &&
-                            (cancelTargetId === order.id ? (
-                              <div className="queue-priority-form">
-                                <input
-                                  type="text"
-                                  placeholder="Reason (required)"
-                                  value={cancelReason}
-                                  onChange={(e) => setCancelReason(e.target.value)}
-                                  autoFocus
-                                />
-                                <button
-                                  type="button"
-                                  className="btn btn-sm"
-                                  disabled={!cancelReason.trim() || cancelling}
-                                  onClick={() => handleCancelOrder(order.id)}
-                                >
-                                  {cancelling ? 'Cancelling…' : 'Confirm'}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn-secondary btn btn-sm"
-                                  onClick={() => {
-                                    setCancelTargetId(null)
-                                    setCancelReason('')
-                                  }}
-                                >
-                                  Back
-                                </button>
-                              </div>
-                            ) : (
-                              <button
-                                type="button"
-                                className="btn-danger btn btn-sm"
-                                onClick={() => {
-                                  setCancelTargetId(order.id)
-                                  setCancelReason('')
-                                }}
-                              >
-                                Cancel
-                              </button>
-                            ))}
-                        </td>
-                      </tr>
-                    ))}
+                        </Fragment>
+                      )
+                    })}
                   </tbody>
                 </table>
               )}

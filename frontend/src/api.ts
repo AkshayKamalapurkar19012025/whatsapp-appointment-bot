@@ -25,6 +25,7 @@ import type {
   DoctorQueue,
   EncounterSummary,
   OrderInput,
+  OrderResultItemInput,
   QueueDisplayEntry,
   DoctorScheduleEntry,
   DoctorWithSlots,
@@ -671,6 +672,20 @@ export function cancelOrder(appointmentId: number, orderId: number, reason: stri
     method: 'POST',
     auth: 'staff',
     body: { reason },
+  })
+}
+
+// -- Order results (OPD/HIMS master spec Phase 7) -------------------------
+
+export function recordOrderResult(
+  appointmentId: number,
+  orderId: number,
+  items: OrderResultItemInput[],
+): Promise<ClinicalOrder> {
+  return request(`/appointments/${appointmentId}/orders/${orderId}/result`, {
+    method: 'POST',
+    auth: 'staff',
+    body: { items },
   })
 }
 

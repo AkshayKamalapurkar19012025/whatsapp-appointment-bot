@@ -19,6 +19,7 @@ from app.services.order_services import (
     create_order_service,
     list_orders_service,
     cancel_order_service,
+    record_order_result_service,
 )
 
 router = APIRouter(
@@ -37,6 +38,19 @@ class OrderCreate(BaseModel):
 
 class OrderCancel(BaseModel):
     reason: str = Field(min_length=1)
+
+
+class OrderResultItem(BaseModel):
+    parameter: str = Field(min_length=1)
+    result_value: str = Field(min_length=1)
+    unit: str | None = None
+    reference_range: str | None = None
+    is_abnormal: bool = False
+    is_critical: bool = False
+
+
+class OrderResultCreate(BaseModel):
+    items: list[OrderResultItem] = Field(min_length=1)
 
 
 @router.get("/{appointment_id}/orders")
@@ -103,6 +117,35 @@ def cancel_order(
             except svc_exc.OrderNotFound:
                 raise HTTPException(status_code=404, detail="Order not found")
             except svc_exc.OrderNotCancellable:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This order is already completed or cancelled",
+                )
+    return result
+
+
+@router.post("/{appointment_id}/orders/{order_id}/result")
+def record_order_result(
+    appointment_id: int,
+    order_id: int,
+    body: OrderResultCreate,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = record_order_result_service(
+                    cur,
+                    appointment_id,
+                    order_id,
+                    staff_id=staff["id"],
+                    items=[item.model_dump() for item in body.items],
+                )
+            except svc_exc.EncounterNotFound:
+                raise HTTPException(status_code=404, detail="No encounter exists for this appointment")
+            except svc_exc.OrderNotFound:
+                raise HTTPException(status_code=404, detail="Order not found")
+            except svc_exc.OrderNotResultable:
                 raise HTTPException(
                     status_code=409,
                     detail="This order is already completed or cancelled",

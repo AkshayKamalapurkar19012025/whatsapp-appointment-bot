@@ -280,3 +280,15 @@ class OrderNotCancellable(ServiceError):
     COMPLETED or CANCELLED -- a finished or already-cancelled order has
     nothing left to cancel."""
     pass
+
+
+# ---------------------------------------------------------------------
+# Diagnostics / order results (OPD/HIMS master spec Phase 7) -- see
+# app/services/order_services.py's record_order_result_service.
+# ---------------------------------------------------------------------
+
+class OrderNotResultable(ServiceError):
+    """Raised by record_order_result_service when the order is already
+    COMPLETED (results already recorded -- no amendment workflow yet,
+    see migrations/0031's header) or CANCELLED (nothing to result)."""
+    pass
