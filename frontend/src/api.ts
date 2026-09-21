@@ -8,9 +8,15 @@ import type {
   AppointmentTypeDetail,
   AppointmentTypeSummary,
   ScheduledAppointment,
+  BillChargeInput,
   BillingReport,
+  BillPaymentInput,
+  BillSummary,
   BookingSource,
   CalendarMonth,
+  ClinicalOrder,
+  Consultation,
+  ConsultationInput,
   DashboardStats,
   DashboardTrends,
   Department,
@@ -20,6 +26,15 @@ import type {
   DoctorEducationEntry,
   DoctorProfile,
   DoctorQueue,
+  EncounterSummary,
+  OrderInput,
+  OrderResultItemInput,
+  PharmacyQueueEntry,
+  PharmacyStockBatch,
+  PharmacyStockInput,
+  Prescription,
+  PrescriptionItem,
+  PrescriptionItemInput,
   QueueDisplayEntry,
   DoctorScheduleEntry,
   DoctorWithSlots,
@@ -30,6 +45,9 @@ import type {
   PaymentActionResult,
   Staff,
   StaffAccount,
+  UnbilledSources,
+  Vitals,
+  VitalsInput,
 } from './types'
 
 // Bearer token, per the WEB P2 decision (Authorization header, not a
@@ -616,6 +634,71 @@ export function getQueueDisplay(): Promise<QueueDisplayEntry[]> {
   return request('/public/queue-display')
 }
 
+// -- Clinical (OPD/HIMS master spec Phase 5) ------------------------------
+
+export function getEncounterSummary(appointmentId: number): Promise<EncounterSummary> {
+  return request(`/appointments/${appointmentId}/encounter`, { auth: 'staff' })
+}
+
+export function recordVitals(appointmentId: number, payload: VitalsInput): Promise<Vitals> {
+  return request(`/appointments/${appointmentId}/vitals`, { method: 'POST', auth: 'staff', body: payload })
+}
+
+export function getLatestVitals(appointmentId: number): Promise<Vitals | null> {
+  return request(`/appointments/${appointmentId}/vitals/latest`, { auth: 'staff' })
+}
+
+// Ensures a DRAFT consultation exists for this appointment and returns
+// it (creating a blank one on first call) -- see get_or_create_
+// consultation_service. 409s if the patient isn't currently checked in
+// and no consultation exists yet.
+export function getOrCreateConsultation(appointmentId: number): Promise<Consultation> {
+  return request(`/appointments/${appointmentId}/consultation`, { auth: 'staff' })
+}
+
+export function saveConsultationDraft(
+  appointmentId: number,
+  payload: ConsultationInput,
+): Promise<Consultation> {
+  return request(`/appointments/${appointmentId}/consultation`, { method: 'PUT', auth: 'staff', body: payload })
+}
+
+export function completeConsultation(appointmentId: number): Promise<Consultation> {
+  return request(`/appointments/${appointmentId}/consultation/complete`, { method: 'POST', auth: 'staff' })
+}
+
+// -- Orders (OPD/HIMS master spec Phase 6) --------------------------------
+
+export function listOrders(appointmentId: number): Promise<ClinicalOrder[]> {
+  return request(`/appointments/${appointmentId}/orders`, { auth: 'staff' })
+}
+
+export function createOrder(appointmentId: number, payload: OrderInput): Promise<ClinicalOrder> {
+  return request(`/appointments/${appointmentId}/orders`, { method: 'POST', auth: 'staff', body: payload })
+}
+
+export function cancelOrder(appointmentId: number, orderId: number, reason: string): Promise<ClinicalOrder> {
+  return request(`/appointments/${appointmentId}/orders/${orderId}/cancel`, {
+    method: 'POST',
+    auth: 'staff',
+    body: { reason },
+  })
+}
+
+// -- Order results (OPD/HIMS master spec Phase 7) -------------------------
+
+export function recordOrderResult(
+  appointmentId: number,
+  orderId: number,
+  items: OrderResultItemInput[],
+): Promise<ClinicalOrder> {
+  return request(`/appointments/${appointmentId}/orders/${orderId}/result`, {
+    method: 'POST',
+    auth: 'staff',
+    body: { items },
+  })
+}
+
 export function assignDoctorToDepartment(
   doctorId: number,
   departmentId: number,
@@ -1080,4 +1163,125 @@ export function getAdminCalendarMonth(
     month: String(month),
   })
   return request(`/appointments/calendar?${params.toString()}`, { auth: 'staff' })
+}
+
+// -- Prescription (OPD/HIMS master spec Phase 8) --------------------------
+
+export function getPrescription(appointmentId: number): Promise<Prescription> {
+  return request(`/appointments/${appointmentId}/prescription`, { auth: 'staff' })
+}
+
+export function addPrescriptionItem(
+  appointmentId: number,
+  payload: PrescriptionItemInput,
+): Promise<Prescription> {
+  return request(`/appointments/${appointmentId}/prescription/items`, {
+    method: 'POST',
+    auth: 'staff',
+    body: payload,
+  })
+}
+
+export function removePrescriptionItem(appointmentId: number, itemId: number): Promise<Prescription> {
+  return request(`/appointments/${appointmentId}/prescription/items/${itemId}`, {
+    method: 'DELETE',
+    auth: 'staff',
+  })
+}
+
+export function prescribePrescription(appointmentId: number): Promise<Prescription> {
+  return request(`/appointments/${appointmentId}/prescription/prescribe`, { method: 'POST', auth: 'staff' })
+}
+
+export function cancelPrescription(appointmentId: number, reason: string): Promise<Prescription> {
+  return request(`/appointments/${appointmentId}/prescription/cancel`, {
+    method: 'POST',
+    auth: 'staff',
+    body: { reason },
+  })
+}
+
+// -- Pharmacy (OPD/HIMS master spec Phase 8) -------------------------------
+
+export function getPharmacyQueue(): Promise<PharmacyQueueEntry[]> {
+  return request('/pharmacy/queue', { auth: 'staff' })
+}
+
+export function getPharmacyStock(medicineName?: string): Promise<PharmacyStockBatch[]> {
+  const query = medicineName ? `?medicine_name=${encodeURIComponent(medicineName)}` : ''
+  return request(`/pharmacy/stock${query}`, { auth: 'staff' })
+}
+
+export function createPharmacyStock(payload: PharmacyStockInput): Promise<PharmacyStockBatch> {
+  return request('/pharmacy/stock', { method: 'POST', auth: 'staff', body: payload })
+}
+
+export function dispensePrescriptionItem(
+  itemId: number,
+  payload: { quantity: number; pharmacy_stock_id?: number; unit_price?: number },
+): Promise<PrescriptionItem> {
+  return request(`/pharmacy/items/${itemId}/dispense`, { method: 'POST', auth: 'staff', body: payload })
+}
+
+// -- Billing (OPD/HIMS master spec Phase 9) --------------------------------
+// New, encounter-scoped invoice/charge/payment model, entirely
+// independent of getAppointmentInvoice/addInvoiceLineItem above (the
+// existing consultation_fee flow) -- see types.ts's BillSummary
+// docstring. Not gated on check-in: callable any time an appointment
+// (and therefore its encounter) exists.
+
+export function getBill(appointmentId: number): Promise<BillSummary> {
+  return request(`/appointments/${appointmentId}/bill`, { auth: 'staff' })
+}
+
+export function getUnbilledSources(appointmentId: number): Promise<UnbilledSources> {
+  return request(`/appointments/${appointmentId}/bill/unbilled`, { auth: 'staff' })
+}
+
+export function updateBillTerms(
+  appointmentId: number,
+  payload: { discount_amount?: number; discount_reason?: string; tax_rate?: number },
+): Promise<BillSummary> {
+  return request(`/appointments/${appointmentId}/bill`, { method: 'PATCH', auth: 'staff', body: payload })
+}
+
+export function voidBill(appointmentId: number, reason: string): Promise<BillSummary> {
+  return request(`/appointments/${appointmentId}/bill/void`, { method: 'POST', auth: 'staff', body: { reason } })
+}
+
+export function addBillCharge(appointmentId: number, payload: BillChargeInput): Promise<BillSummary> {
+  return request(`/appointments/${appointmentId}/bill/charges`, { method: 'POST', auth: 'staff', body: payload })
+}
+
+export function voidBillCharge(appointmentId: number, chargeId: number, reason: string): Promise<BillSummary> {
+  return request(`/appointments/${appointmentId}/bill/charges/${chargeId}/void`, {
+    method: 'POST',
+    auth: 'staff',
+    body: { reason },
+  })
+}
+
+export function recordBillPayment(appointmentId: number, payload: BillPaymentInput): Promise<BillSummary> {
+  return request(`/appointments/${appointmentId}/bill/payments`, { method: 'POST', auth: 'staff', body: payload })
+}
+
+export function voidBillPayment(appointmentId: number, paymentId: number, reason: string): Promise<BillSummary> {
+  return request(`/appointments/${appointmentId}/bill/payments/${paymentId}/void`, {
+    method: 'POST',
+    auth: 'staff',
+    body: { reason },
+  })
+}
+
+export function refundBillPayment(
+  appointmentId: number,
+  paymentId: number,
+  amount: number,
+  reason: string,
+): Promise<BillSummary> {
+  return request(`/appointments/${appointmentId}/bill/payments/${paymentId}/refund`, {
+    method: 'POST',
+    auth: 'staff',
+    body: { amount, reason },
+  })
 }

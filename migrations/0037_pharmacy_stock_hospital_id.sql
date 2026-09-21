@@ -1,0 +1,23 @@
+-- Reconciling this branch's Phase 8 pharmacy stock
+-- (migrations/0032_prescriptions_and_pharmacy.sql) with main's
+-- independently shipped tenant-context work
+-- (migrations/0027_hospital_tenant_context.sql) -- caught by
+-- tests/test_hospital_tenant_coverage.py's own coverage check.
+--
+-- Every other new table this branch added (encounters' children:
+-- vitals, consultations, orders, order_results, prescriptions,
+-- prescription_items, pharmacy_dispense_records, invoices, charges,
+-- payments) is exempted there instead of getting its own column --
+-- each has a NOT NULL FK to a table that's already hospital-scoped
+-- (ultimately encounters, which carries hospital_id directly), so the
+-- tenant is derivable without a column of its own, same reasoning as
+-- doctor_education/staff_roles/break_glass_grants there.
+--
+-- pharmacy_stock is different: it's physical medicine inventory with no
+-- FK to any hospital-scoped entity at all (medicine_name/batch_number/
+-- quantity_on_hand/unit_price, created_by -> staff). Two hospitals in a
+-- future multi-tenant deployment would keep genuinely separate stock,
+-- so this needs its own column, not a derived one -- same category as
+-- the nine tables 0027 itself retrofitted directly, not the "child of
+-- an already-scoped parent" exemption.
+ALTER TABLE pharmacy_stock ADD COLUMN hospital_id BIGINT NOT NULL DEFAULT 1 REFERENCES hospitals(id);

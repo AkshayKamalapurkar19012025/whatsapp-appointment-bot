@@ -1,0 +1,191 @@
+"""
+Triage/vitals and doctor consultation (OPD/HIMS master spec Phase 5).
+Thin wrappers around app/services/clinical_services.py, nested under
+/appointments/{appointment_id}/... -- same URL convention every other
+appointment-scoped action in this app already uses (confirm/reject/
+visit/complete/reschedule, the billing endpoints), rather than a new
+/encounters/{id}/... surface the frontend would need a second lookup to
+reach. Every endpoint requires an authenticated staff session (ADMIN or
+STAFF) -- there is no separate NURSE/DOCTOR login role yet (flagged as a
+known gap in this phase's report, not fixed here), so staff record
+vitals and write consultations the same way they already record
+payments and manage the queue today.
+"""
+
+from datetime import date
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+
+from app.api.staff_auth import get_current_staff
+from app.db.connection import get_connection
+from app.services import exceptions as svc_exc
+from app.services.clinical_services import (
+    get_encounter_summary_service,
+    record_vitals_service,
+    get_latest_vitals_service,
+    get_or_create_consultation_service,
+    save_consultation_draft_service,
+    complete_consultation_service,
+)
+
+router = APIRouter(
+    prefix="/appointments",
+    tags=["Clinical"],
+)
+
+
+def _not_found(detail: str):
+    return HTTPException(status_code=404, detail=detail)
+
+
+class VitalsCreate(BaseModel):
+    bp_systolic: int | None = Field(default=None, gt=0)
+    bp_diastolic: int | None = Field(default=None, gt=0)
+    pulse: int | None = Field(default=None, gt=0)
+    temperature_celsius: float | None = Field(default=None, gt=0)
+    spo2: int | None = Field(default=None, gt=0, le=100)
+    respiratory_rate: int | None = Field(default=None, gt=0)
+    weight_kg: float | None = Field(default=None, gt=0)
+    height_cm: float | None = Field(default=None, gt=0)
+    pain_score: int | None = Field(default=None, ge=0, le=10)
+    chief_complaint: str | None = None
+    priority: Literal["ROUTINE", "URGENT", "EMERGENCY"] = "ROUTINE"
+    nursing_notes: str | None = None
+
+
+class ConsultationSave(BaseModel):
+    chief_complaint: str | None = None
+    history_notes: str | None = None
+    examination_notes: str | None = None
+    diagnosis: str | None = None
+    clinical_notes: str | None = None
+    follow_up_date: date | None = None
+    follow_up_reason: str | None = None
+
+
+@router.get("/{appointment_id}/encounter")
+def get_encounter(appointment_id: int, staff: dict = Depends(get_current_staff)):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                return get_encounter_summary_service(cur, appointment_id)
+            except svc_exc.AppointmentNotFound:
+                raise _not_found("Appointment not found")
+            except svc_exc.EncounterNotFound:
+                raise _not_found("No encounter exists for this appointment")
+
+
+@router.post("/{appointment_id}/vitals")
+def create_vitals(
+    appointment_id: int,
+    body: VitalsCreate,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = record_vitals_service(
+                    cur,
+                    appointment_id,
+                    staff_id=staff["id"],
+                    **body.model_dump(),
+                )
+            except svc_exc.AppointmentNotFound:
+                raise _not_found("Appointment not found")
+            except svc_exc.EncounterNotFound:
+                raise _not_found("No encounter exists for this appointment")
+            except svc_exc.EncounterClosed:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Patient is not currently checked in -- vitals can only be recorded while the visit is in progress",
+                )
+    return result
+
+
+@router.get("/{appointment_id}/vitals/latest")
+def get_latest_vitals(appointment_id: int, staff: dict = Depends(get_current_staff)):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                return get_latest_vitals_service(cur, appointment_id)
+            except svc_exc.EncounterNotFound:
+                raise _not_found("No encounter exists for this appointment")
+
+
+@router.get("/{appointment_id}/consultation")
+def get_consultation(appointment_id: int, staff: dict = Depends(get_current_staff)):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                return get_or_create_consultation_service(cur, appointment_id, staff_id=staff["id"])
+            except svc_exc.AppointmentNotFound:
+                raise _not_found("Appointment not found")
+            except svc_exc.EncounterNotFound:
+                raise _not_found("No encounter exists for this appointment")
+            except svc_exc.EncounterClosed:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Patient is not currently checked in -- a consultation can only be started while the visit is in progress",
+                )
+
+
+@router.put("/{appointment_id}/consultation")
+def save_consultation(
+    appointment_id: int,
+    body: ConsultationSave,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = save_consultation_draft_service(
+                    cur,
+                    appointment_id,
+                    staff_id=staff["id"],
+                    **body.model_dump(),
+                )
+            except svc_exc.AppointmentNotFound:
+                raise _not_found("Appointment not found")
+            except svc_exc.EncounterNotFound:
+                raise _not_found("No encounter exists for this appointment")
+            except svc_exc.ConsultationAlreadyCompleted:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This consultation is already completed and can no longer be edited",
+                )
+            except svc_exc.EncounterClosed:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Patient is not currently checked in -- a consultation can only be saved while the visit is in progress",
+                )
+    return result
+
+
+@router.post("/{appointment_id}/consultation/complete")
+def complete_consultation(appointment_id: int, staff: dict = Depends(get_current_staff)):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = complete_consultation_service(cur, appointment_id, staff_id=staff["id"])
+            except svc_exc.AppointmentNotFound:
+                raise _not_found("Appointment not found")
+            except svc_exc.EncounterNotFound:
+                raise _not_found("No consultation has been started for this appointment")
+            except svc_exc.ConsultationAlreadyCompleted:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This consultation is already completed",
+                )
+            except svc_exc.EncounterClosed:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Patient is not currently checked in -- a consultation can only be completed while the visit is in progress",
+                )
+            except svc_exc.ConsultationIncomplete:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Chief complaint and diagnosis are required to complete the consultation",
+                )
+    return result

@@ -90,6 +90,34 @@ RELEASED_STATUSES = ("CANCELLED", "REJECTED")
 # Statuses a patient/staff can still cancel or reschedule out of.
 ACTIONABLE_STATUSES = ("PENDING", "CONFIRMED")
 
+# Every status that ends an appointment's care episode for good -- kept
+# in lockstep with migrations/0028_encounters.sql's own backfill CASE,
+# which uses this exact set. Whenever an appointment lands on one of
+# these, the encounters row opened alongside it (see
+# create_appointment_service) is closed in the same transaction by
+# _close_encounter_for_appointment below.
+TERMINAL_STATUSES = ("CANCELLED", "REJECTED", "COMPLETED", "NO_SHOW")
+
+
+def _close_encounter_for_appointment(cur, appointment_id: int):
+    """Close the OPD encounter for this appointment, if it has one and
+    it's still open. A no-op (0 rows updated) is expected, not an error,
+    for any appointment created before migrations/0028_encounters.sql
+    landed and already closed by that migration's backfill, or for a
+    second call on an already-closed encounter -- callers don't need to
+    check first."""
+    cur.execute(
+        """
+        UPDATE encounters
+        SET status = 'CLOSED',
+            closed_at = NOW(),
+            updated_at = NOW()
+        WHERE id = (SELECT encounter_id FROM appointments WHERE id = %s)
+          AND status = 'OPEN'
+        """,
+        (appointment_id,),
+    )
+
 
 def create_appointment_service(
     cur,
@@ -435,6 +463,7 @@ def create_appointment_service(
         raise SlotOverlap()
 
     row = cur.fetchone()
+    appointment_id = row[0]
 
     return {
         "id": row[0],
@@ -503,6 +532,8 @@ def cancel_appointment_service(
     )
 
     row = cur.fetchone()
+
+    _close_encounter_for_appointment(cur, appointment_id)
 
     return {
         "id": row[0],
@@ -721,16 +752,19 @@ def reschedule_appointment_service(
           -- status::text: see availability_engine.py's get_available_slots
           -- for why (enum-typed appointments.status on some databases).
           AND status::text = ANY(%s::text[])
-        RETURNING id
+        RETURNING id, encounter_id
         """,
         (appointment_id, patient_id, list(ACTIONABLE_STATUSES)),
     )
 
-    if cur.fetchone() is None:
+    cancelled_row = cur.fetchone()
+    if cancelled_row is None:
         # Lost a race between the FOR UPDATE read above and here --
         # shouldn't happen given the row lock, kept as a defensive
         # mirror of scheduling.py's own equivalent check.
         raise AlreadyCancelled()
+
+    old_encounter_id = cancelled_row[1]
 
     try:
         cur.execute(
@@ -741,9 +775,10 @@ def reschedule_appointment_service(
                 appointment_type_id,
                 start_at,
                 end_at,
-                status
+                status,
+                encounter_id
             )
-            VALUES (%s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING
                 id,
                 doctor_id,
@@ -757,8 +792,11 @@ def reschedule_appointment_service(
             # (PENDING stays PENDING, awaiting the same confirmation it
             # always needed; CONFIRMED stays CONFIRMED) rather than
             # resetting it -- moving the time shouldn't force an already-
-            # confirmed appointment back into a confirmation queue.
-            (doctor_id, patient_id, appointment_type_id, new_start_at, new_end_at, status),
+            # confirmed appointment back into a confirmation queue. The
+            # same encounter carries forward onto the new row too (see
+            # below) -- a reschedule is the same care episode moved in
+            # time, not a new one.
+            (doctor_id, patient_id, appointment_type_id, new_start_at, new_end_at, status, old_encounter_id),
         )
     except psycopg.errors.ExclusionViolation:
         # Unlike create_appointment_service's equivalent catch, this one
@@ -923,6 +961,9 @@ def _transition_appointment_status(cur, appointment_id: int, *, from_statuses, t
     )
 
     result_row = cur.fetchone()
+
+    if to_status in TERMINAL_STATUSES:
+        _close_encounter_for_appointment(cur, appointment_id)
 
     return {"id": result_row[0], "status": result_row[1]}
 
@@ -1333,6 +1374,8 @@ def mark_no_show_service(cur, appointment_id: int):
     )
 
     result_row = cur.fetchone()
+
+    _close_encounter_for_appointment(cur, appointment_id)
 
     return {"id": result_row[0], "status": result_row[1]}
 

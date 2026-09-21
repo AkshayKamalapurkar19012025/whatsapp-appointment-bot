@@ -6,6 +6,7 @@ import {
   CurrencyInr,
   Gauge,
   GearSix,
+  Pill,
   ShieldCheck,
   Stethoscope,
   Tag,
@@ -24,6 +25,8 @@ import AppointmentsPanel from './AppointmentsPanel'
 import BillingPanel from './BillingPanel'
 import BookAppointmentPanel from './BookAppointmentPanel'
 import QueuePanel from './QueuePanel'
+import ConsultationWorkspace from './ConsultationWorkspace'
+import PharmacyPanel from './PharmacyPanel'
 import AdminSidebar, { type AdminSidebarItem } from './AdminSidebar'
 import AdminTopBar from './AdminTopBar'
 
@@ -32,12 +35,14 @@ type Section =
   | 'appointments'
   | 'book-appointment'
   | 'queue'
+  | 'consultation'
   | 'doctors'
   | 'departments'
   | 'appointment-types'
   | 'patients'
   | 'staff-accounts'
   | 'billing'
+  | 'pharmacy'
 
 // Nothing in this component clears staff/getStaffToken() when `section`
 // changes -- switching sections is a plain in-memory state update, same
@@ -71,6 +76,15 @@ export default function AdminApp() {
   // "Book Appointment"/"Walk-in Registration", which set it false right
   // before navigating) always starts BookAppointmentPanel fresh.
   const [autoOpenRegisterOnBook, setAutoOpenRegisterOnBook] = useState(false)
+  // Which appointment ConsultationWorkspace opens for -- set right
+  // before navigating to 'consultation' (goToConsultation below), same
+  // handoff pattern as autoOpenRegisterOnBook above. Passed as plain
+  // component state rather than the localStorage handoff
+  // goToQueueForDoctor uses, since this is always set synchronously by
+  // the same click that navigates here (there's no "arrive at this
+  // section from somewhere else" case to survive a remount for, unlike
+  // the queue's last-viewed-doctor convenience).
+  const [consultationAppointmentId, setConsultationAppointmentId] = useState<number | null>(null)
 
   useEffect(() => {
     if (!getStaffToken()) {
@@ -122,6 +136,11 @@ export default function AdminApp() {
       // Best-effort only, same as QueuePanel's own write to this key.
     }
     goTo('queue')
+  }
+
+  function goToConsultation(appointmentId: number) {
+    setConsultationAppointmentId(appointmentId)
+    goTo('consultation')
   }
 
   if (checkingSession) {
@@ -180,7 +199,11 @@ export default function AdminApp() {
       // "Open Queue"), not separate top-level destinations, so the nav
       // shouldn't go dark while a staff member is mid-booking or
       // watching a doctor's queue.
-      active: section === 'appointments' || section === 'book-appointment' || section === 'queue',
+      active:
+        section === 'appointments' ||
+        section === 'book-appointment' ||
+        section === 'queue' ||
+        section === 'consultation',
       onSelect: () => goTo('appointments'),
       group: 'Main',
     },
@@ -214,6 +237,14 @@ export default function AdminApp() {
       icon: <Tag size={20} weight="regular" />,
       active: section === 'appointment-types',
       onSelect: () => goTo('appointment-types'),
+      group: 'Manage',
+    },
+    {
+      key: 'pharmacy',
+      label: 'Pharmacy',
+      icon: <Pill size={20} weight="regular" />,
+      active: section === 'pharmacy',
+      onSelect: () => goTo('pharmacy'),
       group: 'Manage',
     },
     ...(isAdmin
@@ -288,13 +319,24 @@ export default function AdminApp() {
               autoOpenRegister={autoOpenRegisterOnBook}
             />
           )}
-          {section === 'queue' && <QueuePanel key={navResetKey} onBack={() => goTo('appointments')} />}
+          {section === 'queue' && (
+            <QueuePanel key={navResetKey} onBack={() => goTo('appointments')} onOpenConsultation={goToConsultation} />
+          )}
+          {section === 'consultation' && consultationAppointmentId !== null && (
+            <ConsultationWorkspace
+              key={navResetKey}
+              appointmentId={consultationAppointmentId}
+              isAdmin={isAdmin}
+              onBack={() => goTo('queue')}
+            />
+          )}
           {section === 'doctors' && <DoctorsPanel key={navResetKey} isAdmin={isAdmin} onGoToQueue={goToQueueForDoctor} />}
           {section === 'departments' && <DepartmentsPanel key={navResetKey} isAdmin={isAdmin} />}
           {section === 'appointment-types' && <AppointmentTypesPanel key={navResetKey} isAdmin={isAdmin} />}
           {section === 'patients' && <PatientsPanel key={navResetKey} />}
           {section === 'staff-accounts' && isAdmin && <StaffAccountsPanel key={navResetKey} />}
           {section === 'billing' && <BillingPanel key={navResetKey} />}
+          {section === 'pharmacy' && <PharmacyPanel key={navResetKey} isAdmin={isAdmin} />}
         </main>
       </div>
     </div>

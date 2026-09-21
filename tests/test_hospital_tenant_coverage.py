@@ -43,6 +43,30 @@ EXEMPT_TABLES = {
     # main's independently-shipped billing/invoicing work, which
     # predates this coverage test existing on that line of development.
     "invoice_line_items",
+    # OPD/HIMS master spec Phases 3/5-9 (migrations/0028-0033, this
+    # branch's independently-shipped clinical/billing work, same
+    # situation as invoice_line_items above): every one of these has a
+    # NOT NULL FK to encounters, or to another table that itself
+    # ultimately FKs to encounters -- and encounters carries hospital_id
+    # directly (migrations/0028_encounters.sql) -- so tenant is
+    # derivable through the chain, same category as doctor_education.
+    # Direct child of encounters:
+    "vitals",
+    "consultations",
+    "orders",
+    "prescriptions",
+    "invoices",
+    # Child of one of the above:
+    "order_results",         # -> orders
+    "prescription_items",    # -> prescriptions
+    "pharmacy_dispense_records",  # -> prescription_items -> prescriptions
+    "charges",                # -> invoices
+    "payments",                # -> invoices
+    # pharmacy_stock is NOT in this list -- it has no FK to any
+    # hospital-scoped entity at all (physical inventory, not a child of
+    # a visit), so it got its own hospital_id column instead
+    # (migrations/0037_pharmacy_stock_hospital_id.sql), same category as
+    # the nine tables 0027 itself retrofitted directly.
 }
 
 

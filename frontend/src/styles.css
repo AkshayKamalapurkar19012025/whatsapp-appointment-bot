@@ -1754,6 +1754,40 @@ a.link.danger {
   scrollbar-width: thin;
 }
 
+/* ===========================================================
+   Patient context header (ConsultationWorkspace.tsx) -- the
+   "which patient, which visit" bar the OPD/HIMS master spec's
+   Principle 4 asks every clinical screen to keep visible. Deliberately
+   its own class, not a reuse of .doctor-workspace-header: that one
+   introduces a doctor (photo, name, department); this one introduces a
+   patient mid-visit (name, UHID, age/gender, attending doctor, token),
+   different fields entirely even though the layout rhyme is intentional.
+   =========================================================== */
+
+.patient-context-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-4);
+}
+
+.patient-context-identity h2 {
+  margin: 0 0 var(--space-1);
+}
+
+.patient-context-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  color: var(--color-text-secondary);
+  font-size: 0.9rem;
+}
+
 .doctor-workspace-tabs .tab {
   flex-shrink: 0;
 }
@@ -4967,6 +5001,41 @@ a.link.danger {
 .pill.status-no_show {
   background: var(--color-danger-soft);
   color: var(--color-danger);
+}
+
+/* Order spine (migrations/0030_orders.sql, OPD/HIMS master spec
+   Phase 6): ORDERED -> IN_PROGRESS -> COMPLETED/CANCELLED.
+   .status-ordered reuses the same "waiting for action" amber as
+   .status-pending; .status-in_progress reuses the same active-workflow
+   blue as .status-checked_in. .status-completed/.status-cancelled
+   above already cover the other two -- no new color family invented. */
+.pill.status-ordered {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.pill.status-in_progress {
+  background: var(--color-info-soft);
+  color: var(--color-info);
+}
+
+/* Prescription item dispensing (migrations/0032_prescriptions_and_
+   pharmacy.sql, OPD/HIMS master spec Phase 8): PENDING -> PARTIALLY_
+   DISPENSED -> DISPENSED, computed (never stored) from quantity_
+   dispensed/quantity -- see app/services/pharmacy_services.py.
+   .status-partially_dispensed reuses the same "still needs action"
+   amber as .status-pending/.status-ordered; .status-dispensed is
+   Success green -- unlike an appointment reaching COMPLETED (neutral;
+   see .status-completed's own comment), a fully dispensed medicine is
+   a genuinely good outcome, the same family as Paid/Confirmed. */
+.pill.status-partially_dispensed {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.pill.status-dispensed {
+  background: var(--color-success-soft);
+  color: var(--color-success);
 }
 
 .pill.token-pill {

@@ -502,6 +502,138 @@ export interface DoctorQueue {
   completed: QueueEntry[]
 }
 
+// OPD/HIMS master spec Phase 5 (migrations/0029_vitals_and_
+// consultations.sql) -- GET /api/appointments/{id}/encounter.
+export interface EncounterSummary {
+  encounter_id: number
+  encounter_status: 'OPEN' | 'CLOSED'
+  opened_at: string
+  closed_at: string | null
+  patient_id: number
+  patient_name: string
+  patient_uhid: string
+  patient_date_of_birth: string | null
+  patient_gender: string | null
+  doctor_id: number
+  doctor_name: string
+  token_number: number | null
+  appointment_id: number
+  appointment_status: string
+  start_at: string
+}
+
+export type VitalsPriority = 'ROUTINE' | 'URGENT' | 'EMERGENCY'
+
+export interface Vitals {
+  id: number
+  encounter_id: number
+  recorded_by: number
+  bp_systolic: number | null
+  bp_diastolic: number | null
+  pulse: number | null
+  temperature_celsius: number | null
+  spo2: number | null
+  respiratory_rate: number | null
+  weight_kg: number | null
+  height_cm: number | null
+  bmi: number | null
+  pain_score: number | null
+  chief_complaint: string | null
+  priority: VitalsPriority
+  nursing_notes: string | null
+  recorded_at: string
+}
+
+export type VitalsInput = Partial<
+  Omit<Vitals, 'id' | 'encounter_id' | 'recorded_by' | 'bmi' | 'recorded_at' | 'priority'>
+> & { priority?: VitalsPriority }
+
+export type ConsultationStatus = 'DRAFT' | 'COMPLETED'
+
+export interface Consultation {
+  id: number
+  encounter_id: number
+  doctor_id: number
+  status: ConsultationStatus
+  chief_complaint: string | null
+  history_notes: string | null
+  examination_notes: string | null
+  diagnosis: string | null
+  clinical_notes: string | null
+  follow_up_date: string | null
+  follow_up_reason: string | null
+  started_at: string
+  completed_at: string | null
+}
+
+export type ConsultationInput = Partial<
+  Omit<Consultation, 'id' | 'encounter_id' | 'doctor_id' | 'status' | 'started_at' | 'completed_at'>
+>
+
+// OPD/HIMS master spec Phase 6 (migrations/0030_orders.sql) -- the
+// order spine. One shape for every order type; order_type is what
+// distinguishes a lab test from a radiology study from an external
+// referral, not a separate interface per type.
+export type OrderType = 'LAB' | 'RADIOLOGY' | 'PROCEDURE' | 'SERVICE' | 'EXTERNAL_REFERRAL'
+export type OrderPriority = 'ROUTINE' | 'URGENT' | 'STAT'
+export type OrderStatus = 'ORDERED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
+
+// OPD/HIMS master spec Phase 7 (migrations/0031_order_results.sql).
+// One shape for both a lab panel's individual values (parameter e.g.
+// "Hemoglobin", unit/reference_range meaningful) and a radiology
+// report's narrative sections (parameter e.g. "Findings", unit/
+// reference_range left null) -- see that migration's header.
+export interface OrderResultItem {
+  id: number
+  order_id: number
+  parameter: string
+  result_value: string
+  unit: string | null
+  reference_range: string | null
+  is_abnormal: boolean
+  is_critical: boolean
+  sequence: number
+  recorded_by: number
+  recorded_at: string
+}
+
+export interface OrderResultItemInput {
+  parameter: string
+  result_value: string
+  unit?: string
+  reference_range?: string
+  is_abnormal?: boolean
+  is_critical?: boolean
+}
+
+export interface ClinicalOrder {
+  id: number
+  encounter_id: number
+  order_type: OrderType
+  description: string
+  clinical_indication: string | null
+  priority: OrderPriority
+  status: OrderStatus
+  external_destination: string | null
+  result_text: string | null
+  ordering_doctor_id: number
+  created_by: number
+  cancelled_by: number | null
+  cancel_reason: string | null
+  ordered_at: string
+  completed_at: string | null
+  cancelled_at: string | null
+  results: OrderResultItem[]
+}
+
+export interface OrderInput {
+  order_type: OrderType
+  description: string
+  clinical_indication?: string
+  priority?: OrderPriority
+  external_destination?: string
+}
+
 // GET /api/public/queue-display -- the unauthenticated waiting-room
 // board (app/api/queue_display.py). Deliberately just a doctor name and
 // a bare token number, nothing patient-identifying -- see that file's
@@ -510,4 +642,213 @@ export interface QueueDisplayEntry {
   doctor_id: number
   doctor_name: string
   now_serving_token: number | null
+}
+
+// OPD/HIMS master spec Phase 8 (migrations/0032_prescriptions_and_
+// pharmacy.sql) -- prescription + pharmacy.
+export type PrescriptionStatus = 'DRAFT' | 'PRESCRIBED' | 'CANCELLED'
+export type DispenseStatus = 'PENDING' | 'PARTIALLY_DISPENSED' | 'DISPENSED'
+
+export interface PharmacyDispenseRecord {
+  id: number
+  prescription_item_id: number
+  pharmacy_stock_id: number | null
+  quantity: number
+  unit_price: number
+  amount: number
+  dispensed_by: number
+  dispensed_at: string
+}
+
+export interface PrescriptionItem {
+  id: number
+  prescription_id: number
+  medicine_name: string
+  generic_name: string | null
+  dosage: string | null
+  route: string | null
+  frequency: string | null
+  duration: string | null
+  quantity: number
+  quantity_dispensed: number
+  food_instructions: string | null
+  special_instructions: string | null
+  dispense_status: DispenseStatus
+  // Only present on the item returned directly by the dispense
+  // endpoint itself -- confirms what that one action just did.
+  dispense_record?: PharmacyDispenseRecord
+}
+
+export interface PrescriptionItemInput {
+  medicine_name: string
+  generic_name?: string
+  dosage?: string
+  route?: string
+  frequency?: string
+  duration?: string
+  quantity: number
+  food_instructions?: string
+  special_instructions?: string
+}
+
+export interface Prescription {
+  id: number
+  encounter_id: number
+  doctor_id: number
+  status: PrescriptionStatus
+  notes: string | null
+  prescribed_at: string | null
+  cancelled_by: number | null
+  cancel_reason: string | null
+  cancelled_at: string | null
+  created_by: number
+  created_at: string
+  updated_at: string
+  items: PrescriptionItem[]
+}
+
+export interface PharmacyQueueEntry {
+  prescription_id: number
+  prescribed_at: string
+  doctor_id: number
+  doctor_name: string
+  patient_id: number
+  patient_name: string
+  patient_uhid: string
+  appointment_id: number
+  items: PrescriptionItem[]
+}
+
+export interface PharmacyStockBatch {
+  id: number
+  medicine_name: string
+  batch_number: string
+  expiry_date: string
+  quantity_on_hand: number
+  unit_price: number
+  active: boolean
+  created_by: number
+  created_at: string
+  updated_at: string
+}
+
+export interface PharmacyStockInput {
+  medicine_name: string
+  batch_number: string
+  expiry_date: string
+  quantity_on_hand: number
+  unit_price: number
+}
+
+// OPD/HIMS master spec Phase 9 (migrations/0033_billing_invoices.sql)
+// -- a new, encounter-scoped invoice/charge/payment model, deliberately
+// separate from the existing Invoice/InvoiceLineItem above (the
+// consultation_fee/payment_status flow). Named "Bill"/"Charge"/"Payment"
+// here (not "Invoice") to avoid colliding with those existing types --
+// see app/api/billing.py's module docstring for why the API routes
+// themselves use /bill, not /invoice, for the same reason.
+export type BillStatus = 'OPEN' | 'VOID'
+export type ChargeStatus = 'ACTIVE' | 'VOIDED'
+export type ChargeSourceType = 'CONSULTATION' | 'LAB' | 'RADIOLOGY' | 'PROCEDURE' | 'SERVICE' | 'PHARMACY' | 'OTHER'
+export type BillPaymentStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID'
+export type BillPaymentMethod = 'CASH' | 'UPI' | 'CARD' | 'BANK_TRANSFER' | 'INSURANCE' | 'OTHER'
+export type BillPaymentRecordStatus = 'COMPLETED' | 'VOIDED'
+
+export interface BillCharge {
+  id: number
+  invoice_id: number
+  description: string
+  amount: number
+  source_type: ChargeSourceType
+  source_order_id: number | null
+  source_dispense_id: number | null
+  status: ChargeStatus
+  voided_by: number | null
+  void_reason: string | null
+  voided_at: string | null
+  created_by: number
+  created_at: string
+  updated_at: string
+}
+
+export interface BillChargeInput {
+  description: string
+  amount: number
+  source_type?: ChargeSourceType
+  source_order_id?: number
+  source_dispense_id?: number
+}
+
+export interface BillPayment {
+  id: number
+  invoice_id: number
+  receipt_number: string
+  amount: number
+  method: BillPaymentMethod
+  transaction_id: string | null
+  status: BillPaymentRecordStatus
+  refunded_amount: number
+  refund_reason: string | null
+  refunded_by: number | null
+  refunded_at: string | null
+  voided_by: number | null
+  void_reason: string | null
+  voided_at: string | null
+  recorded_by: number
+  recorded_at: string
+}
+
+export interface BillPaymentInput {
+  amount: number
+  method: BillPaymentMethod
+  transaction_id?: string
+}
+
+// GET/PATCH .../bill -- the full invoice summary, with its charges/
+// payments and the totals computed server-side by _compute_totals
+// (discount applied before tax; balance/payment_status derived from
+// ACTIVE charges and COMPLETED-minus-refunded payments, never stored).
+export interface BillSummary {
+  id: number
+  encounter_id: number
+  invoice_number: string
+  discount_amount: number
+  discount_reason: string | null
+  tax_rate: number
+  status: BillStatus
+  voided_by: number | null
+  void_reason: string | null
+  voided_at: string | null
+  created_by: number
+  created_at: string
+  updated_at: string
+  charges: BillCharge[]
+  payments: BillPayment[]
+  gross_amount: number
+  taxable_amount: number
+  tax_amount: number
+  net_amount: number
+  paid_amount: number
+  balance: number
+  payment_status: BillPaymentStatus
+}
+
+export interface UnbilledOrder {
+  order_id: number
+  order_type: OrderType
+  description: string
+  priority: OrderPriority
+}
+
+export interface UnbilledDispense {
+  dispense_id: number
+  medicine_name: string
+  quantity: number
+  amount: number
+  dispensed_at: string
+}
+
+export interface UnbilledSources {
+  orders: UnbilledOrder[]
+  dispenses: UnbilledDispense[]
 }

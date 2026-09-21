@@ -30,7 +30,19 @@ import { formatTime } from '../format'
 // background tab doesn't keep polling after navigating away.
 const POLL_INTERVAL_MS = 20_000
 
-export default function QueueSection({ doctorId }: { doctorId: number }) {
+export default function QueueSection({
+  doctorId,
+  onOpenConsultation,
+}: {
+  doctorId: number
+  // OPD/HIMS master spec Phase 5 -- opens ConsultationWorkspace for a
+  // given appointment. Optional so QueueSection keeps working for any
+  // caller that hasn't wired navigation to it (there is none left
+  // today, but this component is reused across DoctorWorkspace's
+  // Overview tab and the standalone QueuePanel -- see this phase's
+  // report).
+  onOpenConsultation?: (appointmentId: number) => void
+}) {
   const [queue, setQueue] = useState<DoctorQueue | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -145,6 +157,15 @@ export default function QueueSection({ doctorId }: { doctorId: number }) {
 
     return (
       <div className="queue-row-actions">
+        {onOpenConsultation && (
+          <button
+            type="button"
+            className="btn-secondary btn btn-sm"
+            onClick={() => onOpenConsultation(entry.appointment_id)}
+          >
+            Consultation
+          </button>
+        )}
         {held ? (
           <button type="button" className="btn btn-sm" disabled={busy} onClick={() => handleRecall(entry.appointment_id)}>
             {busy ? 'Saving…' : 'Recall'}
@@ -289,6 +310,7 @@ export default function QueueSection({ doctorId }: { doctorId: number }) {
                     <th>Token</th>
                     <th>Patient</th>
                     <th>Checked in</th>
+                    {onOpenConsultation && <th>Actions</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -297,6 +319,17 @@ export default function QueueSection({ doctorId }: { doctorId: number }) {
                       <td>#{entry.token_number}</td>
                       <td>{entry.patient_name}</td>
                       <td>{formatTime(entry.visited_at)}</td>
+                      {onOpenConsultation && (
+                        <td>
+                          <button
+                            type="button"
+                            className="btn-secondary btn btn-sm"
+                            onClick={() => onOpenConsultation(entry.appointment_id)}
+                          >
+                            View consultation
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

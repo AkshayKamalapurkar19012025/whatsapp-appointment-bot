@@ -1,5 +1,20 @@
 -- IPD service -- baseline schema sketch.
 --
+-- SUPERSEDED (2026-09-21): the OPD/HIMS master spec's Phase 0 audit
+-- (docs/OPD_HIMS_P0_AUDIT.md section 3) flagged that this file's
+-- separate-database service boundary conflicts with the master spec's
+-- Principle 3/4 (shared orders/results/billing/timeline across
+-- OPD/IPD/Emergency) and section 76 ("IPD Compatibility"). The decision
+-- was Option A: encounters -- and, when IPD is actually built, IPD data
+-- -- live in the OPD app's own database (see migrations/
+-- 0028_encounters.sql's `encounters.encounter_type` column, which
+-- already reserves 'IPD'/'EMERGENCY' for this). This sketch is left in
+-- place as a record of the alternative that was considered and not
+-- taken, not as a schema to build against -- IPD implementation itself
+-- remains future work (master spec section 77, Phase 3 only covers
+-- OPD), and when it starts it should extend the OPD database's
+-- `encounters`/patient model, not this file.
+--
 -- Service boundary: this is its OWN database, not a new set of tables
 -- bolted onto the OPD app's Postgres instance. The two domains share
 -- almost no access patterns (OPD is slot/appointment-shaped and
