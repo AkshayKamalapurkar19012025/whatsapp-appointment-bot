@@ -1,5 +1,5 @@
 """
-Tests for the queue hold/recall/priority actions (migrations/0027):
+Tests for the queue hold/recall/priority actions (migrations/0035):
 POST /api/appointments/{id}/queue/hold, /recall, /priority. All three
 only operate on a ticketed (token_number IS NOT NULL) CHECKED_IN
 appointment -- see app/services/appointment_services.py's

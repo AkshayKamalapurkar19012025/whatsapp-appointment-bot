@@ -32,6 +32,7 @@ from app.api.scheduling import router as scheduling_router
 from app.api.doctor_appointment_types import (
     router as doctor_appointment_types_router,
 )
+from app.api.audit_log import router as audit_log_router
 from app.api.queue_display import router as queue_display_router
 
 configure_logging()
@@ -197,6 +198,11 @@ app.include_router(
 
 app.include_router(
     doctor_appointment_types_router,
+    prefix="/api",
+)
+
+app.include_router(
+    audit_log_router,
     prefix="/api",
 )
 

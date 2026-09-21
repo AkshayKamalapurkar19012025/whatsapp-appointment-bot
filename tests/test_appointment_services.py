@@ -185,6 +185,62 @@ def test_create_appointment_service_accepts_utc_expressed_start_at_for_ist_sched
 
 
 # ---------------------------------------------------------------------
+# M3: create_appointment_service creates an encounter alongside the
+# appointment. Covers this path directly; the WhatsApp and web paths
+# (which both call this same function since R1) get their own
+# assertions in tests/test_scheduling_flow.py and
+# tests/test_patient_scheduling_api.py -- this is the DoD's "all three
+# paths" proof split across the three places each path is already
+# tested end to end.
+# ---------------------------------------------------------------------
+
+def test_create_appointment_service_creates_linked_open_encounter(client, db_connection):
+    seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. Encounter")
+
+    scheduling_date = _next_weekday_matching((1, 2, 3, 4, 5))
+    start_at = _at(scheduling_date, 9)
+
+    with db_connection.cursor() as cur:
+        patient_id = _insert_synthetic_patient(cur, "E1")
+    db_connection.commit()
+
+    with db_connection.cursor() as cur:
+        result = create_appointment_service(
+            cur,
+            doctor_id=seeded["doctor_id"],
+            patient_id=patient_id,
+            appointment_type_id=seeded["appointment_type_id"],
+            start_at=start_at,
+        )
+    db_connection.commit()
+
+    assert result["encounter_id"] is not None
+
+    with db_connection.cursor() as cur:
+        cur.execute(
+            "SELECT encounter_id FROM appointments WHERE id = %s",
+            (result["id"],),
+        )
+        assert cur.fetchone()[0] == result["encounter_id"]
+
+        cur.execute(
+            """
+            SELECT hospital_id, patient_id, doctor_id, encounter_type, status, started_at
+            FROM encounters WHERE id = %s
+            """,
+            (result["encounter_id"],),
+        )
+        hospital_id, enc_patient_id, enc_doctor_id, encounter_type, status, started_at = cur.fetchone()
+
+    assert hospital_id == 1  # the single MAIN hospital seeded by migrations/0024
+    assert enc_patient_id == patient_id
+    assert enc_doctor_id == seeded["doctor_id"]
+    assert encounter_type == "OPD"
+    assert status == "OPEN"
+    assert started_at == start_at
+
+
+# ---------------------------------------------------------------------
 # cancel_appointment_service(requesting_patient_id=...)
 # ---------------------------------------------------------------------
 

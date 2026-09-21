@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.api.staff_auth import require_role
+from app.api.staff_auth import require_permission
 from app.db.connection import get_connection
+from app.services.audit_log import record_audit_log
 
 router = APIRouter(
     prefix="/doctors",
@@ -62,7 +63,7 @@ def assign_appointment_type_to_doctor(
     doctor_id: int,
     appointment_type_id: int,
     appointment_type: DoctorAppointmentTypeCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor_appointment_type.manage")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -180,6 +181,20 @@ def assign_appointment_type_to_doctor(
 
             row = cur.fetchone()
 
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="doctor_appointment_type.assign",
+                resource_type="doctor_appointment_type",
+                resource_id=doctor_id,
+                details={
+                    "appointment_type_id": appointment_type_id,
+                    "duration_minutes": row[2],
+                    "consultation_fee": row[4],
+                },
+            )
+
     return {
         "doctor_id": row[0],
         "appointment_type_id": row[1],
@@ -195,7 +210,7 @@ def update_appointment_type_duration(
     doctor_id: int,
     appointment_type_id: int,
     appointment_type: DoctorAppointmentTypeCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor_appointment_type.manage")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -266,6 +281,20 @@ def update_appointment_type_duration(
                     detail="Appointment type is not assigned to doctor",
                 )
 
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="doctor_appointment_type.update",
+                resource_type="doctor_appointment_type",
+                resource_id=doctor_id,
+                details={
+                    "appointment_type_id": appointment_type_id,
+                    "duration_minutes": row[2],
+                    "consultation_fee": row[4],
+                },
+            )
+
     return {
         "doctor_id": row[0],
         "appointment_type_id": row[1],
@@ -280,7 +309,7 @@ def update_appointment_type_duration(
 def remove_appointment_type_from_doctor(
     doctor_id: int,
     appointment_type_id: int,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor_appointment_type.manage")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -322,6 +351,16 @@ def remove_appointment_type_from_doctor(
                     status_code=404,
                     detail="Appointment type is not assigned to doctor",
                 )
+
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="doctor_appointment_type.remove",
+                resource_type="doctor_appointment_type",
+                resource_id=doctor_id,
+                details={"appointment_type_id": appointment_type_id},
+            )
 
     return {
         "doctor_id": row[0],
