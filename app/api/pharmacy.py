@@ -17,7 +17,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.api.staff_auth import get_current_staff, require_role
+from app.api.staff_auth import get_current_staff, require_permission
 from app.db.connection import get_connection
 from app.services import exceptions as svc_exc
 from app.services.pharmacy_services import (
@@ -201,7 +201,7 @@ def get_pharmacy_stock(medicine_name: str | None = None, staff: dict = Depends(g
 
 
 @pharmacy_router.post("/stock")
-def create_pharmacy_stock(body: StockCreate, admin: dict = Depends(require_role("ADMIN"))):
+def create_pharmacy_stock(body: StockCreate, admin: dict = Depends(require_permission("pharmacy.manage_stock"))):
     with get_connection() as conn:
         with conn.cursor() as cur:
             try:

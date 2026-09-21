@@ -310,7 +310,7 @@ def list_pharmacy_queue_service(cur):
         JOIN prescription_items pi ON pi.prescription_id = p.id
         JOIN encounters e ON e.id = p.encounter_id
         JOIN patients pat ON pat.id = e.patient_id
-        JOIN appointments a ON a.id = e.appointment_id
+        JOIN appointments a ON a.encounter_id = e.id
         JOIN doctors d ON d.id = p.doctor_id
         WHERE p.status = 'PRESCRIBED'
           AND pi.quantity_dispensed < pi.quantity

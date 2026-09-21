@@ -30,6 +30,7 @@ from app.services.appointment_services import (
     create_appointment_service,
     reschedule_appointment_service,
 )
+from app.services.patient_identifiers import DEFAULT_HOSPITAL_ID, resolve_patient_by_identifier
 from app.services.exceptions import (
     AppointmentNotFound,
     AlreadyCancelled,
@@ -60,25 +61,13 @@ class SchedulingRequest(BaseModel):
 # -------------------------------------------------------------------------
 
 def get_patient(cur, whatsapp_number: str):
-    cur.execute(
-        """
-        SELECT id, name, whatsapp_number
-        FROM patients
-        WHERE whatsapp_number = %s
-        """,
-        (whatsapp_number,),
-    )
-
-    row = cur.fetchone()
-
-    if row is None:
-        return None
-
-    return {
-        "id": row[0],
-        "name": row[1],
-        "whatsapp_number": row[2],
-    }
+    # M4-M5 (last of the three readers, per that phase's plan -- WhatsApp
+    # is the highest-traffic, least-covered path): migrated onto the
+    # identifier resolver. DEFAULT_HOSPITAL_ID: an incoming WhatsApp
+    # message identifies a patient by phone number alone, with no
+    # authenticated actor to derive a real hospital_id from -- see that
+    # constant's own comment in app/services/patient_identifiers.py.
+    return resolve_patient_by_identifier(cur, DEFAULT_HOSPITAL_ID, "PHONE", whatsapp_number)
 
 
 # -------------------------------------------------------------------------

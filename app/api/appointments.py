@@ -28,9 +28,10 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
-from app.api.staff_auth import get_current_staff, require_role
+from app.api.staff_auth import get_current_staff, require_permission
 from app.db.connection import get_connection
 from app.services import exceptions as svc_exc
+from app.services.audit_log import record_audit_log
 from app.services.appointment_services import (
     create_appointment_service,
     cancel_appointment_service,
@@ -530,7 +531,7 @@ def reschedule_appointment(
 # scheduling, and the admin create above all go through the same
 # create_appointment_service). Staff move it forward from here -- same
 # RBAC as the rest of this router (any authenticated STAFF or ADMIN,
-# matching cancel/reschedule above, not require_role("ADMIN")).
+# matching cancel/reschedule above, not require_permission("appointment.waive_payment")).
 # ---------------------------------------------------------------------
 
 
@@ -753,7 +754,7 @@ def get_appointment_invoice(
 def add_appointment_invoice_line_item(
     appointment_id: int,
     line_item: InvoiceLineItemCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("appointment.add_invoice_line_item")),
 ):
     """ADMIN-only: add an ad-hoc charge (e.g. a dressing charge or a
     minor procedure) to this appointment's bill, on top of its
@@ -851,7 +852,7 @@ def record_appointment_payment(
 def waive_appointment_payment(
     appointment_id: int,
     waiver: PaymentWaive,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("appointment.waive_payment")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -879,6 +880,16 @@ def waive_appointment_payment(
                     status_code=409,
                     detail="Waiver requires a completed visit with this doctor in the last 3 days",
                 )
+
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="appointment.waive_payment",
+                resource_type="appointment",
+                resource_id=appointment_id,
+                details={"reason": waiver.reason},
+            )
 
             if result["token_just_issued"]:
                 _notify_queue_token(cur, appointment_id, result["token_number"])
@@ -939,7 +950,7 @@ def settle_free_appointment_visit(
 def refund_appointment_payment(
     appointment_id: int,
     refund: PaymentRefund,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("appointment.refund_payment")),
 ):
     """
     ADMIN-only reversal of a PAID appointment -- back-office correction,
@@ -1021,7 +1032,7 @@ def no_show_appointment(
 
 
 # ---------------------------------------------------------------------
-# Queue hold/recall/priority (migrations/0027) -- same RBAC as the rest
+# Queue hold/recall/priority (migrations/0035) -- same RBAC as the rest
 # of this router (any authenticated STAFF or ADMIN): front-desk staff
 # handle the live queue routinely, no reason to gate these to ADMIN.
 # ---------------------------------------------------------------------

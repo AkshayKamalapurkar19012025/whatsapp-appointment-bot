@@ -51,13 +51,19 @@ def get_appointment_status_and_doctor(cur, appointment_id: int):
 
 def get_encounter_id_for_appointment(cur, appointment_id: int) -> int:
     """Shared by every clinical service module -- see
-    get_appointment_status_and_doctor's docstring above."""
+    get_appointment_status_and_doctor's docstring above.
+
+    Looks up via appointments.encounter_id (the forward FK
+    migrations/0028_encounters.sql actually creates), not a reverse
+    encounters.appointment_id column -- that column doesn't exist on
+    this table; every OPD encounter is found through the appointment
+    that opened it instead."""
     cur.execute(
-        "SELECT id FROM encounters WHERE appointment_id = %s",
+        "SELECT encounter_id FROM appointments WHERE id = %s",
         (appointment_id,),
     )
     row = cur.fetchone()
-    if row is None:
+    if row is None or row[0] is None:
         raise EncounterNotFound()
     return row[0]
 
@@ -73,17 +79,17 @@ def get_encounter_summary_service(cur, appointment_id: int):
     cur.execute(
         """
         SELECT
-            e.id, e.status, e.opened_at, e.closed_at,
+            e.id, e.status, e.started_at, e.closed_at,
             p.id, p.name, p.uhid, p.date_of_birth, p.gender,
             d.id, d.name,
             a.token_number, a.start_at
         FROM encounters e
         JOIN patients p ON p.id = e.patient_id
-        JOIN appointments a ON a.id = e.appointment_id
+        JOIN appointments a ON a.id = %s
         JOIN doctors d ON d.id = a.doctor_id
         WHERE e.id = %s
         """,
-        (encounter_id,),
+        (appointment_id, encounter_id),
     )
     row = cur.fetchone()
 

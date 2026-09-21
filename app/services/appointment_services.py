@@ -112,7 +112,7 @@ def _close_encounter_for_appointment(cur, appointment_id: int):
         SET status = 'CLOSED',
             closed_at = NOW(),
             updated_at = NOW()
-        WHERE appointment_id = %s
+        WHERE id = (SELECT encounter_id FROM appointments WHERE id = %s)
           AND status = 'OPEN'
         """,
         (appointment_id,),
@@ -161,7 +161,7 @@ def create_appointment_service(
     # ---------------------------------------------------------
     cur.execute(
         """
-        SELECT id, timezone
+        SELECT id, timezone, hospital_id
         FROM doctors
         WHERE id = %s
           AND active = TRUE
@@ -175,6 +175,7 @@ def create_appointment_service(
         raise DoctorNotFound()
 
     doctor_timezone = doctor_row[1]
+    doctor_hospital_id = doctor_row[2]
 
     # ---------------------------------------------------------
     # 2. Check patient
@@ -375,7 +376,31 @@ def create_appointment_service(
             raise SlotOverlap()
 
     # ---------------------------------------------------------
-    # 8. Create appointment.
+    # 8. Create the encounter (M3), then the appointment linked to it.
+    #
+    # One encounter per appointment, in the same transaction as the
+    # appointment itself so the two can never diverge -- if the INSERT
+    # below fails (including via the EXCLUDE-constraint backstop), this
+    # encounter is rolled back along with it, same as everything else in
+    # this transaction. started_at mirrors migrations/0025's own backfill
+    # fallback: there is no arrived_at yet for a brand-new booking, so
+    # start_at (the scheduled time) is the best available signal for
+    # "when this visit is." status is always OPEN here -- none of the
+    # terminal appointment statuses (COMPLETED/CANCELLED/REJECTED/
+    # NO_SHOW) apply to a brand-new booking, which always starts PENDING.
+    # ---------------------------------------------------------
+    cur.execute(
+        """
+        INSERT INTO encounters (hospital_id, patient_id, doctor_id, encounter_type, status, started_at)
+        VALUES (%s, %s, %s, 'OPD', 'OPEN', %s)
+        RETURNING id
+        """,
+        (doctor_hospital_id, patient_id, doctor_id, start_at),
+    )
+    encounter_id = cur.fetchone()[0]
+
+    # ---------------------------------------------------------
+    # 9. Create appointment.
     #
     # A second line of defense sits below this INSERT: a
     # database-level EXCLUDE constraint on (doctor_id, time
@@ -396,7 +421,8 @@ def create_appointment_service(
                 start_at,
                 end_at,
                 status,
-                booking_source
+                booking_source,
+                encounter_id
             )
             VALUES (
                 %s,
@@ -405,6 +431,7 @@ def create_appointment_service(
                 %s,
                 %s,
                 'PENDING',
+                %s,
                 %s
             )
             RETURNING
@@ -424,6 +451,7 @@ def create_appointment_service(
                 start_at,
                 end_at,
                 booking_source,
+                encounter_id,
             ),
         )
     except psycopg.errors.ExclusionViolation:
@@ -436,27 +464,6 @@ def create_appointment_service(
 
     row = cur.fetchone()
     appointment_id = row[0]
-
-    # ---------------------------------------------------------
-    # 9. Open the OPD encounter for this appointment -- see
-    # migrations/0028_encounters.sql. Same transaction as the INSERT
-    # above (this function's caller commits/rolls back both together),
-    # so a failure here rolls the appointment back too rather than ever
-    # leaving one without the other; a retried/duplicate-click request
-    # can't produce a second encounter either, since it can't produce a
-    # second appointment (the advisory lock + exclusion constraint
-    # above already make appointment creation idempotent-by-construction
-    # for the same slot).
-    # ---------------------------------------------------------
-    cur.execute(
-        """
-        INSERT INTO encounters (patient_id, encounter_type, status, appointment_id)
-        VALUES (%s, 'OPD', 'OPEN', %s)
-        RETURNING id
-        """,
-        (patient_id, appointment_id),
-    )
-    encounter_id = cur.fetchone()[0]
 
     return {
         "id": row[0],
@@ -745,16 +752,19 @@ def reschedule_appointment_service(
           -- status::text: see availability_engine.py's get_available_slots
           -- for why (enum-typed appointments.status on some databases).
           AND status::text = ANY(%s::text[])
-        RETURNING id
+        RETURNING id, encounter_id
         """,
         (appointment_id, patient_id, list(ACTIONABLE_STATUSES)),
     )
 
-    if cur.fetchone() is None:
+    cancelled_row = cur.fetchone()
+    if cancelled_row is None:
         # Lost a race between the FOR UPDATE read above and here --
         # shouldn't happen given the row lock, kept as a defensive
         # mirror of scheduling.py's own equivalent check.
         raise AlreadyCancelled()
+
+    old_encounter_id = cancelled_row[1]
 
     try:
         cur.execute(
@@ -765,9 +775,10 @@ def reschedule_appointment_service(
                 appointment_type_id,
                 start_at,
                 end_at,
-                status
+                status,
+                encounter_id
             )
-            VALUES (%s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING
                 id,
                 doctor_id,
@@ -781,8 +792,11 @@ def reschedule_appointment_service(
             # (PENDING stays PENDING, awaiting the same confirmation it
             # always needed; CONFIRMED stays CONFIRMED) rather than
             # resetting it -- moving the time shouldn't force an already-
-            # confirmed appointment back into a confirmation queue.
-            (doctor_id, patient_id, appointment_type_id, new_start_at, new_end_at, status),
+            # confirmed appointment back into a confirmation queue. The
+            # same encounter carries forward onto the new row too (see
+            # below) -- a reschedule is the same care episode moved in
+            # time, not a new one.
+            (doctor_id, patient_id, appointment_type_id, new_start_at, new_end_at, status, old_encounter_id),
         )
     except psycopg.errors.ExclusionViolation:
         # Unlike create_appointment_service's equivalent catch, this one
@@ -807,25 +821,6 @@ def reschedule_appointment_service(
         raise SlotOverlap()
 
     row = cur.fetchone()
-    new_appointment_id = row[0]
-
-    # ---------------------------------------------------------
-    # Carry the same encounter forward onto the new appointment row --
-    # a reschedule is the same care episode moved in time, not a new
-    # one, so this UPDATEs the existing encounters row (opened when the
-    # original appointment was created) rather than opening a second
-    # one. Same transaction as the cancel-old/insert-new pair above, so
-    # it rolls back together with them on any failure past this point.
-    # ---------------------------------------------------------
-    cur.execute(
-        """
-        UPDATE encounters
-        SET appointment_id = %s,
-            updated_at = NOW()
-        WHERE appointment_id = %s
-        """,
-        (new_appointment_id, appointment_id),
-    )
 
     return {
         "id": row[0],
@@ -1762,8 +1757,8 @@ def settle_free_visit_service(cur, appointment_id: int):
 def record_refund_service(cur, appointment_id: int, *, amount, reason: str, staff_id: int):
     """
     ADMIN records a refund against a PAID appointment (see
-    app/api/appointments.py's require_role("ADMIN") on the endpoint --
-    the same authority level waive_consultation_fee_service requires,
+    app/api/appointments.py's require_permission("appointment.refund_payment")
+    on the endpoint -- the same authority level waive_consultation_fee_service requires,
     since a refund reverses real money the same way a waiver forgives
     it). Deliberately does not gate on appointments.status the way
     record_payment_service/waive_consultation_fee_service do: those

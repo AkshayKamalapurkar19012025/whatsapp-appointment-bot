@@ -1,95 +1,99 @@
--- Introduces `encounters` -- the clinical-episode entity the OPD/HIMS
--- expansion's data model (vitals, consultations, diagnoses, orders,
--- prescriptions, ...) will key off, per the Phase 0 audit
--- (docs/OPD_HIMS_P0_AUDIT.md section 3) and the resulting decision: add
--- encounters inside this database rather than treat IPD/future services
--- as fully isolated (the direction ipd-service/schema's standalone
--- sketch had taken).
+-- M3 (HospitalOS build plan): encounters -- the container a visit's
+-- downstream clinical/administrative records (vitals, orders, diagnoses
+-- in later phases) will attach to, instead of directly to an
+-- appointment.
 --
--- Deliberately does NOT touch `appointments` at all -- no new column,
--- no changed constraint. The link is one-directional, from
--- encounters.appointment_id back to the appointment that opened it,
--- which is enough for every OPD lookup ("the encounter for this
--- appointment") without adding any risk to the appointments table's
--- existing, heavily-tested concurrency/booking/billing/queue logic.
+-- Schema note: this work order says "create encounters per the
+-- foundation schema," a separate document not available here. The
+-- columns below are inferred from what this migration's own backfill
+-- and app/services/appointment_services.py's create_appointment_service
+-- actually need -- kept intentionally minimal. Extend with a later,
+-- additive migration if the real foundation schema calls for more.
 --
--- Scope for this migration: only what OPD needs today (one encounter
--- per OPD appointment, opened alongside it, closed when the appointment
--- reaches a terminal status, carried forward -- not re-created -- across
--- a reschedule). encounter_type already distinguishes OPD from future
--- IPD/EMERGENCY per the master spec's Principle 2/3 ("the encounter
--- determines whether it originated from OPD/IPD/Emergency"; "orders,
--- consultation, billing, and queue activity must belong to the correct
--- encounter"), but this migration does not create IPD/EMERGENCY rows or
--- any application code path for them -- that is future work, not
--- implemented merely for schema completeness (master spec section 77,
--- "do not implement future modules merely for visual completeness").
-
+-- encounter_type is constrained to 'OPD' only -- the only type that
+-- exists anywhere in this codebase today. Widen the CHECK in a later
+-- migration alongside whatever introduces the next type.
+--
+-- status OPEN/CLOSED mirrors the appointment's own lifecycle at the
+-- moment of writing: CLOSED for a terminal appointment status
+-- (COMPLETED/CANCELLED/REJECTED/NO_SHOW, see
+-- migrations/0011_appointment_lifecycle_statuses.sql and
+-- migrations/0015_appointment_checkin_and_no_show.sql for the full
+-- status set), OPEN otherwise (PENDING/CONFIRMED/CHECKED_IN). Nothing
+-- keeps an encounter's status in sync with its appointment's status
+-- after this migration runs -- that's separate, later work (the order
+-- spine, M9, is where encounter/appointment state starts being driven
+-- by something other than direct SQL).
 CREATE TABLE encounters (
-    id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    id              BIGSERIAL PRIMARY KEY,
+    hospital_id     BIGINT NOT NULL REFERENCES hospitals(id),
     patient_id      BIGINT NOT NULL REFERENCES patients(id),
+    doctor_id       BIGINT NOT NULL REFERENCES doctors(id),
     encounter_type  TEXT NOT NULL DEFAULT 'OPD'
-        CHECK (encounter_type IN ('OPD', 'IPD', 'EMERGENCY')),
-    -- OPEN = the care episode is still active (equivalently: the
-    -- linked appointment hasn't reached a terminal status yet). CLOSED
-    -- = the episode ended -- appointment cancelled/rejected/completed/
-    -- no-showed. No third state on purpose: this table doesn't mirror
-    -- appointments.status's full lifecycle (PENDING/CONFIRMED/
-    -- CHECKED_IN/...), it only tracks whether the episode itself is
-    -- still open, matching what a future encounter-scoped query
-    -- ("show me this patient's open encounters") actually needs.
+                        CHECK (encounter_type IN ('OPD')),
     status          TEXT NOT NULL DEFAULT 'OPEN'
-        CHECK (status IN ('OPEN', 'CLOSED')),
-    -- The OPD appointment/walk-in/follow-up that opened this encounter.
-    -- NULL is reserved for a future encounter that doesn't originate
-    -- from an appointment (an IPD admission, an ED presentation) --
-    -- every OPD encounter must have one, enforced by the CHECK below.
-    -- Carried forward (UPDATEd, not re-inserted) across a reschedule --
-    -- see app/services/appointment_services.py's
-    -- reschedule_appointment_service -- since a reschedule is the same
-    -- care episode moved in time, not a new one.
-    appointment_id  BIGINT REFERENCES appointments(id),
-    opened_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        CHECK (status IN ('OPEN', 'CLOSED')),
+    started_at      TIMESTAMPTZ NOT NULL,
     closed_at       TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CHECK (encounter_type <> 'OPD' OR appointment_id IS NOT NULL),
-    CHECK (
-        (status = 'OPEN' AND closed_at IS NULL)
-        OR (status = 'CLOSED' AND closed_at IS NOT NULL)
-    )
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- One encounter per appointment -- partial (not a plain UNIQUE column
--- constraint) so a future non-OPD encounter with a NULL appointment_id
--- is never blocked by this.
-CREATE UNIQUE INDEX encounters_appointment_id_key ON encounters (appointment_id)
-    WHERE appointment_id IS NOT NULL;
-
--- Patient 360 / "this patient's encounters" is the other lookup shape
--- this table exists to serve.
-CREATE INDEX encounters_patient_id_idx ON encounters (patient_id);
-
 COMMENT ON TABLE encounters IS
-    'One row per clinical care episode. For encounter_type = OPD (the only type any application code creates today), appointment_id is always set and is this encounter''s entire identity -- see create_appointment_service/reschedule_appointment_service/_transition_appointment_status in app/services/appointment_services.py for how rows here are created, carried forward across a reschedule, and closed.';
+    'One row per clinical visit. OPD is the only encounter_type until a later phase introduces others.';
+COMMENT ON COLUMN encounters.closed_at IS
+    'NULL while OPEN. Also NULL for encounters this migration backfills as already CLOSED -- the real closing time predates this column and is not fabricated, same convention as appointments.arrived_at (migrations/0023).';
 
--- Backfill: every appointment that already exists gets exactly one
--- encounter, computed from its own current status/timestamps -- not a
--- placeholder to be fixed up later. status/closed_at use the same
--- terminal-status set (CANCELLED, REJECTED, COMPLETED, NO_SHOW) as
--- RELEASED_STATUSES/ACTIONABLE_STATUSES in app/services/
--- appointment_services.py; keep these in lockstep if that set ever
--- changes.
-INSERT INTO encounters (patient_id, encounter_type, status, appointment_id, opened_at, closed_at, created_at, updated_at)
+-- Nullable on purpose: every appointment gets one going forward
+-- (create_appointment_service creates it inline, in the same
+-- transaction as the appointment itself) and this migration backfills
+-- one for every existing row below, but NOT NULL is deferred to a
+-- later, separate migration once every write path -- including
+-- reschedule_appointment_service, which this phase does NOT touch, see
+-- its own report -- is confirmed to populate it.
+ALTER TABLE appointments ADD COLUMN encounter_id BIGINT REFERENCES encounters(id);
+
+COMMENT ON COLUMN appointments.encounter_id IS
+    'NULL for an appointment created by reschedule_appointment_service (not yet wired up to create one -- separate, later work) or one that predates this column with no matching backfill logic path. Never assume NOT NULL.';
+
+-- Backfill: one OPD encounter per existing appointment. started_at from
+-- arrived_at where present (the patient's actual physical arrival),
+-- else start_at (the scheduled time -- the best remaining signal for a
+-- row that predates the arrived_at column, migrations/0023, or was
+-- never checked in).
+--
+-- Uses a temp table to reserve one encounters.id per appointment up
+-- front, rather than joining the INSERT's RETURNING back to
+-- appointments by (patient_id, doctor_id, started_at) -- that natural
+-- key isn't guaranteed unique (nothing stops two appointments for the
+-- same patient/doctor from sharing an identical arrived_at or start_at,
+-- e.g. bulk-imported historical data), so a join back on it could
+-- silently mislink a row. Correlating by appointments.id instead makes
+-- that class of bug impossible regardless of what the data looks like.
+CREATE TEMP TABLE _m3_appointment_encounter_map AS
 SELECT
-    patient_id,
+    a.id AS appointment_id,
+    nextval(pg_get_serial_sequence('encounters', 'id')) AS encounter_id
+FROM appointments a;
+
+INSERT INTO encounters (id, hospital_id, patient_id, doctor_id, encounter_type, status, started_at)
+SELECT
+    m.encounter_id,
+    a.hospital_id,
+    a.patient_id,
+    a.doctor_id,
     'OPD',
-    CASE WHEN status IN ('CANCELLED', 'REJECTED', 'COMPLETED', 'NO_SHOW')
-         THEN 'CLOSED' ELSE 'OPEN' END,
-    id,
-    created_at,
-    CASE WHEN status IN ('CANCELLED', 'REJECTED', 'COMPLETED', 'NO_SHOW')
-         THEN updated_at ELSE NULL END,
-    created_at,
-    updated_at
-FROM appointments;
+    CASE
+        WHEN a.status IN ('COMPLETED', 'CANCELLED', 'REJECTED', 'NO_SHOW') THEN 'CLOSED'
+        ELSE 'OPEN'
+    END,
+    COALESCE(a.arrived_at, a.start_at)
+FROM appointments a
+JOIN _m3_appointment_encounter_map m ON m.appointment_id = a.id;
+
+UPDATE appointments a
+SET encounter_id = m.encounter_id
+FROM _m3_appointment_encounter_map m
+WHERE m.appointment_id = a.id;
+
+DROP TABLE _m3_appointment_encounter_map;

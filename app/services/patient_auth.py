@@ -57,6 +57,8 @@ import hashlib
 import logging
 import secrets
 
+import psycopg
+
 from app import config
 from app.services.exceptions import (
     OtpRateLimited,
@@ -69,6 +71,11 @@ from app.services.exceptions import (
     InvalidSession,
 )
 from app.services.notifications import KIND_OTP, send_mock_notification
+from app.services.patient_identifiers import (
+    DEFAULT_HOSPITAL_ID,
+    resolve_patient_by_identifier,
+    write_phone_identifier,
+)
 from app.services.sms_provider import send_otp_sms
 
 logger = logging.getLogger(__name__)
@@ -210,11 +217,17 @@ def verify_otp(cur, whatsapp_number: str, code: str, name: str | None = None):
         )
         raise OtpInvalid()
 
-    cur.execute(
-        "SELECT id, name, whatsapp_number FROM patients WHERE whatsapp_number = %s",
-        (whatsapp_number,),
+    # M4-M5: migrated onto the identifier resolver (web OTP verify) --
+    # see app/services/patient_identifiers.py. DEFAULT_HOSPITAL_ID: no
+    # patient is resolved yet at this point, so there's no authenticated
+    # actor to derive a real hospital_id from (see that constant's own
+    # comment).
+    resolved = resolve_patient_by_identifier(cur, DEFAULT_HOSPITAL_ID, "PHONE", whatsapp_number)
+    patient_row = (
+        (resolved["id"], resolved["name"], resolved["whatsapp_number"])
+        if resolved is not None
+        else None
     )
-    patient_row = cur.fetchone()
 
     is_new_patient = False
 
@@ -224,28 +237,58 @@ def verify_otp(cur, whatsapp_number: str, code: str, name: str | None = None):
             # unconsumed so the same code works on the follow-up call.
             raise RegistrationRequired()
 
-        cur.execute(
-            """
-            INSERT INTO patients (name, whatsapp_number)
-            VALUES (%s, %s)
-            ON CONFLICT (whatsapp_number) DO NOTHING
-            RETURNING id, name, whatsapp_number
-            """,
-            (name.strip(), whatsapp_number),
-        )
-        patient_row = cur.fetchone()
+        # M7 (in progress): ON CONFLICT (whatsapp_number) is gone -- it
+        # needs a matching unique/exclusion constraint or index to
+        # target, so it becomes invalid SQL the moment
+        # patients.whatsapp_number's UNIQUE constraint is actually
+        # dropped, whenever that eventually ships (out of scope for this
+        # pass -- the constraint itself is untouched). Until that drop
+        # ships, the constraint is still live, so the same race this
+        # used to resolve via DO NOTHING can still raise UniqueViolation
+        # here -- caught below and funneled into the exact same
+        # race-recovery read as before. Once the constraint is gone this
+        # except simply never fires again; two patients sharing a number
+        # then both insert successfully, which is the point of dropping
+        # it.
+        try:
+            cur.execute(
+                """
+                INSERT INTO patients (name, whatsapp_number)
+                VALUES (%s, %s)
+                RETURNING id, name, whatsapp_number, hospital_id
+                """,
+                (name.strip(), whatsapp_number),
+            )
+            patient_row = cur.fetchone()
+        except psycopg.errors.UniqueViolation:
+            cur.connection.rollback()
+            patient_row = None
 
         if patient_row is None:
             # Lost a race with another request for the same number
             # (e.g. two tabs registering at once) -- the patient now
             # exists either way, so just read it back.
-            cur.execute(
-                "SELECT id, name, whatsapp_number FROM patients WHERE whatsapp_number = %s",
-                (whatsapp_number,),
+            resolved = resolve_patient_by_identifier(cur, DEFAULT_HOSPITAL_ID, "PHONE", whatsapp_number)
+            patient_row = (
+                (resolved["id"], resolved["name"], resolved["whatsapp_number"])
+                if resolved is not None
+                else None
             )
-            patient_row = cur.fetchone()
         else:
             is_new_patient = True
+            # M4-M5 dual write -- see app/services/patient_identifiers.py.
+            # Not needed on the race-recovery branch above: that read
+            # back a patient this same call didn't create, so nothing
+            # about their identifier changed.
+            write_phone_identifier(
+                cur,
+                hospital_id=patient_row[3],
+                patient_id=patient_row[0],
+                whatsapp_number=patient_row[2],
+            )
+            # uhid needs no equivalent step here -- it's a GENERATED
+            # column (migrations/0024_patient_uhid.sql), already set on
+            # patient_row the moment the INSERT above returned it.
 
     patient = {
         "id": patient_row[0],
@@ -291,7 +334,7 @@ def get_patient_by_session_token(cur, token: str):
     cur.execute(
         """
         SELECT s.patient_id, s.expires_at, s.revoked_at, s.last_seen_at,
-               p.name, p.whatsapp_number
+               p.name, p.whatsapp_number, p.hospital_id
         FROM patient_sessions s
         JOIN patients p ON p.id = s.patient_id
         WHERE s.token_hash = %s
@@ -303,7 +346,7 @@ def get_patient_by_session_token(cur, token: str):
     if row is None:
         raise InvalidSession()
 
-    patient_id, expires_at, revoked_at, last_seen_at, name, whatsapp_number = row
+    patient_id, expires_at, revoked_at, last_seen_at, name, whatsapp_number, hospital_id = row
 
     now = _now()
     idle_cutoff = now - timedelta(minutes=SESSION_IDLE_TIMEOUT_MINUTES)
@@ -316,10 +359,15 @@ def get_patient_by_session_token(cur, token: str):
         (now, token_hash),
     )
 
+    # hospital_id (M2): request-scoped tenant context, resolved here so
+    # every endpoint depending on get_current_patient has it available --
+    # not used to filter anything yet (see migrations/0027's own
+    # docstring).
     return {
         "id": patient_id,
         "name": name,
         "whatsapp_number": whatsapp_number,
+        "hospital_id": hospital_id,
     }
 
 

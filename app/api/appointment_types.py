@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 import psycopg
 
-from app.api.staff_auth import get_current_staff, require_role
+from app.api.staff_auth import get_current_staff, require_permission
 from app.db.connection import get_connection
+from app.services.audit_log import record_audit_log
 
 router = APIRouter(
     prefix="/appointment-types",
@@ -180,7 +181,7 @@ def get_appointment_type_detail(
 @router.post("")
 def create_appointment_type(
     appointment_type: AppointmentTypeCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("appointment_type.manage")),
 ):
     try:
         with get_connection() as conn:
@@ -194,6 +195,16 @@ def create_appointment_type(
                     (appointment_type.name,),
                 )
                 row = cur.fetchone()
+
+                record_audit_log(
+                    cur,
+                    hospital_id=admin["hospital_id"],
+                    staff_id=admin["id"],
+                    action="appointment_type.create",
+                    resource_type="appointment_type",
+                    resource_id=row[0],
+                    details={"name": row[1]},
+                )
 
         return {
             "id": row[0],
@@ -212,7 +223,7 @@ def create_appointment_type(
 def update_appointment_type(
     appointment_type_id: int,
     appointment_type: AppointmentTypeCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("appointment_type.manage")),
 ):
     try:
         with get_connection() as conn:
@@ -232,6 +243,16 @@ def update_appointment_type(
 
                 if row is None:
                     raise HTTPException(status_code=404, detail="Appointment type not found")
+
+                record_audit_log(
+                    cur,
+                    hospital_id=admin["hospital_id"],
+                    staff_id=admin["id"],
+                    action="appointment_type.update",
+                    resource_type="appointment_type",
+                    resource_id=row[0],
+                    details={"name": row[1]},
+                )
 
         return {
             "id": row[0],
@@ -254,7 +275,7 @@ class AppointmentTypeActiveUpdate(BaseModel):
 def update_appointment_type_active(
     appointment_type_id: int,
     body: AppointmentTypeActiveUpdate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("appointment_type.manage")),
 ):
     """
     Deactivate/reactivate an appointment type (the redesigned Appointment
@@ -283,13 +304,23 @@ def update_appointment_type_active(
             if row is None:
                 raise HTTPException(status_code=404, detail="Appointment type not found")
 
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="appointment_type.active_update",
+                resource_type="appointment_type",
+                resource_id=row[0],
+                details={"active": row[1]},
+            )
+
     return {"id": row[0], "active": row[1]}
 
 
 @router.delete("/{appointment_type_id}")
 def delete_appointment_type(
     appointment_type_id: int,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("appointment_type.manage")),
 ):
     # Soft delete only, same as departments -- appointment_types is
     # referenced by doctor_appointment_types and appointments.appointment_
@@ -311,6 +342,15 @@ def delete_appointment_type(
 
             if cur.fetchone() is None:
                 raise HTTPException(status_code=404, detail="Appointment type not found")
+
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="appointment_type.delete",
+                resource_type="appointment_type",
+                resource_id=appointment_type_id,
+            )
 
     return {
         "id": appointment_type_id,

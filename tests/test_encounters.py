@@ -73,14 +73,24 @@ def _set_start_at(db_connection, appointment_id: int, start_at: datetime, end_at
 
 
 def _encounter_for_appointment(db_connection, appointment_id: int):
+    """Looks up via appointments.encounter_id (the forward FK
+    migrations/0028_encounters.sql actually creates), not a reverse
+    encounters.appointment_id column -- that column doesn't exist on
+    this table; every OPD encounter is found through the appointment
+    that opened it instead. Returns None if the appointment has no
+    encounter_id set at all (shouldn't happen for any appointment
+    created by create_appointment_service, but kept as a real "not
+    found" rather than assumed)."""
     with db_connection.cursor() as cur:
+        cur.execute("SELECT encounter_id FROM appointments WHERE id = %s", (appointment_id,))
+        row = cur.fetchone()
+        if row is None or row[0] is None:
+            return None
+        encounter_id = row[0]
+
         cur.execute(
-            """
-            SELECT id, patient_id, encounter_type, status, appointment_id, closed_at
-            FROM encounters
-            WHERE appointment_id = %s
-            """,
-            (appointment_id,),
+            "SELECT id, patient_id, encounter_type, status, closed_at FROM encounters WHERE id = %s",
+            (encounter_id,),
         )
         row = cur.fetchone()
     if row is None:
@@ -90,8 +100,7 @@ def _encounter_for_appointment(db_connection, appointment_id: int):
         "patient_id": row[1],
         "encounter_type": row[2],
         "status": row[3],
-        "appointment_id": row[4],
-        "closed_at": row[5],
+        "closed_at": row[4],
     }
 
 
@@ -233,16 +242,22 @@ def test_reschedule_carries_the_same_encounter_forward(client, db_connection):
     new_appointment_id = response.json()["id"]
     assert new_appointment_id != original_appointment_id
 
-    # The old appointment row no longer owns the encounter...
-    assert _encounter_for_appointment(db_connection, original_appointment_id) is None
+    # The old (now-cancelled) appointment row still carries its original
+    # encounter_id -- that's accurate history (it's the row that really
+    # did open this encounter), not something a reschedule should erase.
+    old_encounter = _encounter_for_appointment(db_connection, original_appointment_id)
+    assert old_encounter is not None
+    assert old_encounter["id"] == original_encounter_id
 
-    # ...it moved to the new one, same encounter id, still open --
-    # a reschedule is the same care episode, not a new one.
+    # The same encounter carries forward onto the new appointment row too
+    # -- same encounter id, still open -- a reschedule is the same care
+    # episode, not a new one.
     encounter = _encounter_for_appointment(db_connection, new_appointment_id)
     assert encounter is not None
     assert encounter["id"] == original_encounter_id
     assert encounter["status"] == "OPEN"
     assert encounter["closed_at"] is None
 
-    # And no orphan/duplicate encounter was left behind for this patient.
+    # And no orphan/duplicate encounter was created for this patient --
+    # both appointment rows point at the same one.
     assert _encounter_count_for_patient(db_connection, ctx["patient"]["id"]) == 1

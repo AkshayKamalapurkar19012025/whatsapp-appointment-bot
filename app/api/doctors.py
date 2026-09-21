@@ -5,8 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 import psycopg
 
-from app.api.staff_auth import get_current_staff, require_role
+from app.api.staff_auth import get_current_staff, require_permission
 from app.db.connection import get_connection
+from app.services.audit_log import record_audit_log
 from app.services.availability_engine import DOCTOR_SUMMARY_SELECT_SQL, DOCTOR_SUMMARY_JOIN_SQL, build_doctor_summary
 from app.utils.timezone import convert_to_timezone, validate_timezone
 
@@ -148,7 +149,7 @@ def get_doctors():
 @router.post("")
 def create_doctor(
     doctor: DoctorCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     try:
         with get_connection() as conn:
@@ -174,6 +175,16 @@ def create_doctor(
                     ),
                 )
                 row = cur.fetchone()
+
+                record_audit_log(
+                    cur,
+                    hospital_id=admin["hospital_id"],
+                    staff_id=admin["id"],
+                    action="doctor.create",
+                    resource_type="doctor",
+                    resource_id=row[0],
+                    details={"name": row[1]},
+                )
 
         return {
             "id": row[0],
@@ -207,7 +218,7 @@ def create_doctor(
 def update_doctor(
     doctor_id: int,
     doctor: DoctorCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     try:
         with get_connection() as conn:
@@ -240,6 +251,16 @@ def update_doctor(
 
                 if row is None:
                     raise HTTPException(status_code=404, detail="Doctor not found")
+
+                record_audit_log(
+                    cur,
+                    hospital_id=admin["hospital_id"],
+                    staff_id=admin["id"],
+                    action="doctor.update",
+                    resource_type="doctor",
+                    resource_id=row[0],
+                    details={"name": row[1]},
+                )
 
         return {
             "id": row[0],
@@ -282,7 +303,7 @@ class DoctorSlotSettingsUpdate(BaseModel):
 def update_doctor_slot_settings(
     doctor_id: int,
     settings: DoctorSlotSettingsUpdate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -303,6 +324,16 @@ def update_doctor_slot_settings(
             if row is None:
                 raise HTTPException(status_code=404, detail="Doctor not found")
 
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="doctor.slot_settings_update",
+                resource_type="doctor",
+                resource_id=row[0],
+                details={"default_duration_minutes": row[1], "buffer_minutes": row[2]},
+            )
+
     return {
         "id": row[0],
         "default_duration_minutes": row[1],
@@ -318,7 +349,7 @@ class DoctorActiveUpdate(BaseModel):
 def update_doctor_active(
     doctor_id: int,
     body: DoctorActiveUpdate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     """
     Deactivate/reactivate a doctor (the workspace header's "..." menu).
@@ -350,6 +381,16 @@ def update_doctor_active(
 
             if row is None:
                 raise HTTPException(status_code=404, detail="Doctor not found")
+
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="doctor.active_update",
+                resource_type="doctor",
+                resource_id=row[0],
+                details={"active": row[1]},
+            )
 
     return {"id": row[0], "active": row[1]}
 
@@ -431,7 +472,7 @@ def get_doctor_profile(doctor_id: int):
 def add_doctor_education(
     doctor_id: int,
     entry: DoctorEducationCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -461,6 +502,16 @@ def add_doctor_education(
             )
             row = cur.fetchone()
 
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="doctor_education.add",
+                resource_type="doctor_education",
+                resource_id=row[0],
+                details={"doctor_id": doctor_id, "qualification": row[1]},
+            )
+
     return _education_entry_dict(row, doctor_id)
 
 
@@ -468,7 +519,7 @@ def add_doctor_education(
 def remove_doctor_education(
     doctor_id: int,
     education_id: int,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -483,6 +534,17 @@ def remove_doctor_education(
             )
             removed = cur.fetchone()
 
+            if removed is not None:
+                record_audit_log(
+                    cur,
+                    hospital_id=admin["hospital_id"],
+                    staff_id=admin["id"],
+                    action="doctor_education.remove",
+                    resource_type="doctor_education",
+                    resource_id=education_id,
+                    details={"doctor_id": doctor_id},
+                )
+
     if removed is None:
         raise HTTPException(status_code=404, detail="Education entry not found")
 
@@ -493,7 +555,7 @@ def remove_doctor_education(
 def feature_doctor_education(
     doctor_id: int,
     education_id: int,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     """
     Marks this entry as the one shown on the compact scheduling card's
@@ -527,6 +589,16 @@ def feature_doctor_education(
             )
             row = cur.fetchone()
 
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="doctor_education.feature",
+                resource_type="doctor_education",
+                resource_id=row[0],
+                details={"doctor_id": doctor_id},
+            )
+
     return _education_entry_dict(row, doctor_id)
 
 
@@ -534,7 +606,7 @@ def feature_doctor_education(
 def unfeature_doctor_education(
     doctor_id: int,
     education_id: int,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -549,6 +621,17 @@ def unfeature_doctor_education(
                 (education_id, doctor_id),
             )
             row = cur.fetchone()
+
+            if row is not None:
+                record_audit_log(
+                    cur,
+                    hospital_id=admin["hospital_id"],
+                    staff_id=admin["id"],
+                    action="doctor_education.unfeature",
+                    resource_type="doctor_education",
+                    resource_id=row[0],
+                    details={"doctor_id": doctor_id},
+                )
 
     if row is None:
         raise HTTPException(status_code=404, detail="Education entry not found")
@@ -594,7 +677,7 @@ def get_doctor_departments(doctor_id: int):
 def assign_department_to_doctor(
     doctor_id: int,
     department_id: int,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -653,6 +736,16 @@ def assign_department_to_doctor(
                     detail="Department already assigned to doctor",
                 )
 
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="doctor.department_assign",
+                resource_type="doctor",
+                resource_id=doctor_id,
+                details={"department_id": department_id, "department_name": department[1]},
+            )
+
     return {
         "doctor_id": doctor_id,
         "department_id": department[0],
@@ -664,7 +757,7 @@ def assign_department_to_doctor(
 def remove_department_from_doctor(
     doctor_id: int,
     department_id: int,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("doctor.manage")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -705,6 +798,16 @@ def remove_department_from_doctor(
                     detail="Department is not assigned to doctor",
                 )
 
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="doctor.department_remove",
+                resource_type="doctor",
+                resource_id=removed[0],
+                details={"department_id": removed[1]},
+            )
+
     return {
         "doctor_id": removed[0],
         "department_id": removed[1],
@@ -734,12 +837,12 @@ def get_doctor_queue(
     Split into "now serving" (the front of the serving order among
     CHECKED_IN rows that are neither held nor already served -- see
     below), "waiting" (the rest of that same order), "held" (skipped via
-    hold_queue_entry_service -- see migrations/0027 -- shown separately
+    hold_queue_entry_service -- see migrations/0035 -- shown separately
     so staff can find and recall them), and today's already-Completed
     patients for reference.
 
     Serving order is priority-first, then token_number (both migrations/
-    0027) -- a priority-flagged entry is called ahead of earlier token
+    0035) -- a priority-flagged entry is called ahead of earlier token
     numbers, and a held entry is excluded entirely until recalled, but
     neither ever changes anyone's actual token_number. That ordering is
     expressed directly in the SQL's ORDER BY, not recomputed in Python,

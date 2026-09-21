@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 import psycopg
 
-from app.api.staff_auth import require_role
+from app.api.staff_auth import require_permission
 from app.db.connection import get_connection
+from app.services.audit_log import record_audit_log
 
 router = APIRouter(prefix="/departments", tags=["Departments"])
 
@@ -49,7 +50,7 @@ def get_departments():
 @router.post("")
 def create_department(
     department: DepartmentCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("department.manage")),
 ):
     try:
         with get_connection() as conn:
@@ -63,6 +64,16 @@ def create_department(
                     (department.name,),
                 )
                 row = cur.fetchone()
+
+                record_audit_log(
+                    cur,
+                    hospital_id=admin["hospital_id"],
+                    staff_id=admin["id"],
+                    action="department.create",
+                    resource_type="department",
+                    resource_id=row[0],
+                    details={"name": row[1]},
+                )
 
         return {
             "id": row[0],
@@ -81,7 +92,7 @@ def create_department(
 def update_department(
     department_id: int,
     department: DepartmentCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("department.manage")),
 ):
     try:
         with get_connection() as conn:
@@ -102,6 +113,16 @@ def update_department(
                 if row is None:
                     raise HTTPException(status_code=404, detail="Department not found")
 
+                record_audit_log(
+                    cur,
+                    hospital_id=admin["hospital_id"],
+                    staff_id=admin["id"],
+                    action="department.update",
+                    resource_type="department",
+                    resource_id=row[0],
+                    details={"name": row[1]},
+                )
+
         return {
             "id": row[0],
             "name": row[1],
@@ -118,7 +139,7 @@ def update_department(
 @router.delete("/{department_id}")
 def delete_department(
     department_id: int,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("department.manage")),
 ):
     # Soft delete only, same as doctors/doctor_schedule -- departments are
     # referenced by doctor_departments and appointments.department_id, so
@@ -140,6 +161,15 @@ def delete_department(
 
             if cur.fetchone() is None:
                 raise HTTPException(status_code=404, detail="Department not found")
+
+            record_audit_log(
+                cur,
+                hospital_id=admin["hospital_id"],
+                staff_id=admin["id"],
+                action="department.delete",
+                resource_type="department",
+                resource_id=department_id,
+            )
 
     return {
         "id": department_id,

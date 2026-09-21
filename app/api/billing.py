@@ -25,7 +25,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.api.staff_auth import get_current_staff, require_role
+from app.api.staff_auth import get_current_staff, require_permission
 from app.db.connection import get_connection
 from app.services import exceptions as svc_exc
 from app.services.billing_services import (
@@ -102,7 +102,7 @@ def get_unbilled_sources(appointment_id: int, staff: dict = Depends(get_current_
 def update_invoice_terms(
     appointment_id: int,
     body: InvoiceTermsUpdate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("bill.update_terms")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -118,7 +118,7 @@ def update_invoice_terms(
 
 
 @router.post("/{appointment_id}/bill/void")
-def void_invoice(appointment_id: int, body: VoidRequest, admin: dict = Depends(require_role("ADMIN"))):
+def void_invoice(appointment_id: int, body: VoidRequest, admin: dict = Depends(require_permission("bill.void"))):
     with get_connection() as conn:
         with conn.cursor() as cur:
             try:
@@ -139,7 +139,7 @@ def void_invoice(appointment_id: int, body: VoidRequest, admin: dict = Depends(r
 def add_charge(
     appointment_id: int,
     body: ChargeCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("bill.add_charge")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -166,7 +166,7 @@ def void_charge(
     appointment_id: int,
     charge_id: int,
     body: VoidRequest,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("bill.void_charge")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -210,7 +210,7 @@ def void_payment(
     appointment_id: int,
     payment_id: int,
     body: VoidRequest,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("bill.void_payment")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -232,7 +232,7 @@ def refund_payment(
     appointment_id: int,
     payment_id: int,
     body: RefundCreate,
-    admin: dict = Depends(require_role("ADMIN")),
+    admin: dict = Depends(require_permission("bill.refund_payment")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:

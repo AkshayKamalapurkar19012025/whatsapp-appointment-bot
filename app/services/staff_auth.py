@@ -198,7 +198,7 @@ def get_staff_by_session_token(cur, token: str) -> dict:
     cur.execute(
         """
         SELECT s.staff_id, s.expires_at, s.revoked_at, s.last_seen_at,
-               st.username, st.role, st.active
+               st.username, st.role, st.active, st.hospital_id
         FROM staff_sessions s
         JOIN staff st ON st.id = s.staff_id
         WHERE s.token_hash = %s
@@ -210,7 +210,7 @@ def get_staff_by_session_token(cur, token: str) -> dict:
     if row is None:
         raise InvalidSession()
 
-    staff_id, expires_at, revoked_at, last_seen_at, username, role, active = row
+    staff_id, expires_at, revoked_at, last_seen_at, username, role, active, hospital_id = row
 
     now = _now()
     idle_cutoff = now - timedelta(minutes=SESSION_IDLE_TIMEOUT_MINUTES)
@@ -223,7 +223,11 @@ def get_staff_by_session_token(cur, token: str) -> dict:
         (now, token_hash),
     )
 
-    return {"id": staff_id, "username": username, "role": role}
+    # hospital_id (M2): request-scoped tenant context, resolved here so
+    # every endpoint depending on get_current_staff has it available --
+    # not used to filter anything yet (see migrations/0027's own
+    # docstring).
+    return {"id": staff_id, "username": username, "role": role, "hospital_id": hospital_id}
 
 
 def revoke_session(cur, token: str) -> None:

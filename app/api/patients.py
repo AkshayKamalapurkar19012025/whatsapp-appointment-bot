@@ -1,10 +1,16 @@
 from datetime import date
 
+import psycopg
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.staff_auth import get_current_staff
 from app.db.connection import get_connection
+from app.services import exceptions as svc_exc
+from app.services.patient_duplicate_detection import decide_duplicate_review, find_duplicate_candidates
+from app.services.patient_identifiers import resolve_patient_by_identifier, write_phone_identifier
+from app.services.patient_merge import merge_patients, unmerge_patients
+from app.services.uhid import resolve_patient_by_uhid
 from app.utils.phone import normalize_whatsapp_number
 
 router = APIRouter(
@@ -19,35 +25,62 @@ def insert_patient(
     whatsapp_number: str,
     date_of_birth: date | None = None,
     gender: str | None = None,
+    government_id: str | None = None,
 ):
     """date_of_birth/gender are optional everywhere this is called from
     (admin create_patient below, and app/api/scheduling.py's WhatsApp
     registration, which never collects either) -- defaulting to None
-    keeps that WhatsApp call site unchanged."""
-    cur.execute(
-        """
-        INSERT INTO patients (
-            name,
-            whatsapp_number,
-            date_of_birth,
-            gender
+    keeps that WhatsApp call site unchanged.
+
+    M7 (in progress): ON CONFLICT (whatsapp_number) is gone -- it needs
+    a matching unique/exclusion constraint or index to target, so it
+    becomes invalid SQL the moment patients.whatsapp_number's UNIQUE
+    constraint is actually dropped, whenever that eventually ships (out
+    of scope for this pass -- the constraint itself is untouched).
+    Until that drop ships, the constraint is still live, so the same
+    race this used to resolve via DO NOTHING can still raise
+    UniqueViolation here -- caught below and treated exactly the same
+    way (nothing created, caller decides what that means). Once the
+    constraint is gone this except simply never fires again; two
+    patients sharing a number then both insert successfully, which is
+    the point of dropping it.
+
+    uhid (migrations/0024_patient_uhid.sql) is GENERATED ALWAYS AS
+    (...) STORED, derived from id -- already present on the row the
+    INSERT below returns, no separate assignment step needed the way
+    date_of_birth/gender/government_id (actual input) are.
+    """
+    try:
+        cur.execute(
+            """
+            INSERT INTO patients (
+                name,
+                whatsapp_number,
+                date_of_birth,
+                gender,
+                government_id
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id, government_id, uhid
+            """,
+            (
+                name,
+                whatsapp_number,
+                date_of_birth,
+                gender,
+                government_id,
+            ),
         )
-        VALUES (%s, %s, %s, %s)
-        ON CONFLICT (whatsapp_number) DO NOTHING
-        RETURNING id, name, whatsapp_number, date_of_birth, gender, uhid
-        """,
-        (
-            name,
-            whatsapp_number,
-            date_of_birth,
-            gender,
-        ),
-    )
+    except psycopg.errors.UniqueViolation:
+        cur.connection.rollback()
+        return None
 
     row = cur.fetchone()
 
-    if row is None:
-        return None
+    # M4-M5 dual write -- see app/services/patient_identifiers.py.
+    write_phone_identifier(
+        cur, hospital_id=row[5], patient_id=row[0], whatsapp_number=row[2]
+    )
 
     return {
         "id": row[0],
@@ -55,7 +88,8 @@ def insert_patient(
         "whatsapp_number": row[2],
         "date_of_birth": row[3].isoformat() if row[3] else None,
         "gender": row[4],
-        "uhid": row[5],
+        "government_id": row[6],
+        "uhid": row[7],
     }
 
 
@@ -106,13 +140,17 @@ class PatientCreate(_PatientFieldValidators, BaseModel):
     # PatientUpdate.
     date_of_birth: date | None = None
     gender: str | None = None
+    # M8: one of the four duplicate-detection signals (see
+    # app/services/patient_duplicate_detection.py). Optional, same as
+    # date_of_birth/gender -- never required by registration.
+    government_id: str | None = None
 
 
 class PatientUpdate(_PatientFieldValidators, BaseModel):
     """For PATCH /patients/{id} -- staff correcting a patient's name or
     WhatsApp number discovered wrong during front-desk verification.
     Same two required fields, same validation as PatientCreate, plus
-    the same two optional demographics; the two models stay separate
+    the same optional demographics; the two models stay separate
     (rather than making PatientCreate's fields optional and reusing it
     directly) since create and update have different semantics
     (whatsapp_number collision means "already exists" on create,
@@ -123,6 +161,7 @@ class PatientUpdate(_PatientFieldValidators, BaseModel):
     whatsapp_number: str = Field(min_length=1, max_length=30)
     date_of_birth: date | None = None
     gender: str | None = None
+    government_id: str | None = None
 
 
 @router.get("")
@@ -275,16 +314,14 @@ def create_patient(
     with get_connection() as conn:
         with conn.cursor() as cur:
 
-            cur.execute(
-                """
-                SELECT id
-                FROM patients
-                WHERE whatsapp_number = %s
-                """,
-                (patient.whatsapp_number,),
-            )
-
-            if cur.fetchone() is not None:
+            # M4-M5: migrated onto the identifier resolver (admin patient
+            # lookup) -- see app/services/patient_identifiers.py. The
+            # column is still what actually enforces uniqueness (the
+            # UNIQUE constraint on patients.whatsapp_number, unchanged
+            # until M7); this check is just a friendlier 409 ahead of it.
+            if resolve_patient_by_identifier(
+                cur, staff["hospital_id"], "PHONE", patient.whatsapp_number
+            ) is not None:
                 raise HTTPException(
                     status_code=409,
                     detail="Patient with this WhatsApp number already exists",
@@ -296,6 +333,7 @@ def create_patient(
                 patient.whatsapp_number,
                 patient.date_of_birth,
                 patient.gender,
+                patient.government_id,
             )
 
             if created_patient is None:
@@ -303,6 +341,14 @@ def create_patient(
                     status_code=409,
                     detail="Patient with this WhatsApp number already exists",
                 )
+
+            # M8: warns, never blocks -- created_patient above is
+            # already committed to being returned either way. See
+            # app/services/patient_duplicate_detection.py for why this
+            # only runs on this (staff-reviewed) registration path.
+            created_patient["possible_duplicates"] = find_duplicate_candidates(
+                cur, staff["hospital_id"], created_patient["id"]
+            )
 
     return created_patient
 
@@ -332,13 +378,13 @@ def update_patient(
             # number is a conflict), a patient keeping their own current
             # number must not conflict with themselves -- only a
             # *different* patient already owning this number is a real
-            # collision.
-            cur.execute(
-                "SELECT id FROM patients WHERE whatsapp_number = %s AND id <> %s",
-                (patient.whatsapp_number, patient_id),
+            # collision. M4-M5: migrated onto the identifier resolver,
+            # same as create_patient above.
+            match = resolve_patient_by_identifier(
+                cur, staff["hospital_id"], "PHONE", patient.whatsapp_number
             )
 
-            if cur.fetchone() is not None:
+            if match is not None and match["id"] != patient_id:
                 raise HTTPException(
                     status_code=409,
                     detail="Another patient with this WhatsApp number already exists",
@@ -351,14 +397,27 @@ def update_patient(
                     whatsapp_number = %s,
                     date_of_birth = %s,
                     gender = %s,
+                    government_id = %s,
                     updated_at = NOW()
                 WHERE id = %s
-                RETURNING id, name, whatsapp_number, date_of_birth, gender, uhid
+                RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id, government_id, uhid
                 """,
-                (patient.name, patient.whatsapp_number, patient.date_of_birth, patient.gender, patient_id),
+                (
+                    patient.name,
+                    patient.whatsapp_number,
+                    patient.date_of_birth,
+                    patient.gender,
+                    patient.government_id,
+                    patient_id,
+                ),
             )
 
             row = cur.fetchone()
+
+            # M4-M5 dual write -- see app/services/patient_identifiers.py.
+            write_phone_identifier(
+                cur, hospital_id=row[5], patient_id=row[0], whatsapp_number=row[2]
+            )
 
     return {
         "id": row[0],
@@ -366,5 +425,110 @@ def update_patient(
         "whatsapp_number": row[2],
         "date_of_birth": row[3].isoformat() if row[3] else None,
         "gender": row[4],
-        "uhid": row[5],
+        "government_id": row[6],
+        "uhid": row[7],
     }
+
+
+# ---------------------------------------------------------------------
+# M8: merge, unmerge, retired-UHID resolution.
+# ---------------------------------------------------------------------
+
+class MergePatientsRequest(BaseModel):
+    retired_patient_id: int
+
+
+@router.post("/{patient_id}/merge")
+def merge_patients_endpoint(
+    patient_id: int,
+    body: MergePatientsRequest,
+    staff: dict = Depends(get_current_staff),
+):
+    """patient_id survives; body.retired_patient_id is folded into it
+    and never deleted -- see app/services/patient_merge.py."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                merge_id = merge_patients(
+                    cur,
+                    hospital_id=staff["hospital_id"],
+                    surviving_patient_id=patient_id,
+                    retired_patient_id=body.retired_patient_id,
+                    staff_id=staff["id"],
+                )
+            except svc_exc.CannotMergePatientIntoItself:
+                raise HTTPException(status_code=400, detail="Cannot merge a patient into itself")
+            except svc_exc.PatientNotFound:
+                raise HTTPException(status_code=404, detail="Patient not found")
+            except svc_exc.PatientAlreadyMerged:
+                raise HTTPException(
+                    status_code=409,
+                    detail="One of these patients has already been merged",
+                )
+
+    return {"merge_id": merge_id, "surviving_patient_id": patient_id, "retired_patient_id": body.retired_patient_id}
+
+
+@router.post("/merges/{merge_id}/unmerge")
+def unmerge_patients_endpoint(
+    merge_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                unmerge_patients(cur, merge_id)
+            except svc_exc.MergeNotFound:
+                raise HTTPException(status_code=404, detail="Merge not found")
+            except svc_exc.UnmergeNotPermitted:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Cannot unmerge: a clinical record has been created for the "
+                    "surviving patient since the merge",
+                )
+
+    return {"merge_id": merge_id, "unmerged": True}
+
+
+@router.get("/by-uhid/{uhid}")
+def get_patient_by_uhid(
+    uhid: str,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            resolved = resolve_patient_by_uhid(cur, staff["hospital_id"], uhid)
+
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="No patient found for this UHID")
+
+    return resolved
+
+
+class DuplicateReviewDecision(BaseModel):
+    decision: str
+
+
+@router.patch("/duplicate-reviews/{review_id}")
+def decide_duplicate_review_endpoint(
+    review_id: int,
+    body: DuplicateReviewDecision,
+    staff: dict = Depends(get_current_staff),
+):
+    if body.decision not in ("CONFIRMED_DUPLICATE", "NOT_DUPLICATE"):
+        raise HTTPException(
+            status_code=422,
+            detail="decision must be one of CONFIRMED_DUPLICATE, NOT_DUPLICATE",
+        )
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                decide_duplicate_review(cur, review_id, body.decision, staff["id"])
+            except svc_exc.DuplicateReviewNotFound:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Duplicate review not found, or already decided",
+                )
+
+    return {"review_id": review_id, "decision": body.decision}
