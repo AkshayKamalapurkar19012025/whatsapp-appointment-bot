@@ -11,6 +11,7 @@ import type {
   BillingReport,
   BookingSource,
   CalendarMonth,
+  ClinicalOrder,
   Consultation,
   ConsultationInput,
   DashboardStats,
@@ -23,6 +24,7 @@ import type {
   DoctorProfile,
   DoctorQueue,
   EncounterSummary,
+  OrderInput,
   QueueDisplayEntry,
   DoctorScheduleEntry,
   DoctorWithSlots,
@@ -652,6 +654,24 @@ export function saveConsultationDraft(
 
 export function completeConsultation(appointmentId: number): Promise<Consultation> {
   return request(`/appointments/${appointmentId}/consultation/complete`, { method: 'POST', auth: 'staff' })
+}
+
+// -- Orders (OPD/HIMS master spec Phase 6) --------------------------------
+
+export function listOrders(appointmentId: number): Promise<ClinicalOrder[]> {
+  return request(`/appointments/${appointmentId}/orders`, { auth: 'staff' })
+}
+
+export function createOrder(appointmentId: number, payload: OrderInput): Promise<ClinicalOrder> {
+  return request(`/appointments/${appointmentId}/orders`, { method: 'POST', auth: 'staff', body: payload })
+}
+
+export function cancelOrder(appointmentId: number, orderId: number, reason: string): Promise<ClinicalOrder> {
+  return request(`/appointments/${appointmentId}/orders/${orderId}/cancel`, {
+    method: 'POST',
+    auth: 'staff',
+    body: { reason },
+  })
 }
 
 export function assignDoctorToDepartment(

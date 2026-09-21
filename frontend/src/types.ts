@@ -570,6 +570,41 @@ export type ConsultationInput = Partial<
   Omit<Consultation, 'id' | 'encounter_id' | 'doctor_id' | 'status' | 'started_at' | 'completed_at'>
 >
 
+// OPD/HIMS master spec Phase 6 (migrations/0030_orders.sql) -- the
+// order spine. One shape for every order type; order_type is what
+// distinguishes a lab test from a radiology study from an external
+// referral, not a separate interface per type.
+export type OrderType = 'LAB' | 'RADIOLOGY' | 'PROCEDURE' | 'SERVICE' | 'EXTERNAL_REFERRAL'
+export type OrderPriority = 'ROUTINE' | 'URGENT' | 'STAT'
+export type OrderStatus = 'ORDERED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
+
+export interface ClinicalOrder {
+  id: number
+  encounter_id: number
+  order_type: OrderType
+  description: string
+  clinical_indication: string | null
+  priority: OrderPriority
+  status: OrderStatus
+  external_destination: string | null
+  result_text: string | null
+  ordering_doctor_id: number
+  created_by: number
+  cancelled_by: number | null
+  cancel_reason: string | null
+  ordered_at: string
+  completed_at: string | null
+  cancelled_at: string | null
+}
+
+export interface OrderInput {
+  order_type: OrderType
+  description: string
+  clinical_indication?: string
+  priority?: OrderPriority
+  external_destination?: string
+}
+
 // GET /api/public/queue-display -- the unauthenticated waiting-room
 // board (app/api/queue_display.py). Deliberately just a doctor name and
 // a bare token number, nothing patient-identifying -- see that file's

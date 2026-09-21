@@ -33,7 +33,12 @@ from app.services.exceptions import (
 )
 
 
-def _appointment_status_and_doctor(cur, appointment_id: int):
+def get_appointment_status_and_doctor(cur, appointment_id: int):
+    """Shared by every clinical service module (this one and
+    app/services/order_services.py, Phase 6) that needs the same
+    CHECKED_IN write-gate check -- not module-private any more now that
+    a second module needs it, but still meant to be called from within
+    this package, not from an API router directly."""
     cur.execute(
         "SELECT status, doctor_id FROM appointments WHERE id = %s",
         (appointment_id,),
@@ -44,7 +49,9 @@ def _appointment_status_and_doctor(cur, appointment_id: int):
     return {"status": row[0], "doctor_id": row[1]}
 
 
-def _encounter_id_for_appointment(cur, appointment_id: int) -> int:
+def get_encounter_id_for_appointment(cur, appointment_id: int) -> int:
+    """Shared by every clinical service module -- see
+    get_appointment_status_and_doctor's docstring above."""
     cur.execute(
         "SELECT id FROM encounters WHERE appointment_id = %s",
         (appointment_id,),
@@ -60,8 +67,8 @@ def get_encounter_summary_service(cur, appointment_id: int):
     patient header on a fresh page load, in one round trip: the
     encounter itself, plus enough of the patient/doctor/appointment to
     show identity and status without a second request."""
-    appointment = _appointment_status_and_doctor(cur, appointment_id)
-    encounter_id = _encounter_id_for_appointment(cur, appointment_id)
+    appointment = get_appointment_status_and_doctor(cur, appointment_id)
+    encounter_id = get_encounter_id_for_appointment(cur, appointment_id)
 
     cur.execute(
         """
@@ -135,8 +142,8 @@ def record_vitals_service(
     priority="ROUTINE",
     nursing_notes=None,
 ):
-    appointment = _appointment_status_and_doctor(cur, appointment_id)
-    encounter_id = _encounter_id_for_appointment(cur, appointment_id)
+    appointment = get_appointment_status_and_doctor(cur, appointment_id)
+    encounter_id = get_encounter_id_for_appointment(cur, appointment_id)
 
     if appointment["status"] != "CHECKED_IN":
         raise EncounterClosed()
@@ -165,7 +172,7 @@ def get_latest_vitals_service(cur, appointment_id: int):
     """The most recent vitals row for this appointment's encounter, or
     None if triage hasn't happened yet. Never gated on status -- viewing
     a patient's last-recorded vitals is always allowed."""
-    encounter_id = _encounter_id_for_appointment(cur, appointment_id)
+    encounter_id = get_encounter_id_for_appointment(cur, appointment_id)
 
     cur.execute(
         f"""
@@ -208,8 +215,8 @@ def get_or_create_consultation_service(cur, appointment_id: int, *, staff_id: in
     since closed out, is still viewable); creating a new one requires
     the patient to actually be CHECKED_IN, same reasoning as every write
     in this module (see module docstring)."""
-    appointment = _appointment_status_and_doctor(cur, appointment_id)
-    encounter_id = _encounter_id_for_appointment(cur, appointment_id)
+    appointment = get_appointment_status_and_doctor(cur, appointment_id)
+    encounter_id = get_encounter_id_for_appointment(cur, appointment_id)
 
     cur.execute(
         f"SELECT {', '.join(_CONSULTATION_COLUMNS)} FROM consultations WHERE encounter_id = %s",
@@ -261,8 +268,8 @@ def save_consultation_draft_service(
     merged field-by-field) -- the consultation workspace always submits
     its whole current form state, so there's no ambiguity between "field
     left out" and "field cleared" to reconcile here."""
-    appointment = _appointment_status_and_doctor(cur, appointment_id)
-    encounter_id = _encounter_id_for_appointment(cur, appointment_id)
+    appointment = get_appointment_status_and_doctor(cur, appointment_id)
+    encounter_id = get_encounter_id_for_appointment(cur, appointment_id)
 
     cur.execute(
         "SELECT id, status FROM consultations WHERE encounter_id = %s",
@@ -326,8 +333,8 @@ def complete_consultation_service(cur, appointment_id: int, *, staff_id: int):
     actually documented); every other field stays optional, matching how
     little the master spec itself mandates as strictly required beyond
     that pair."""
-    appointment = _appointment_status_and_doctor(cur, appointment_id)
-    encounter_id = _encounter_id_for_appointment(cur, appointment_id)
+    appointment = get_appointment_status_and_doctor(cur, appointment_id)
+    encounter_id = get_encounter_id_for_appointment(cur, appointment_id)
 
     cur.execute(
         "SELECT id, status, chief_complaint, diagnosis FROM consultations WHERE encounter_id = %s",

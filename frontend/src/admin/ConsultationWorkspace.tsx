@@ -2,17 +2,36 @@ import { useEffect, useState } from 'react'
 import { ArrowLeft, CheckCircle, Warning } from '@phosphor-icons/react'
 import {
   ApiError,
+  cancelOrder,
   completeConsultation,
+  createOrder,
   getEncounterSummary,
   getLatestVitals,
   getOrCreateConsultation,
+  listOrders,
   recordVitals,
   saveConsultationDraft,
 } from '../api'
-import type { Consultation, EncounterSummary, Vitals, VitalsPriority } from '../types'
+import type {
+  ClinicalOrder,
+  Consultation,
+  EncounterSummary,
+  OrderPriority,
+  OrderType,
+  Vitals,
+  VitalsPriority,
+} from '../types'
 import { formatAgeGender, formatDateTime } from '../format'
 
-type Tab = 'triage' | 'consultation'
+type Tab = 'triage' | 'consultation' | 'orders'
+
+const ORDER_TYPE_LABELS: Record<OrderType, string> = {
+  LAB: 'Laboratory',
+  RADIOLOGY: 'Radiology',
+  PROCEDURE: 'Procedure',
+  SERVICE: 'Service',
+  EXTERNAL_REFERRAL: 'External referral',
+}
 
 const FOLLOW_UP_OPTIONS = [
   { label: 'No follow-up', days: null },
@@ -151,6 +170,21 @@ export default function ConsultationWorkspace({
   const [completing, setCompleting] = useState(false)
   const [completeError, setCompleteError] = useState<string | null>(null)
 
+  const [orders, setOrders] = useState<ClinicalOrder[]>([])
+  const [orderType, setOrderType] = useState<OrderType>('LAB')
+  const [orderDescription, setOrderDescription] = useState('')
+  const [orderIndication, setOrderIndication] = useState('')
+  const [orderPriority, setOrderPriority] = useState<OrderPriority>('ROUTINE')
+  const [orderDestination, setOrderDestination] = useState('')
+  const [orderSaving, setOrderSaving] = useState(false)
+  const [orderError, setOrderError] = useState<string | null>(null)
+  // The one order currently showing its "why cancel" reason input --
+  // same one-row-at-a-time pattern QueueSection.tsx uses for its own
+  // required-reason action (priority).
+  const [cancelTargetId, setCancelTargetId] = useState<number | null>(null)
+  const [cancelReason, setCancelReason] = useState('')
+  const [cancelling, setCancelling] = useState(false)
+
   useEffect(() => {
     let cancelled = false
     setLoading(true)
@@ -163,6 +197,7 @@ export default function ConsultationWorkspace({
         setEncounter(summary)
         return Promise.all([
           getLatestVitals(appointmentId).catch(() => null),
+          listOrders(appointmentId).catch(() => []),
           getOrCreateConsultation(appointmentId)
             .then((c) => {
               setConsultation(c)
@@ -182,11 +217,12 @@ export default function ConsultationWorkspace({
       })
       .then((result) => {
         if (cancelled || !result) return
-        const [vitals] = result
+        const [vitals, orderList] = result
         if (vitals) {
           setLatestVitals(vitals)
           setVitalsForm(vitalsFormFromRecord(vitals))
         }
+        setOrders(orderList)
       })
       .catch((err) => {
         if (cancelled) return
@@ -282,6 +318,45 @@ export default function ConsultationWorkspace({
     }
   }
 
+  async function handleCreateOrder() {
+    setOrderSaving(true)
+    setOrderError(null)
+    try {
+      const created = await createOrder(appointmentId, {
+        order_type: orderType,
+        description: orderDescription.trim(),
+        clinical_indication: orderIndication.trim() || undefined,
+        priority: orderPriority,
+        external_destination: orderType === 'EXTERNAL_REFERRAL' ? orderDestination.trim() : undefined,
+      })
+      setOrders((prev) => [created, ...prev])
+      setOrderDescription('')
+      setOrderIndication('')
+      setOrderDestination('')
+      setOrderPriority('ROUTINE')
+    } catch (err) {
+      setOrderError(err instanceof ApiError ? err.message : 'Could not create the order')
+    } finally {
+      setOrderSaving(false)
+    }
+  }
+
+  async function handleCancelOrder(orderId: number) {
+    if (!cancelReason.trim()) return
+    setCancelling(true)
+    setOrderError(null)
+    try {
+      const updated = await cancelOrder(appointmentId, orderId, cancelReason.trim())
+      setOrders((prev) => prev.map((o) => (o.id === orderId ? updated : o)))
+      setCancelTargetId(null)
+      setCancelReason('')
+    } catch (err) {
+      setOrderError(err instanceof ApiError ? err.message : 'Could not cancel this order')
+    } finally {
+      setCancelling(false)
+    }
+  }
+
   if (loading) {
     return (
       <section>
@@ -355,6 +430,13 @@ export default function ConsultationWorkspace({
               onClick={() => setTab('consultation')}
             >
               Consultation
+            </button>
+            <button
+              type="button"
+              className={tab === 'orders' ? 'tab active' : 'tab'}
+              onClick={() => setTab('orders')}
+            >
+              Orders{orders.length > 0 ? ` (${orders.length})` : ''}
             </button>
           </div>
 
@@ -630,6 +712,161 @@ export default function ConsultationWorkspace({
                     </span>
                   )}
                 </div>
+              )}
+            </div>
+          )}
+
+          {tab === 'orders' && (
+            <div className="detail-section">
+              {orderError && <p className="error">{orderError}</p>}
+
+              {!readOnly && (
+                <div className="doctor-form-grid">
+                  <label className="inline-label">
+                    Order type
+                    <select value={orderType} onChange={(e) => setOrderType(e.target.value as OrderType)}>
+                      {(Object.keys(ORDER_TYPE_LABELS) as OrderType[]).map((t) => (
+                        <option key={t} value={t}>
+                          {ORDER_TYPE_LABELS[t]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="inline-label">
+                    Priority
+                    <select
+                      value={orderPriority}
+                      onChange={(e) => setOrderPriority(e.target.value as OrderPriority)}
+                    >
+                      <option value="ROUTINE">Routine</option>
+                      <option value="URGENT">Urgent</option>
+                      <option value="STAT">Stat</option>
+                    </select>
+                  </label>
+                  <label className="inline-label doctor-form-full">
+                    {orderType === 'EXTERNAL_REFERRAL' ? 'Test / procedure' : 'Test / service / procedure'}
+                    <input
+                      type="text"
+                      value={orderDescription}
+                      onChange={(e) => setOrderDescription(e.target.value)}
+                      placeholder="e.g. CBC, Chest X-ray, ECG"
+                    />
+                  </label>
+                  {orderType === 'EXTERNAL_REFERRAL' && (
+                    <label className="inline-label doctor-form-full">
+                      Destination *
+                      <input
+                        type="text"
+                        value={orderDestination}
+                        onChange={(e) => setOrderDestination(e.target.value)}
+                        placeholder="e.g. City Imaging Center"
+                      />
+                    </label>
+                  )}
+                  <label className="inline-label doctor-form-full">
+                    Clinical indication
+                    <input
+                      type="text"
+                      value={orderIndication}
+                      onChange={(e) => setOrderIndication(e.target.value)}
+                    />
+                  </label>
+                  <div className="doctor-form-full">
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={
+                        orderSaving ||
+                        !orderDescription.trim() ||
+                        (orderType === 'EXTERNAL_REFERRAL' && !orderDestination.trim())
+                      }
+                      onClick={handleCreateOrder}
+                    >
+                      {orderSaving ? 'Adding…' : 'Add order'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {orders.length === 0 && <p className="muted">No orders yet for this visit.</p>}
+
+              {orders.length > 0 && (
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Type</th>
+                      <th>Description</th>
+                      <th>Priority</th>
+                      <th>Status</th>
+                      <th>Ordered</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orders.map((order) => (
+                      <tr key={order.id}>
+                        <td>{ORDER_TYPE_LABELS[order.order_type]}</td>
+                        <td>
+                          {order.description}
+                          {order.order_type === 'EXTERNAL_REFERRAL' && order.external_destination && (
+                            <div className="muted">to {order.external_destination}</div>
+                          )}
+                          {order.status === 'CANCELLED' && order.cancel_reason && (
+                            <div className="muted">Cancelled: {order.cancel_reason}</div>
+                          )}
+                        </td>
+                        <td>{order.priority}</td>
+                        <td>
+                          <span className={`pill status-${order.status.toLowerCase()}`}>{order.status}</span>
+                        </td>
+                        <td>{formatDateTime(order.ordered_at)}</td>
+                        <td>
+                          {(order.status === 'ORDERED' || order.status === 'IN_PROGRESS') &&
+                            (cancelTargetId === order.id ? (
+                              <div className="queue-priority-form">
+                                <input
+                                  type="text"
+                                  placeholder="Reason (required)"
+                                  value={cancelReason}
+                                  onChange={(e) => setCancelReason(e.target.value)}
+                                  autoFocus
+                                />
+                                <button
+                                  type="button"
+                                  className="btn btn-sm"
+                                  disabled={!cancelReason.trim() || cancelling}
+                                  onClick={() => handleCancelOrder(order.id)}
+                                >
+                                  {cancelling ? 'Cancelling…' : 'Confirm'}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-secondary btn btn-sm"
+                                  onClick={() => {
+                                    setCancelTargetId(null)
+                                    setCancelReason('')
+                                  }}
+                                >
+                                  Back
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                className="btn-danger btn btn-sm"
+                                onClick={() => {
+                                  setCancelTargetId(order.id)
+                                  setCancelReason('')
+                                }}
+                              >
+                                Cancel
+                              </button>
+                            ))}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               )}
             </div>
           )}

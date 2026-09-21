@@ -252,3 +252,31 @@ class ConsultationIncomplete(ServiceError):
     safety floor this phase enforces: a consultation can't be marked
     done with nothing actually documented."""
     pass
+
+
+# ---------------------------------------------------------------------
+# Orders (OPD/HIMS master spec Phase 6) -- see
+# app/services/order_services.py.
+# ---------------------------------------------------------------------
+
+class ExternalReferralDestinationRequired(ServiceError):
+    """Raised by create_order_service when order_type is
+    EXTERNAL_REFERRAL and no destination was given -- the one field that
+    makes an external referral meaningful (master spec section 31: "CBC,
+    Destination: External Laboratory"). Checked in the service layer,
+    not left to the DB CHECK constraint alone, matching this codebase's
+    convention (migrations/0027's own header comment) of keeping
+    business rules in the service layer with the DB constraint as a
+    backstop, not the primary enforcement."""
+    pass
+
+
+class OrderNotFound(ServiceError):
+    pass
+
+
+class OrderNotCancellable(ServiceError):
+    """Raised by cancel_order_service when the order is already
+    COMPLETED or CANCELLED -- a finished or already-cancelled order has
+    nothing left to cancel."""
+    pass

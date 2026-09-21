@@ -5003,6 +5003,22 @@ a.link.danger {
   color: var(--color-danger);
 }
 
+/* Order spine (migrations/0030_orders.sql, OPD/HIMS master spec
+   Phase 6): ORDERED -> IN_PROGRESS -> COMPLETED/CANCELLED.
+   .status-ordered reuses the same "waiting for action" amber as
+   .status-pending; .status-in_progress reuses the same active-workflow
+   blue as .status-checked_in. .status-completed/.status-cancelled
+   above already cover the other two -- no new color family invented. */
+.pill.status-ordered {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.pill.status-in_progress {
+  background: var(--color-info-soft);
+  color: var(--color-info);
+}
+
 .pill.token-pill {
   margin-left: var(--space-2);
   background: var(--color-primary-soft);
