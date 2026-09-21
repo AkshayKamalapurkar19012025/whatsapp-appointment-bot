@@ -90,6 +90,34 @@ RELEASED_STATUSES = ("CANCELLED", "REJECTED")
 # Statuses a patient/staff can still cancel or reschedule out of.
 ACTIONABLE_STATUSES = ("PENDING", "CONFIRMED")
 
+# Every status that ends an appointment's care episode for good -- kept
+# in lockstep with migrations/0028_encounters.sql's own backfill CASE,
+# which uses this exact set. Whenever an appointment lands on one of
+# these, the encounters row opened alongside it (see
+# create_appointment_service) is closed in the same transaction by
+# _close_encounter_for_appointment below.
+TERMINAL_STATUSES = ("CANCELLED", "REJECTED", "COMPLETED", "NO_SHOW")
+
+
+def _close_encounter_for_appointment(cur, appointment_id: int):
+    """Close the OPD encounter for this appointment, if it has one and
+    it's still open. A no-op (0 rows updated) is expected, not an error,
+    for any appointment created before migrations/0028_encounters.sql
+    landed and already closed by that migration's backfill, or for a
+    second call on an already-closed encounter -- callers don't need to
+    check first."""
+    cur.execute(
+        """
+        UPDATE encounters
+        SET status = 'CLOSED',
+            closed_at = NOW(),
+            updated_at = NOW()
+        WHERE appointment_id = %s
+          AND status = 'OPEN'
+        """,
+        (appointment_id,),
+    )
+
 
 def create_appointment_service(
     cur,
@@ -407,6 +435,28 @@ def create_appointment_service(
         raise SlotOverlap()
 
     row = cur.fetchone()
+    appointment_id = row[0]
+
+    # ---------------------------------------------------------
+    # 9. Open the OPD encounter for this appointment -- see
+    # migrations/0028_encounters.sql. Same transaction as the INSERT
+    # above (this function's caller commits/rolls back both together),
+    # so a failure here rolls the appointment back too rather than ever
+    # leaving one without the other; a retried/duplicate-click request
+    # can't produce a second encounter either, since it can't produce a
+    # second appointment (the advisory lock + exclusion constraint
+    # above already make appointment creation idempotent-by-construction
+    # for the same slot).
+    # ---------------------------------------------------------
+    cur.execute(
+        """
+        INSERT INTO encounters (patient_id, encounter_type, status, appointment_id)
+        VALUES (%s, 'OPD', 'OPEN', %s)
+        RETURNING id
+        """,
+        (patient_id, appointment_id),
+    )
+    encounter_id = cur.fetchone()[0]
 
     return {
         "id": row[0],
@@ -419,6 +469,7 @@ def create_appointment_service(
         "booking_source": row[7],
         "duration_minutes": duration_minutes,
         "appointment_type_name": appointment_type[1],
+        "encounter_id": encounter_id,
     }
 
 
@@ -474,6 +525,8 @@ def cancel_appointment_service(
     )
 
     row = cur.fetchone()
+
+    _close_encounter_for_appointment(cur, appointment_id)
 
     return {
         "id": row[0],
@@ -754,6 +807,25 @@ def reschedule_appointment_service(
         raise SlotOverlap()
 
     row = cur.fetchone()
+    new_appointment_id = row[0]
+
+    # ---------------------------------------------------------
+    # Carry the same encounter forward onto the new appointment row --
+    # a reschedule is the same care episode moved in time, not a new
+    # one, so this UPDATEs the existing encounters row (opened when the
+    # original appointment was created) rather than opening a second
+    # one. Same transaction as the cancel-old/insert-new pair above, so
+    # it rolls back together with them on any failure past this point.
+    # ---------------------------------------------------------
+    cur.execute(
+        """
+        UPDATE encounters
+        SET appointment_id = %s,
+            updated_at = NOW()
+        WHERE appointment_id = %s
+        """,
+        (new_appointment_id, appointment_id),
+    )
 
     return {
         "id": row[0],
@@ -894,6 +966,9 @@ def _transition_appointment_status(cur, appointment_id: int, *, from_statuses, t
     )
 
     result_row = cur.fetchone()
+
+    if to_status in TERMINAL_STATUSES:
+        _close_encounter_for_appointment(cur, appointment_id)
 
     return {"id": result_row[0], "status": result_row[1]}
 
@@ -1304,6 +1379,8 @@ def mark_no_show_service(cur, appointment_id: int):
     )
 
     result_row = cur.fetchone()
+
+    _close_encounter_for_appointment(cur, appointment_id)
 
     return {"id": result_row[0], "status": result_row[1]}
 
