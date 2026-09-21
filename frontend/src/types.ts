@@ -643,3 +643,99 @@ export interface QueueDisplayEntry {
   doctor_name: string
   now_serving_token: number | null
 }
+
+// OPD/HIMS master spec Phase 8 (migrations/0032_prescriptions_and_
+// pharmacy.sql) -- prescription + pharmacy.
+export type PrescriptionStatus = 'DRAFT' | 'PRESCRIBED' | 'CANCELLED'
+export type DispenseStatus = 'PENDING' | 'PARTIALLY_DISPENSED' | 'DISPENSED'
+
+export interface PharmacyDispenseRecord {
+  id: number
+  prescription_item_id: number
+  pharmacy_stock_id: number | null
+  quantity: number
+  unit_price: number
+  amount: number
+  dispensed_by: number
+  dispensed_at: string
+}
+
+export interface PrescriptionItem {
+  id: number
+  prescription_id: number
+  medicine_name: string
+  generic_name: string | null
+  dosage: string | null
+  route: string | null
+  frequency: string | null
+  duration: string | null
+  quantity: number
+  quantity_dispensed: number
+  food_instructions: string | null
+  special_instructions: string | null
+  dispense_status: DispenseStatus
+  // Only present on the item returned directly by the dispense
+  // endpoint itself -- confirms what that one action just did.
+  dispense_record?: PharmacyDispenseRecord
+}
+
+export interface PrescriptionItemInput {
+  medicine_name: string
+  generic_name?: string
+  dosage?: string
+  route?: string
+  frequency?: string
+  duration?: string
+  quantity: number
+  food_instructions?: string
+  special_instructions?: string
+}
+
+export interface Prescription {
+  id: number
+  encounter_id: number
+  doctor_id: number
+  status: PrescriptionStatus
+  notes: string | null
+  prescribed_at: string | null
+  cancelled_by: number | null
+  cancel_reason: string | null
+  cancelled_at: string | null
+  created_by: number
+  created_at: string
+  updated_at: string
+  items: PrescriptionItem[]
+}
+
+export interface PharmacyQueueEntry {
+  prescription_id: number
+  prescribed_at: string
+  doctor_id: number
+  doctor_name: string
+  patient_id: number
+  patient_name: string
+  patient_uhid: string
+  appointment_id: number
+  items: PrescriptionItem[]
+}
+
+export interface PharmacyStockBatch {
+  id: number
+  medicine_name: string
+  batch_number: string
+  expiry_date: string
+  quantity_on_hand: number
+  unit_price: number
+  active: boolean
+  created_by: number
+  created_at: string
+  updated_at: string
+}
+
+export interface PharmacyStockInput {
+  medicine_name: string
+  batch_number: string
+  expiry_date: string
+  quantity_on_hand: number
+  unit_price: number
+}

@@ -5019,6 +5019,25 @@ a.link.danger {
   color: var(--color-info);
 }
 
+/* Prescription item dispensing (migrations/0032_prescriptions_and_
+   pharmacy.sql, OPD/HIMS master spec Phase 8): PENDING -> PARTIALLY_
+   DISPENSED -> DISPENSED, computed (never stored) from quantity_
+   dispensed/quantity -- see app/services/pharmacy_services.py.
+   .status-partially_dispensed reuses the same "still needs action"
+   amber as .status-pending/.status-ordered; .status-dispensed is
+   Success green -- unlike an appointment reaching COMPLETED (neutral;
+   see .status-completed's own comment), a fully dispensed medicine is
+   a genuinely good outcome, the same family as Paid/Confirmed. */
+.pill.status-partially_dispensed {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+.pill.status-dispensed {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
 .pill.token-pill {
   margin-left: var(--space-2);
   background: var(--color-primary-soft);

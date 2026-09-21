@@ -26,6 +26,12 @@ import type {
   EncounterSummary,
   OrderInput,
   OrderResultItemInput,
+  PharmacyQueueEntry,
+  PharmacyStockBatch,
+  PharmacyStockInput,
+  Prescription,
+  PrescriptionItem,
+  PrescriptionItemInput,
   QueueDisplayEntry,
   DoctorScheduleEntry,
   DoctorWithSlots,
@@ -1153,4 +1159,62 @@ export function getAdminCalendarMonth(
     month: String(month),
   })
   return request(`/appointments/calendar?${params.toString()}`, { auth: 'staff' })
+}
+
+// -- Prescription (OPD/HIMS master spec Phase 8) --------------------------
+
+export function getPrescription(appointmentId: number): Promise<Prescription> {
+  return request(`/appointments/${appointmentId}/prescription`, { auth: 'staff' })
+}
+
+export function addPrescriptionItem(
+  appointmentId: number,
+  payload: PrescriptionItemInput,
+): Promise<Prescription> {
+  return request(`/appointments/${appointmentId}/prescription/items`, {
+    method: 'POST',
+    auth: 'staff',
+    body: payload,
+  })
+}
+
+export function removePrescriptionItem(appointmentId: number, itemId: number): Promise<Prescription> {
+  return request(`/appointments/${appointmentId}/prescription/items/${itemId}`, {
+    method: 'DELETE',
+    auth: 'staff',
+  })
+}
+
+export function prescribePrescription(appointmentId: number): Promise<Prescription> {
+  return request(`/appointments/${appointmentId}/prescription/prescribe`, { method: 'POST', auth: 'staff' })
+}
+
+export function cancelPrescription(appointmentId: number, reason: string): Promise<Prescription> {
+  return request(`/appointments/${appointmentId}/prescription/cancel`, {
+    method: 'POST',
+    auth: 'staff',
+    body: { reason },
+  })
+}
+
+// -- Pharmacy (OPD/HIMS master spec Phase 8) -------------------------------
+
+export function getPharmacyQueue(): Promise<PharmacyQueueEntry[]> {
+  return request('/pharmacy/queue', { auth: 'staff' })
+}
+
+export function getPharmacyStock(medicineName?: string): Promise<PharmacyStockBatch[]> {
+  const query = medicineName ? `?medicine_name=${encodeURIComponent(medicineName)}` : ''
+  return request(`/pharmacy/stock${query}`, { auth: 'staff' })
+}
+
+export function createPharmacyStock(payload: PharmacyStockInput): Promise<PharmacyStockBatch> {
+  return request('/pharmacy/stock', { method: 'POST', auth: 'staff', body: payload })
+}
+
+export function dispensePrescriptionItem(
+  itemId: number,
+  payload: { quantity: number; pharmacy_stock_id?: number; unit_price?: number },
+): Promise<PrescriptionItem> {
+  return request(`/pharmacy/items/${itemId}/dispense`, { method: 'POST', auth: 'staff', body: payload })
 }

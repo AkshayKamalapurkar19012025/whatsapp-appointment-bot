@@ -24,8 +24,9 @@ import type {
   VitalsPriority,
 } from '../types'
 import { formatAgeGender, formatDateTime } from '../format'
+import PrescriptionPanel from './PrescriptionPanel'
 
-type Tab = 'triage' | 'consultation' | 'orders'
+type Tab = 'triage' | 'consultation' | 'orders' | 'prescription'
 
 const ORDER_TYPE_LABELS: Record<OrderType, string> = {
   LAB: 'Laboratory',
@@ -486,6 +487,13 @@ export default function ConsultationWorkspace({
               onClick={() => setTab('orders')}
             >
               Orders{orders.length > 0 ? ` (${orders.length})` : ''}
+            </button>
+            <button
+              type="button"
+              className={tab === 'prescription' ? 'tab active' : 'tab'}
+              onClick={() => setTab('prescription')}
+            >
+              Prescription
             </button>
           </div>
 
@@ -1051,6 +1059,13 @@ export default function ConsultationWorkspace({
                 </table>
               )}
             </div>
+          )}
+
+          {tab === 'prescription' && encounter && (
+            <PrescriptionPanel
+              appointmentId={appointmentId}
+              appointmentCheckedIn={encounter.appointment_status === 'CHECKED_IN'}
+            />
           )}
         </>
       )}

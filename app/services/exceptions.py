@@ -292,3 +292,88 @@ class OrderNotResultable(ServiceError):
     COMPLETED (results already recorded -- no amendment workflow yet,
     see migrations/0031's header) or CANCELLED (nothing to result)."""
     pass
+
+
+# ---------------------------------------------------------------------
+# Prescription / pharmacy (OPD/HIMS master spec Phase 8) -- see
+# app/services/pharmacy_services.py.
+# ---------------------------------------------------------------------
+
+class PrescriptionNotFound(ServiceError):
+    pass
+
+
+class PrescriptionAlreadyPrescribed(ServiceError):
+    """Raised when adding/removing an item, or prescribing again, on a
+    prescription that's already PRESCRIBED -- once signed and sent to
+    pharmacy, the item set is frozen (no amendment workflow, same
+    stance as consultations)."""
+    pass
+
+
+class PrescriptionEmpty(ServiceError):
+    """Raised by prescribe_service when the prescription has no items
+    -- nothing to send to pharmacy."""
+    pass
+
+
+class PrescriptionNotCancellable(ServiceError):
+    """Raised by cancel_prescription_service when the prescription
+    isn't PRESCRIBED (DRAFT has nothing sent to cancel; CANCELLED is
+    already cancelled), or when any item already has a nonzero
+    quantity_dispensed -- once medicine has actually been handed over,
+    the prescription as a whole can no longer be cancelled (the
+    individual undispensed items remain, but cancelling the whole
+    prescription would misrepresent what already happened)."""
+    pass
+
+
+class PrescriptionItemNotFound(ServiceError):
+    pass
+
+
+class DispenseQuantityExceedsRemaining(ServiceError):
+    """Raised by record_dispense_service when the requested quantity
+    would dispense more than prescription_items.quantity - quantity_
+    dispensed -- the DB CHECK constraint is the backstop, this is the
+    service-layer check that raises a caller-friendly error first."""
+    pass
+
+
+class InsufficientStock(ServiceError):
+    """Raised by record_dispense_service when a pharmacy_stock_id is
+    given but its quantity_on_hand is less than the requested dispense
+    quantity."""
+    pass
+
+
+class MedicineMismatch(ServiceError):
+    """Raised by record_dispense_service when the given pharmacy_
+    stock_id's medicine_name doesn't match the prescription item's --
+    this is what "do not allow unauthorized substitution" (master spec
+    section 36) means in a schema with no substitution feature at all:
+    dispensing against the wrong stock row is a checked error, not
+    merely an unbuilt button."""
+    pass
+
+
+class PrescriptionItemNotDispensable(ServiceError):
+    """Raised by record_dispense_service when the item's parent
+    prescription isn't PRESCRIBED (still DRAFT, or CANCELLED) --
+    nothing should ever reach a pharmacist's queue before it's signed
+    and sent, but this is checked regardless of which URL reaches this
+    function."""
+    pass
+
+
+class PharmacyStockNotFound(ServiceError):
+    pass
+
+
+class DuplicateStockBatch(ServiceError):
+    """Raised by create_pharmacy_stock_service when a row with the same
+    (medicine_name, batch_number) already exists -- a genuine new
+    shipment gets a new batch number; re-entering the same one is
+    almost certainly a mistake, not a real restock, so this is refused
+    rather than silently summed into the existing row's quantity."""
+    pass
