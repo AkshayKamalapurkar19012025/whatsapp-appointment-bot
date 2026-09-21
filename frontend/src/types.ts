@@ -478,13 +478,15 @@ export interface DashboardTrends {
   patients: DashboardTrendPoint[]
 }
 
-// GET /api/doctors/{id}/queue -- today's walk-in queue (migrations/0012).
+// GET /api/doctors/{id}/queue -- today's walk-in queue (migrations/0012,
+// held/is_priority added by migrations/0027).
 export interface QueueEntry {
   appointment_id: number
   token_number: number
   visited_at: string
   patient_id: number
   patient_name: string
+  is_priority: boolean
 }
 
 export interface DoctorQueue {
@@ -493,5 +495,19 @@ export interface DoctorQueue {
   date: string
   now_serving: QueueEntry | null
   waiting: QueueEntry[]
+  // Held via POST .../queue/hold (migrations/0027) -- skipped without
+  // losing their place, shown separately so staff can find and recall
+  // them. Excluded from now_serving/waiting.
+  held: QueueEntry[]
   completed: QueueEntry[]
+}
+
+// GET /api/public/queue-display -- the unauthenticated waiting-room
+// board (app/api/queue_display.py). Deliberately just a doctor name and
+// a bare token number, nothing patient-identifying -- see that file's
+// own docstring for why.
+export interface QueueDisplayEntry {
+  doctor_id: number
+  doctor_name: string
+  now_serving_token: number | null
 }

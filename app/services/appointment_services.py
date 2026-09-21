@@ -65,6 +65,9 @@ from app.services.exceptions import (
     InvalidStatusTransition,
     AppointmentNotStarted,
     AppointmentSlotPassed,
+    QueueEntryNotInQueue,
+    QueueEntryNotHeld,
+    PriorityReasonRequired,
     PaymentStateConflict,
     WaiverNotEligible,
     FreeVisitNotEligible,
@@ -1801,3 +1804,180 @@ def _current_payment_record(cur, appointment_id: int):
         "refund_reason": row[8],
         "refunded_at": row[9].isoformat() if row[9] else None,
     }
+
+
+# ---------------------------------------------------------------------
+# Queue hold/recall/priority (HIMS-style token queue) -- all three only
+# operate on a ticketed (token_number IS NOT NULL) CHECKED_IN
+# appointment: someone who isn't yet in today's live queue at all has
+# nothing to hold, recall, or prioritize. None of the three ever touch
+# token_number itself -- get_doctor_queue (app/api/doctors.py) is the
+# one place serving order is computed (held entries excluded, priority
+# entries called first), so a patient's token number never changes no
+# matter how their place in line moves.
+# ---------------------------------------------------------------------
+
+
+def _locked_queue_entry(cur, appointment_id: int):
+    """Shared row lock + "is this actually a live queue entry" guard for
+    all three functions below."""
+    cur.execute(
+        "SELECT status, token_number FROM appointments WHERE id = %s FOR UPDATE",
+        (appointment_id,),
+    )
+
+    row = cur.fetchone()
+
+    if row is None:
+        raise AppointmentNotFound()
+
+    status, token_number = row
+
+    if status != "CHECKED_IN" or token_number is None:
+        raise QueueEntryNotInQueue()
+
+    return token_number
+
+
+def hold_queue_entry_service(cur, appointment_id: int):
+    """Front desk skips a ticketed patient who's stepped away (restroom,
+    forgotten document, a call) without losing their place in line --
+    get_doctor_queue excludes a held entry from now_serving/waiting until
+    recall_queue_entry_service below clears it. Idempotent: holding an
+    already-held entry just refreshes queue_held_at, no error."""
+    token_number = _locked_queue_entry(cur, appointment_id)
+
+    cur.execute(
+        """
+        UPDATE appointments
+        SET queue_held_at = NOW(),
+            updated_at = NOW()
+        WHERE id = %s
+        RETURNING id, status, queue_held_at
+        """,
+        (appointment_id,),
+    )
+
+    result_row = cur.fetchone()
+
+    return {
+        "id": result_row[0],
+        "status": result_row[1],
+        "token_number": token_number,
+        "queue_held_at": result_row[2].isoformat(),
+    }
+
+
+def recall_queue_entry_service(cur, appointment_id: int):
+    """Reverses hold_queue_entry_service -- the patient resumes their
+    original spot in line (token_number is never renumbered), not the
+    back of the queue. Raises QueueEntryNotHeld if this entry wasn't
+    actually held (almost certainly a stale click against a queue view
+    that's already moved on)."""
+    token_number = _locked_queue_entry(cur, appointment_id)
+
+    cur.execute("SELECT queue_held_at FROM appointments WHERE id = %s", (appointment_id,))
+    (queue_held_at,) = cur.fetchone()
+
+    if queue_held_at is None:
+        raise QueueEntryNotHeld()
+
+    cur.execute(
+        """
+        UPDATE appointments
+        SET queue_held_at = NULL,
+            updated_at = NOW()
+        WHERE id = %s
+        RETURNING id, status
+        """,
+        (appointment_id,),
+    )
+
+    result_row = cur.fetchone()
+
+    return {"id": result_row[0], "status": result_row[1], "token_number": token_number}
+
+
+def set_priority_service(cur, appointment_id: int, *, is_priority: bool, reason: str | None, staff_id: int):
+    """Staff flags a ticketed patient's queue entry as priority (medical
+    emergency, senior citizen, doctor's request, ...) -- get_doctor_queue
+    calls priority entries to the front of the serving order, ahead of
+    earlier token numbers, without ever renumbering anyone's actual
+    token. Turning priority on requires a reason (PriorityReasonRequired):
+    a queue-jump should be accountable, not silent. Turning it off
+    leaves the last reason/who/when on the row as history rather than
+    clearing it -- an audit trail that disappears the moment the flag
+    does isn't an audit trail."""
+    token_number = _locked_queue_entry(cur, appointment_id)
+
+    if is_priority and not (reason and reason.strip()):
+        raise PriorityReasonRequired()
+
+    if is_priority:
+        cur.execute(
+            """
+            UPDATE appointments
+            SET is_priority = TRUE,
+                priority_reason = %s,
+                priority_set_by = %s,
+                priority_set_at = NOW(),
+                updated_at = NOW()
+            WHERE id = %s
+            RETURNING id, status, is_priority
+            """,
+            (reason.strip(), staff_id, appointment_id),
+        )
+    else:
+        cur.execute(
+            """
+            UPDATE appointments
+            SET is_priority = FALSE,
+                updated_at = NOW()
+            WHERE id = %s
+            RETURNING id, status, is_priority
+            """,
+            (appointment_id,),
+        )
+
+    result_row = cur.fetchone()
+
+    return {
+        "id": result_row[0],
+        "status": result_row[1],
+        "token_number": token_number,
+        "is_priority": result_row[2],
+    }
+
+
+def get_now_serving_token_service(cur, doctor_id: int, doctor_tz: str) -> int | None:
+    """This doctor's current now-serving token number only -- no patient
+    name, phone, or any other identifying detail. Shared by GET
+    /doctors/{id}/queue (app/api/doctors.py, which needs the full picture
+    for staff) and the public, unauthenticated queue-display endpoint
+    (app/api/queue_display.py), which must never return anything
+    patient-identifying. Same held/priority-aware ordering as that
+    endpoint's own query, just trimmed to the one number a waiting-room
+    display actually needs."""
+    if not validate_timezone(doctor_tz):
+        doctor_tz = "Asia/Kolkata"
+
+    today = datetime.now(ZoneInfo(doctor_tz)).date()
+
+    cur.execute(
+        """
+        SELECT token_number
+        FROM appointments
+        WHERE doctor_id = %s
+          AND status = 'CHECKED_IN'
+          AND token_number IS NOT NULL
+          AND queue_held_at IS NULL
+          AND (visited_at AT TIME ZONE %s)::date = %s
+        ORDER BY is_priority DESC, token_number
+        LIMIT 1
+        """,
+        (doctor_id, doctor_tz, today),
+    )
+
+    row = cur.fetchone()
+
+    return row[0] if row else None

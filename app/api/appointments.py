@@ -50,6 +50,9 @@ from app.services.appointment_services import (
     record_refund_service,
     get_invoice_service,
     add_invoice_line_item_service,
+    hold_queue_entry_service,
+    recall_queue_entry_service,
+    set_priority_service,
 )
 from app.services.availability_engine import list_available_dates_in_range
 from app.services.notifications import KIND_CHECK_IN, KIND_QUEUE_TOKEN, send_mock_notification
@@ -87,6 +90,13 @@ class AppointmentCreate(BaseModel):
 
 class AppointmentReschedule(BaseModel):
     new_start_at: datetime
+
+
+class PrioritySet(BaseModel):
+    is_priority: bool
+    # Required by set_priority_service when is_priority is True; None
+    # is fine when turning priority off (nothing to justify).
+    reason: str | None = Field(default=None, max_length=255)
 
 
 class PaymentRecord(BaseModel):
@@ -1016,6 +1026,96 @@ def no_show_appointment(
                 raise HTTPException(
                     status_code=409,
                     detail="This appointment has not started yet",
+                )
+
+    return result
+
+
+# ---------------------------------------------------------------------
+# Queue hold/recall/priority (migrations/0035) -- same RBAC as the rest
+# of this router (any authenticated STAFF or ADMIN): front-desk staff
+# handle the live queue routinely, no reason to gate these to ADMIN.
+# ---------------------------------------------------------------------
+
+
+@router.post("/{appointment_id}/queue/hold")
+def hold_queue_entry(
+    appointment_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    """Front desk skips a ticketed patient who's stepped away, without
+    losing their place in line -- see hold_queue_entry_service."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = hold_queue_entry_service(cur, appointment_id)
+            except svc_exc.AppointmentNotFound:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            except svc_exc.QueueEntryNotInQueue:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Only a checked-in, ticketed appointment can be held",
+                )
+
+    return result
+
+
+@router.post("/{appointment_id}/queue/recall")
+def recall_queue_entry(
+    appointment_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    """Reverses hold_queue_entry -- see recall_queue_entry_service."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = recall_queue_entry_service(cur, appointment_id)
+            except svc_exc.AppointmentNotFound:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            except svc_exc.QueueEntryNotInQueue:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Only a checked-in, ticketed appointment can be recalled",
+                )
+            except svc_exc.QueueEntryNotHeld:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This appointment is not currently held",
+                )
+
+    return result
+
+
+@router.post("/{appointment_id}/queue/priority")
+def set_queue_priority(
+    appointment_id: int,
+    body: PrioritySet,
+    staff: dict = Depends(get_current_staff),
+):
+    """Flags/unflags a ticketed patient's queue entry as priority --
+    requires a reason when turning priority on. See
+    set_priority_service."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = set_priority_service(
+                    cur,
+                    appointment_id,
+                    is_priority=body.is_priority,
+                    reason=body.reason,
+                    staff_id=staff["id"],
+                )
+            except svc_exc.AppointmentNotFound:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            except svc_exc.QueueEntryNotInQueue:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Only a checked-in, ticketed appointment can be prioritized",
+                )
+            except svc_exc.PriorityReasonRequired:
+                raise HTTPException(
+                    status_code=422,
+                    detail="A reason is required to mark this appointment priority",
                 )
 
     return result

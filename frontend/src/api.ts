@@ -20,6 +20,7 @@ import type {
   DoctorEducationEntry,
   DoctorProfile,
   DoctorQueue,
+  QueueDisplayEntry,
   DoctorScheduleEntry,
   DoctorWithSlots,
   Invoice,
@@ -574,6 +575,45 @@ export function removeDoctorPhoto(
 
 export function getDoctorQueue(doctorId: number): Promise<DoctorQueue> {
   return request(`/doctors/${doctorId}/queue`, { auth: 'staff' })
+}
+
+// Skips a ticketed patient who's stepped away, without losing their
+// place in line (migrations/0027) -- see hold_queue_entry_service.
+export function holdQueueEntry(
+  appointmentId: number,
+): Promise<{ id: number; status: string; token_number: number; queue_held_at: string }> {
+  return request(`/appointments/${appointmentId}/queue/hold`, { method: 'POST', auth: 'staff' })
+}
+
+// Reverses holdQueueEntry -- the patient resumes their original token
+// position, not the back of the queue.
+export function recallQueueEntry(
+  appointmentId: number,
+): Promise<{ id: number; status: string; token_number: number }> {
+  return request(`/appointments/${appointmentId}/queue/recall`, { method: 'POST', auth: 'staff' })
+}
+
+// Flags/unflags a ticketed patient's queue entry as priority -- calls
+// them to the front of the serving order ahead of earlier token
+// numbers, without renumbering anyone. `reason` is required by the
+// backend when `isPriority` is true (PriorityReasonRequired, 422).
+export function setQueuePriority(
+  appointmentId: number,
+  isPriority: boolean,
+  reason?: string,
+): Promise<{ id: number; status: string; token_number: number; is_priority: boolean }> {
+  return request(`/appointments/${appointmentId}/queue/priority`, {
+    method: 'POST',
+    auth: 'staff',
+    body: { is_priority: isPriority, reason: reason || null },
+  })
+}
+
+// GET /api/public/queue-display -- unauthenticated (app/api/queue_
+// display.py), so this deliberately doesn't pass auth: 'staff'. Meant
+// for a waiting-room TV/kiosk, not the staff admin session.
+export function getQueueDisplay(): Promise<QueueDisplayEntry[]> {
+  return request('/public/queue-display')
 }
 
 export function assignDoctorToDepartment(
