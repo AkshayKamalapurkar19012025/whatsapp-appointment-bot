@@ -43,6 +43,8 @@ APP_TABLES = [
     "staff_sessions",
     "staff",
     "invoice_line_items",
+    "vitals",
+    "consultations",
     "encounters",
     "appointments",
     "doctor_appointment_types",

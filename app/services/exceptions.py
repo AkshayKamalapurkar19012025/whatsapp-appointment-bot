@@ -216,3 +216,39 @@ class UsernameAlreadyExists(ServiceError):
 
 class StaffNotFound(ServiceError):
     pass
+
+
+# ---------------------------------------------------------------------
+# Clinical (OPD/HIMS master spec Phase 5) -- see
+# app/services/clinical_services.py.
+# ---------------------------------------------------------------------
+
+class EncounterNotFound(ServiceError):
+    """No encounter exists for the given appointment -- shouldn't happen
+    for any appointment created after migrations/0028_encounters.sql,
+    but kept as a real, checked error rather than an assumption."""
+    pass
+
+
+class EncounterClosed(ServiceError):
+    """Raised when recording vitals or writing to a consultation against
+    an encounter whose care episode has already ended (the appointment
+    reached a terminal status -- see _close_encounter_for_appointment).
+    A closed encounter's clinical record is done; a new one belongs to a
+    new visit, not an edit of the old one."""
+    pass
+
+
+class ConsultationAlreadyCompleted(ServiceError):
+    """Raised by save_consultation_draft_service when the consultation
+    is already COMPLETED -- no amendment workflow exists yet (master
+    spec section 70), so a completed consultation's fields are frozen."""
+    pass
+
+
+class ConsultationIncomplete(ServiceError):
+    """Raised by complete_consultation_service when required fields
+    (chief complaint, diagnosis) are still empty -- the one clinical
+    safety floor this phase enforces: a consultation can't be marked
+    done with nothing actually documented."""
+    pass

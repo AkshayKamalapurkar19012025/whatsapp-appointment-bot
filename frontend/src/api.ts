@@ -11,6 +11,8 @@ import type {
   BillingReport,
   BookingSource,
   CalendarMonth,
+  Consultation,
+  ConsultationInput,
   DashboardStats,
   DashboardTrends,
   Department,
@@ -20,6 +22,7 @@ import type {
   DoctorEducationEntry,
   DoctorProfile,
   DoctorQueue,
+  EncounterSummary,
   QueueDisplayEntry,
   DoctorScheduleEntry,
   DoctorWithSlots,
@@ -30,6 +33,8 @@ import type {
   PaymentActionResult,
   Staff,
   StaffAccount,
+  Vitals,
+  VitalsInput,
 } from './types'
 
 // Bearer token, per the WEB P2 decision (Authorization header, not a
@@ -614,6 +619,39 @@ export function setQueuePriority(
 // for a waiting-room TV/kiosk, not the staff admin session.
 export function getQueueDisplay(): Promise<QueueDisplayEntry[]> {
   return request('/public/queue-display')
+}
+
+// -- Clinical (OPD/HIMS master spec Phase 5) ------------------------------
+
+export function getEncounterSummary(appointmentId: number): Promise<EncounterSummary> {
+  return request(`/appointments/${appointmentId}/encounter`, { auth: 'staff' })
+}
+
+export function recordVitals(appointmentId: number, payload: VitalsInput): Promise<Vitals> {
+  return request(`/appointments/${appointmentId}/vitals`, { method: 'POST', auth: 'staff', body: payload })
+}
+
+export function getLatestVitals(appointmentId: number): Promise<Vitals | null> {
+  return request(`/appointments/${appointmentId}/vitals/latest`, { auth: 'staff' })
+}
+
+// Ensures a DRAFT consultation exists for this appointment and returns
+// it (creating a blank one on first call) -- see get_or_create_
+// consultation_service. 409s if the patient isn't currently checked in
+// and no consultation exists yet.
+export function getOrCreateConsultation(appointmentId: number): Promise<Consultation> {
+  return request(`/appointments/${appointmentId}/consultation`, { auth: 'staff' })
+}
+
+export function saveConsultationDraft(
+  appointmentId: number,
+  payload: ConsultationInput,
+): Promise<Consultation> {
+  return request(`/appointments/${appointmentId}/consultation`, { method: 'PUT', auth: 'staff', body: payload })
+}
+
+export function completeConsultation(appointmentId: number): Promise<Consultation> {
+  return request(`/appointments/${appointmentId}/consultation/complete`, { method: 'POST', auth: 'staff' })
 }
 
 export function assignDoctorToDepartment(

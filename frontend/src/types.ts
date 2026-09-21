@@ -502,6 +502,74 @@ export interface DoctorQueue {
   completed: QueueEntry[]
 }
 
+// OPD/HIMS master spec Phase 5 (migrations/0029_vitals_and_
+// consultations.sql) -- GET /api/appointments/{id}/encounter.
+export interface EncounterSummary {
+  encounter_id: number
+  encounter_status: 'OPEN' | 'CLOSED'
+  opened_at: string
+  closed_at: string | null
+  patient_id: number
+  patient_name: string
+  patient_uhid: string
+  patient_date_of_birth: string | null
+  patient_gender: string | null
+  doctor_id: number
+  doctor_name: string
+  token_number: number | null
+  appointment_id: number
+  appointment_status: string
+  start_at: string
+}
+
+export type VitalsPriority = 'ROUTINE' | 'URGENT' | 'EMERGENCY'
+
+export interface Vitals {
+  id: number
+  encounter_id: number
+  recorded_by: number
+  bp_systolic: number | null
+  bp_diastolic: number | null
+  pulse: number | null
+  temperature_celsius: number | null
+  spo2: number | null
+  respiratory_rate: number | null
+  weight_kg: number | null
+  height_cm: number | null
+  bmi: number | null
+  pain_score: number | null
+  chief_complaint: string | null
+  priority: VitalsPriority
+  nursing_notes: string | null
+  recorded_at: string
+}
+
+export type VitalsInput = Partial<
+  Omit<Vitals, 'id' | 'encounter_id' | 'recorded_by' | 'bmi' | 'recorded_at' | 'priority'>
+> & { priority?: VitalsPriority }
+
+export type ConsultationStatus = 'DRAFT' | 'COMPLETED'
+
+export interface Consultation {
+  id: number
+  encounter_id: number
+  doctor_id: number
+  status: ConsultationStatus
+  chief_complaint: string | null
+  history_notes: string | null
+  examination_notes: string | null
+  diagnosis: string | null
+  clinical_notes: string | null
+  follow_up_date: string | null
+  follow_up_reason: string | null
+  started_at: string
+  completed_at: string | null
+}
+
+export type ConsultationInput = Partial<
+  Omit<Consultation, 'id' | 'encounter_id' | 'doctor_id' | 'status' | 'started_at' | 'completed_at'>
+>
+
 // GET /api/public/queue-display -- the unauthenticated waiting-room
 // board (app/api/queue_display.py). Deliberately just a doctor name and
 // a bare token number, nothing patient-identifying -- see that file's

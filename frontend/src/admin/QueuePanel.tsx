@@ -24,7 +24,13 @@ const LAST_DOCTOR_KEY = 'admin_queue_panel_last_doctor_id'
 // during a shift (QueueSection polls on its own). onBack mirrors
 // BookAppointmentPanel's onViewAppointments: the one way back to that
 // workspace now that this isn't its own nav item.
-export default function QueuePanel({ onBack }: { onBack: () => void }) {
+export default function QueuePanel({
+  onBack,
+  onOpenConsultation,
+}: {
+  onBack: () => void
+  onOpenConsultation?: (appointmentId: number) => void
+}) {
   const [doctors, setDoctors] = useState<Doctor[]>([])
   const [doctorId, setDoctorId] = useState('')
   const [loading, setLoading] = useState(true)
@@ -92,7 +98,9 @@ export default function QueuePanel({ onBack }: { onBack: () => void }) {
             </Select>
           </label>
 
-          {doctorId && <QueueSection key={doctorId} doctorId={Number(doctorId)} />}
+          {doctorId && (
+            <QueueSection key={doctorId} doctorId={Number(doctorId)} onOpenConsultation={onOpenConsultation} />
+          )}
         </>
       )}
     </section>
