@@ -5360,6 +5360,22 @@ a.link.danger {
   color: var(--color-text-secondary);
 }
 
+/* DOCTOR/NURSE/RECEPTIONIST/LAB_TECH/PHARMACIST/BILLING (master spec
+   audit gap #3, migrations/0043) -- same muted treatment as STAFF
+   rather than a distinct color per role: the Staff Accounts table's
+   job here is just to show which specific role an account holds, not
+   to rank roles by visual weight the way ADMIN's own highlighted pill
+   does. */
+.pill.role-doctor,
+.pill.role-nurse,
+.pill.role-receptionist,
+.pill.role-lab_tech,
+.pill.role-pharmacist,
+.pill.role-billing {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-secondary);
+}
+
 .pill.patient-recurring {
   background: var(--color-primary-soft);
   color: var(--color-primary-hover);

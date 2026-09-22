@@ -234,10 +234,15 @@ export interface Staff {
   role: 'ADMIN' | 'STAFF'
 }
 
+// Every role migrations/0031_rbac_decomposition.sql seeded, now
+// actually assignable (master spec audit gap #3) -- see
+// migrations/0043_role_based_access.sql.
+export type StaffRole = 'ADMIN' | 'STAFF' | 'DOCTOR' | 'NURSE' | 'RECEPTIONIST' | 'LAB_TECH' | 'PHARMACIST' | 'BILLING'
+
 export interface StaffAccount {
   id: number
   username: string
-  role: 'ADMIN' | 'STAFF'
+  role: StaffRole
   active: boolean
 }
 

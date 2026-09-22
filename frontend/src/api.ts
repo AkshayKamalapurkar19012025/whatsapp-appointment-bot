@@ -56,6 +56,7 @@ import type {
   PaymentActionResult,
   Staff,
   StaffAccount,
+  StaffRole,
   UnbilledSources,
   Vitals,
   VitalsInput,
@@ -412,7 +413,7 @@ export function listStaffAccounts(): Promise<StaffAccount[]> {
 export function createStaffAccount(
   username: string,
   password: string,
-  role: 'ADMIN' | 'STAFF',
+  role: StaffRole,
 ): Promise<StaffAccount> {
   return request('/auth/staff/accounts', {
     method: 'POST',
