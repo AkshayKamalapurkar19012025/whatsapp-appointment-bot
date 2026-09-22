@@ -512,5 +512,9 @@ class PackageNotFound(ServiceError):
     pass
 
 
+class AllergyNotFound(ServiceError):
+    pass
+
+
 class DuplicatePackageName(ServiceError):
     pass

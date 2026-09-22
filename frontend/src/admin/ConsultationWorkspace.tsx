@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react'
 import { ArrowLeft, CheckCircle, Warning } from '@phosphor-icons/react'
 import {
   ApiError,
+  addPatientAllergy,
   amendConsultation,
   cancelOrder,
   completeConsultation,
@@ -10,12 +11,15 @@ import {
   getEncounterSummary,
   getLatestVitals,
   getOrCreateConsultation,
+  getPatientAllergies,
   listOrders,
   recordOrderResult,
   recordVitals,
+  resolvePatientAllergy,
   saveConsultationDraft,
 } from '../api'
 import type {
+  AllergySeverity,
   ClinicalOrder,
   Consultation,
   ConsultationAmendment,
@@ -23,6 +27,7 @@ import type {
   OrderPriority,
   OrderResultItemInput,
   OrderType,
+  PatientAllergy,
   Vitals,
   VitalsPriority,
 } from '../types'
@@ -167,6 +172,19 @@ export default function ConsultationWorkspace({
   const [vitalsError, setVitalsError] = useState<string | null>(null)
   const [vitalsSavedAt, setVitalsSavedAt] = useState<number | null>(null)
 
+  // Allergy list (master spec section 91's clinical-safety warning).
+  const [allergies, setAllergies] = useState<PatientAllergy[]>([])
+  const [allergyError, setAllergyError] = useState<string | null>(null)
+  const [showAllergyForm, setShowAllergyForm] = useState(false)
+  const [allergenInput, setAllergenInput] = useState('')
+  const [reactionInput, setReactionInput] = useState('')
+  const [severityInput, setSeverityInput] = useState<AllergySeverity | ''>('')
+  const [allergySaving, setAllergySaving] = useState(false)
+  // One-row-at-a-time reason input, same pattern as cancelTargetId below.
+  const [resolveTargetId, setResolveTargetId] = useState<number | null>(null)
+  const [resolveReason, setResolveReason] = useState('')
+  const [resolving, setResolving] = useState(false)
+
   const [consultation, setConsultation] = useState<Consultation | null>(null)
   const [consultationForm, setConsultationForm] = useState<ConsultationFormState>(
     consultationFormFromRecord({} as Consultation),
@@ -223,6 +241,7 @@ export default function ConsultationWorkspace({
         return Promise.all([
           getLatestVitals(appointmentId).catch(() => null),
           listOrders(appointmentId).catch(() => []),
+          getPatientAllergies(summary.patient_id).catch(() => []),
           getOrCreateConsultation(appointmentId)
             .then((c) => {
               setConsultation(c)
@@ -242,12 +261,13 @@ export default function ConsultationWorkspace({
       })
       .then((result) => {
         if (cancelled || !result) return
-        const [vitals, orderList] = result
+        const [vitals, orderList, allergyList] = result
         if (vitals) {
           setLatestVitals(vitals)
           setVitalsForm(vitalsFormFromRecord(vitals))
         }
         setOrders(orderList)
+        setAllergies(allergyList)
       })
       .catch((err) => {
         if (cancelled) return
@@ -334,6 +354,44 @@ export default function ConsultationWorkspace({
       setVitalsError(err instanceof ApiError ? err.message : 'Could not save vitals')
     } finally {
       setVitalsSaving(false)
+    }
+  }
+
+  async function handleAddAllergy() {
+    if (!encounter || !allergenInput.trim()) return
+    setAllergySaving(true)
+    setAllergyError(null)
+    try {
+      const created = await addPatientAllergy(encounter.patient_id, {
+        allergen: allergenInput.trim(),
+        reaction: reactionInput.trim() || undefined,
+        severity: severityInput || undefined,
+      })
+      setAllergies((prev) => [created, ...prev])
+      setAllergenInput('')
+      setReactionInput('')
+      setSeverityInput('')
+      setShowAllergyForm(false)
+    } catch (err) {
+      setAllergyError(err instanceof ApiError ? err.message : 'Could not add this allergy')
+    } finally {
+      setAllergySaving(false)
+    }
+  }
+
+  async function handleResolveAllergy(allergyId: number) {
+    if (!encounter || !resolveReason.trim()) return
+    setResolving(true)
+    setAllergyError(null)
+    try {
+      await resolvePatientAllergy(encounter.patient_id, allergyId, resolveReason.trim())
+      setAllergies((prev) => prev.filter((a) => a.id !== allergyId))
+      setResolveTargetId(null)
+      setResolveReason('')
+    } catch (err) {
+      setAllergyError(err instanceof ApiError ? err.message : 'Could not resolve this allergy')
+    } finally {
+      setResolving(false)
     }
   }
 
@@ -514,6 +572,12 @@ export default function ConsultationWorkspace({
               <span>{encounter.doctor_name}</span>
               {encounter.token_number !== null && <span>Token #{encounter.token_number}</span>}
             </div>
+            {allergies.length > 0 && (
+              <div className="patient-context-allergy-warning">
+                <Warning size={14} weight="fill" />
+                Allergies: {allergies.map((a) => a.allergen).join(', ')}
+              </div>
+            )}
           </div>
           <span className={`pill status-${encounter.appointment_status.toLowerCase()}`}>
             {encounter.appointment_status === 'CHECKED_IN' ? 'In progress' : encounter.appointment_status}
@@ -576,6 +640,130 @@ export default function ConsultationWorkspace({
 
           {tab === 'triage' && (
             <div className="detail-section">
+              <div className="allergy-panel">
+                <div className="allergy-panel-header">
+                  <h4>Allergies</h4>
+                  {!showAllergyForm && (
+                    <button type="button" className="btn-secondary btn btn-sm" onClick={() => setShowAllergyForm(true)}>
+                      + Add allergy
+                    </button>
+                  )}
+                </div>
+                {allergyError && <p className="error">{allergyError}</p>}
+
+                {allergies.length === 0 && !showAllergyForm && <p className="muted">No known allergies recorded.</p>}
+
+                {allergies.length > 0 && (
+                  <ul className="allergy-list">
+                    {allergies.map((a) => (
+                      <li key={a.id} className="allergy-list-item">
+                        <span>
+                          <strong>{a.allergen}</strong>
+                          {a.severity && <span className={`pill severity-${a.severity.toLowerCase()}`}>{a.severity}</span>}
+                          {a.reaction && <span className="muted"> — {a.reaction}</span>}
+                        </span>
+                        {resolveTargetId === a.id ? (
+                          <span className="inline-form">
+                            <input
+                              type="text"
+                              placeholder="Reason for removing"
+                              value={resolveReason}
+                              onChange={(e) => setResolveReason(e.target.value)}
+                            />
+                            <button
+                              type="button"
+                              className="btn btn-sm"
+                              disabled={resolving || !resolveReason.trim()}
+                              onClick={() => handleResolveAllergy(a.id)}
+                            >
+                              {resolving ? 'Removing…' : 'Confirm'}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary btn btn-sm"
+                              onClick={() => {
+                                setResolveTargetId(null)
+                                setResolveReason('')
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="link"
+                            onClick={() => {
+                              setResolveTargetId(a.id)
+                              setResolveReason('')
+                            }}
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {showAllergyForm && (
+                  <div className="doctor-form-grid">
+                    <label className="inline-label">
+                      Allergen
+                      <input
+                        type="text"
+                        value={allergenInput}
+                        onChange={(e) => setAllergenInput(e.target.value)}
+                        placeholder="e.g. Penicillin"
+                      />
+                    </label>
+                    <label className="inline-label">
+                      Reaction
+                      <input
+                        type="text"
+                        value={reactionInput}
+                        onChange={(e) => setReactionInput(e.target.value)}
+                        placeholder="e.g. Rash"
+                      />
+                    </label>
+                    <label className="inline-label">
+                      Severity
+                      <select
+                        value={severityInput}
+                        onChange={(e) => setSeverityInput(e.target.value as AllergySeverity | '')}
+                      >
+                        <option value="">—</option>
+                        <option value="MILD">Mild</option>
+                        <option value="MODERATE">Moderate</option>
+                        <option value="SEVERE">Severe</option>
+                      </select>
+                    </label>
+                    <span className="inline-form">
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        disabled={allergySaving || !allergenInput.trim()}
+                        onClick={handleAddAllergy}
+                      >
+                        {allergySaving ? 'Saving…' : 'Save allergy'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary btn btn-sm"
+                        onClick={() => {
+                          setShowAllergyForm(false)
+                          setAllergenInput('')
+                          setReactionInput('')
+                          setSeverityInput('')
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </span>
+                  </div>
+                )}
+              </div>
+
               {latestVitals && (
                 <p className="muted">Last recorded {formatDateTime(latestVitals.recorded_at)}</p>
               )}

@@ -67,6 +67,10 @@ EXEMPT_TABLES = {
     # encounters group above. OPD/HIMS master spec Phase 14 (section
     # 70's controlled amendment/void processes).
     "consultation_amendments",
+    # Child of patients (patient_id FK, NOT NULL), and patients itself
+    # already carries hospital_id directly (migrations/0027) -- tenant
+    # derivable through it, same category as doctor_education.
+    "patient_allergies",
     # pharmacy_stock is NOT in this list -- it has no FK to any
     # hospital-scoped entity at all (physical inventory, not a child of
     # a visit), so it got its own hospital_id column instead

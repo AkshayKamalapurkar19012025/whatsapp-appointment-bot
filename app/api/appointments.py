@@ -22,7 +22,7 @@ it.
 """
 
 import calendar as calendar_module
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -208,6 +208,23 @@ def get_appointments(
     if appointment_type_id is not None:
         where_clauses.append("a.appointment_type_id = %s")
         params.append(appointment_type_id)
+
+    # A widened, UTC-instant SQL pre-filter -- NOT the precise
+    # doctor-local-day bound itself (that stays the exact Python-side
+    # trim below, unchanged, including its invalid-timezone fallback,
+    # which a SQL-side AT TIME ZONE can't replicate). +/-1 day either
+    # side of the requested range covers every real-world UTC offset
+    # (max +/-14:00), so this can never exclude a row the precise trim
+    # would have kept -- it only turns "always scan the whole table"
+    # into "scan roughly the requested date range" at the database
+    # layer (master spec section 80: "avoid load entire table where
+    # datasets can grow"), with identical results either way.
+    if date_from is not None:
+        where_clauses.append("a.start_at >= %s")
+        params.append(datetime.combine(date_from, datetime.min.time()) - timedelta(days=1))
+    if date_to is not None:
+        where_clauses.append("a.start_at < %s")
+        params.append(datetime.combine(date_to, datetime.min.time()) + timedelta(days=2))
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 

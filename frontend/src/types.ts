@@ -30,6 +30,40 @@ export interface Patient {
   uhid: string
 }
 
+// GET /patients/admin's response shape (search + pagination, master
+// spec section 62).
+export interface PaginatedPatients {
+  items: Patient[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export type AllergySeverity = 'MILD' | 'MODERATE' | 'SEVERE'
+
+// GET/POST /patients/{id}/allergies, POST .../allergies/{id}/resolve
+// (master spec section 91's clinical-safety warning). Mirrors
+// app/services/patient_allergies.py's _ALLERGY_COLUMNS exactly.
+export interface PatientAllergy {
+  id: number
+  patient_id: number
+  allergen: string
+  reaction: string | null
+  severity: AllergySeverity | null
+  active: boolean
+  recorded_by: number
+  recorded_at: string
+  resolved_by: number | null
+  resolved_reason: string | null
+  resolved_at: string | null
+}
+
+export interface AllergyInput {
+  allergen: string
+  reaction?: string
+  severity?: AllergySeverity
+}
+
 // ONLINE covers both the patient web app and WhatsApp self-service
 // booking (both are the patient booking for themselves through a
 // channel, not a staff/front-desk action) -- see migrations/0023 and

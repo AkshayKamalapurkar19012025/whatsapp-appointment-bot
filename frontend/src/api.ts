@@ -47,7 +47,10 @@ import type {
   DoctorWithSlots,
   Invoice,
   MyAppointmentsResponse,
+  AllergyInput,
+  PaginatedPatients,
   Patient,
+  PatientAllergy,
   PatientGender,
   PatientTimeline,
   PaymentActionResult,
@@ -917,12 +920,46 @@ export function listPatients(): Promise<Patient[]> {
   return request('/patients', { auth: 'staff' })
 }
 
+// GET /patients/admin -- server-searched, server-paginated (master
+// spec section 62/80: never load the whole registry into the browser).
+// PatientsPanel's directory table uses this, not listPatients above --
+// that one stays unpaginated for its one remaining caller
+// (AppointmentsPanel's per-row patient lookup map, which genuinely
+// needs every patient, not a page of them).
+export function listPatientsAdmin(params: { search?: string; limit?: number; offset?: number }): Promise<PaginatedPatients> {
+  const query = new URLSearchParams()
+  if (params.search) query.set('search', params.search)
+  if (params.limit !== undefined) query.set('limit', String(params.limit))
+  if (params.offset !== undefined) query.set('offset', String(params.offset))
+  return request(`/patients/admin?${query.toString()}`, { auth: 'staff' })
+}
+
+// Patient allergy list (master spec section 91's clinical-safety
+// warning) -- GET/POST /patients/{id}/allergies, POST
+// .../allergies/{id}/resolve. Active-only by default, matching
+// list_patient_allergies_service.
+export function getPatientAllergies(patientId: number): Promise<PatientAllergy[]> {
+  return request(`/patients/${patientId}/allergies`, { auth: 'staff' })
+}
+
+export function addPatientAllergy(patientId: number, payload: AllergyInput): Promise<PatientAllergy> {
+  return request(`/patients/${patientId}/allergies`, { method: 'POST', auth: 'staff', body: payload })
+}
+
+export function resolvePatientAllergy(patientId: number, allergyId: number, reason: string): Promise<PatientAllergy> {
+  return request(`/patients/${patientId}/allergies/${allergyId}/resolve`, {
+    method: 'POST',
+    auth: 'staff',
+    body: { reason },
+  })
+}
+
 // GET /patients/search -- the OPD find/register step's backend lookup
-// (name/phone/UHID substring, optional exact DOB match), unlike
-// listPatients above (the whole registry, filtered client-side by
-// PatientsPanel's directory table). At least one of query/dob is
-// required server-side; returns [] rather than 404 when nothing
-// matches.
+// (name/phone/UHID substring, optional exact DOB match), a different
+// endpoint from listPatientsAdmin above: capped at 20 results, meant
+// for "find the one existing patient before registering a duplicate,"
+// not a paginated browse. At least one of query/dob is required
+// server-side; returns [] rather than 404 when nothing matches.
 export function searchPatientsAdmin(query: string, dob?: string | null): Promise<Patient[]> {
   const params = new URLSearchParams()
   if (query.trim()) params.set('q', query.trim())

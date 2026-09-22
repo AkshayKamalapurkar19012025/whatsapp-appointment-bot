@@ -1,7 +1,7 @@
 from datetime import date
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.staff_auth import get_current_staff
@@ -11,6 +11,11 @@ from app.services.patient_duplicate_detection import decide_duplicate_review, fi
 from app.services.patient_identifiers import resolve_patient_by_identifier, write_phone_identifier
 from app.services.patient_merge import merge_patients, unmerge_patients
 from app.services.patient_timeline_service import get_patient_timeline_service
+from app.services.patient_allergies import (
+    list_patient_allergies_service,
+    add_patient_allergy_service,
+    resolve_patient_allergy_service,
+)
 from app.services.uhid import resolve_patient_by_uhid
 from app.utils.phone import normalize_whatsapp_number
 
@@ -165,43 +170,35 @@ class PatientUpdate(_PatientFieldValidators, BaseModel):
     government_id: str | None = None
 
 
-@router.get("")
-def get_patients(staff: dict = Depends(get_current_staff)):
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT
-                    p.id,
-                    p.name,
-                    p.whatsapp_number,
-                    -- a.status::text: see availability_engine.py's
-                    -- get_available_slots for why (enum-typed
-                    -- appointments.status on some databases).
-                    COUNT(a.id) FILTER (WHERE NOT (a.status::text = ANY(ARRAY['CANCELLED', 'REJECTED']))),
-                    p.date_of_birth,
-                    p.gender,
-                    -- Most recent real appointment (same exclusion as
-                    -- appointment_count above), an audit-log-style "when
-                    -- did this happen" fact -- see the OPD Patients-page
-                    -- redesign report for why this is deliberately NOT
-                    -- converted to any one doctor's local time the way an
-                    -- appointment slot time is (a patient's history can
-                    -- span doctors in different timezones; format.ts's
-                    -- formatDateTime renders this in the viewer's own
-                    -- local time instead, the same convention already
-                    -- used for created_at elsewhere in this app).
-                    MAX(a.start_at) FILTER (WHERE NOT (a.status::text = ANY(ARRAY['CANCELLED', 'REJECTED']))),
-                    p.uhid
-                FROM patients p
-                LEFT JOIN appointments a ON a.patient_id = p.id
-                GROUP BY p.id, p.name, p.whatsapp_number, p.date_of_birth, p.gender, p.uhid
-                ORDER BY p.name
-                """
-            )
+_PATIENT_LIST_SELECT = """
+    SELECT
+        p.id,
+        p.name,
+        p.whatsapp_number,
+        -- a.status::text: see availability_engine.py's
+        -- get_available_slots for why (enum-typed
+        -- appointments.status on some databases).
+        COUNT(a.id) FILTER (WHERE NOT (a.status::text = ANY(ARRAY['CANCELLED', 'REJECTED']))),
+        p.date_of_birth,
+        p.gender,
+        -- Most recent real appointment (same exclusion as
+        -- appointment_count above), an audit-log-style "when
+        -- did this happen" fact -- see the OPD Patients-page
+        -- redesign report for why this is deliberately NOT
+        -- converted to any one doctor's local time the way an
+        -- appointment slot time is (a patient's history can
+        -- span doctors in different timezones; format.ts's
+        -- formatDateTime renders this in the viewer's own
+        -- local time instead, the same convention already
+        -- used for created_at elsewhere in this app).
+        MAX(a.start_at) FILTER (WHERE NOT (a.status::text = ANY(ARRAY['CANCELLED', 'REJECTED']))),
+        p.uhid
+    FROM patients p
+    LEFT JOIN appointments a ON a.patient_id = p.id
+"""
 
-            rows = cur.fetchall()
 
+def _patient_list_row_to_dict(row) -> dict:
     # "Recurring" here means the patient has more than one appointment
     # on record that was never cancelled or rejected (2+ real requests
     # that were, or still could be, actual visits); 0 or 1 reads as
@@ -212,20 +209,74 @@ def get_patients(staff: dict = Depends(get_current_staff)):
     # caller, but the OPD Patients page no longer treats this as the
     # patient's primary/permanent attribute -- see last_visit_at/
     # appointment_count instead, which the redesigned page actually shows.
-    return [
-        {
-            "id": row[0],
-            "name": row[1],
-            "whatsapp_number": row[2],
-            "appointment_count": row[3],
-            "patient_type": "recurring" if row[3] > 1 else "first-time",
-            "date_of_birth": row[4].isoformat() if row[4] else None,
-            "gender": row[5],
-            "last_visit_at": row[6].isoformat() if row[6] else None,
-            "uhid": row[7],
-        }
-        for row in rows
-    ]
+    return {
+        "id": row[0],
+        "name": row[1],
+        "whatsapp_number": row[2],
+        "appointment_count": row[3],
+        "patient_type": "recurring" if row[3] > 1 else "first-time",
+        "date_of_birth": row[4].isoformat() if row[4] else None,
+        "gender": row[5],
+        "last_visit_at": row[6].isoformat() if row[6] else None,
+        "uhid": row[7],
+    }
+
+
+@router.get("")
+def get_patients(staff: dict = Depends(get_current_staff)):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"{_PATIENT_LIST_SELECT} GROUP BY p.id, p.name, p.whatsapp_number, p.date_of_birth, p.gender, p.uhid ORDER BY p.name")
+            rows = cur.fetchall()
+
+    return [_patient_list_row_to_dict(row) for row in rows]
+
+
+@router.get("/admin")
+def get_patients_admin(
+    search: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    staff: dict = Depends(get_current_staff),
+):
+    """Paginated, server-searched patient registry (OPD/HIMS master
+    spec section 62/80: "do not load thousands of rows into the
+    browser") -- the admin Patients page's own listing. GET "" above is
+    unchanged and still returns everything unpaginated: it has its own
+    caller (AppointmentsPanel's per-row patient lookup map) that needs
+    the full set, not a page of it, so it's left exactly as it was
+    rather than risk breaking that with a shape change.
+    """
+    where = ""
+    params: list = []
+    if search and search.strip():
+        needle = f"%{search.strip()}%"
+        where = "WHERE (p.name ILIKE %s OR p.whatsapp_number ILIKE %s OR p.uhid ILIKE %s)"
+        params = [needle, needle, needle]
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) FROM patients p {where}", params)
+            (total,) = cur.fetchone()
+
+            cur.execute(
+                f"""
+                {_PATIENT_LIST_SELECT}
+                {where}
+                GROUP BY p.id, p.name, p.whatsapp_number, p.date_of_birth, p.gender, p.uhid
+                ORDER BY p.name
+                LIMIT %s OFFSET %s
+                """,
+                params + [limit, offset],
+            )
+            rows = cur.fetchall()
+
+    return {
+        "items": [_patient_list_row_to_dict(row) for row in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.get("/search")
@@ -555,3 +606,74 @@ def decide_duplicate_review_endpoint(
                 )
 
     return {"review_id": review_id, "decision": body.decision}
+
+
+# ---------------------------------------------------------------------
+# Allergies (master spec section 91's clinical-safety UX requirement)
+# -- bare-staff for both read and write, same tier as vitals: recording
+# a known allergy is routine clinical documentation, not an admin
+# action.
+# ---------------------------------------------------------------------
+
+
+class AllergyCreate(BaseModel):
+    allergen: str = Field(min_length=1)
+    reaction: str | None = None
+    severity: str | None = None
+
+    @field_validator("severity")
+    @classmethod
+    def validate_severity(cls, value: str | None) -> str | None:
+        if value is not None and value not in ("MILD", "MODERATE", "SEVERE"):
+            raise ValueError("severity must be one of MILD, MODERATE, SEVERE")
+        return value
+
+
+class AllergyResolve(BaseModel):
+    reason: str = Field(min_length=1)
+
+
+@router.get("/{patient_id}/allergies")
+def get_patient_allergies(patient_id: int, staff: dict = Depends(get_current_staff)):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                return list_patient_allergies_service(cur, patient_id, hospital_id=staff["hospital_id"])
+            except svc_exc.PatientNotFound:
+                raise HTTPException(status_code=404, detail="Patient not found")
+
+
+@router.post("/{patient_id}/allergies")
+def add_patient_allergy(
+    patient_id: int,
+    body: AllergyCreate,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                return add_patient_allergy_service(
+                    cur, patient_id, staff_id=staff["id"], hospital_id=staff["hospital_id"],
+                    allergen=body.allergen, reaction=body.reaction, severity=body.severity,
+                )
+            except svc_exc.PatientNotFound:
+                raise HTTPException(status_code=404, detail="Patient not found")
+
+
+@router.post("/{patient_id}/allergies/{allergy_id}/resolve")
+def resolve_patient_allergy(
+    patient_id: int,
+    allergy_id: int,
+    body: AllergyResolve,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                return resolve_patient_allergy_service(
+                    cur, patient_id, allergy_id, staff_id=staff["id"], hospital_id=staff["hospital_id"], reason=body.reason,
+                )
+            except svc_exc.PatientNotFound:
+                raise HTTPException(status_code=404, detail="Patient not found")
+            except svc_exc.AllergyNotFound:
+                raise HTTPException(status_code=404, detail="Allergy not found")

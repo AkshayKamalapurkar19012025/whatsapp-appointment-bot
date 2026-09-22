@@ -302,6 +302,61 @@ def test_list_filters_by_date_range_using_doctor_local_date_not_utc(client, db_c
     assert created["id"] not in {a["id"] for a in by_utc_date}
 
 
+def test_list_date_filter_covers_extreme_utc_offset(client, db_connection):
+    """GET /appointments's SQL-level date_from/date_to pre-filter widens
+    +/-1 day around the requested range before the precise doctor-local
+    trim runs (added alongside the master-spec-audit's pagination/
+    performance fix) -- must never be narrow enough to exclude a real
+    appointment. UTC+14 (Pacific/Kiritimati, the most extreme real IANA
+    offset) is the actual edge of that margin, not America/New_York's
+    ~5 hours which the test above already covers."""
+    from zoneinfo import ZoneInfo
+    from datetime import datetime
+
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client,
+        db_connection,
+        doctor_name="Dr. Extreme TZ",
+        department_name="Dr. Extreme TZ Dept",
+        appointment_type_name="Dr. Extreme TZ Type",
+        timezone="Pacific/Kiritimati",
+        start_time="00:30",
+        end_time="04:00",
+    )
+    patient = client.post(
+        "/api/patients",
+        json={"name": "Extreme TZ Patient", "whatsapp_number": "+919400055502"},
+        headers=admin_headers,
+    ).json()
+
+    scheduling_date = _next_weekday(date.today() + timedelta(days=10))
+    local_start = datetime(
+        scheduling_date.year, scheduling_date.month, scheduling_date.day, 1, 0,
+        tzinfo=ZoneInfo("Pacific/Kiritimati"),
+    )
+    utc_date = local_start.astimezone(ZoneInfo("UTC")).date()
+    assert utc_date != scheduling_date, "test setup must cross a UTC calendar day boundary"
+
+    created = client.post(
+        "/api/appointments",
+        json={
+            "doctor_id": seeded["doctor_id"],
+            "patient_id": patient["id"],
+            "appointment_type_id": seeded["appointment_type_id"],
+            "start_at": local_start.isoformat(),
+        },
+        headers=admin_headers,
+    ).json()
+
+    by_local_date = client.get(
+        "/api/appointments",
+        params={"date_from": scheduling_date.isoformat(), "date_to": scheduling_date.isoformat()},
+        headers=admin_headers,
+    ).json()
+    assert created["id"] in {a["id"] for a in by_local_date}
+
+
 def test_calendar_requires_authentication(client, db_connection):
     seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. P9 Calendar Auth")
     response = client.get(

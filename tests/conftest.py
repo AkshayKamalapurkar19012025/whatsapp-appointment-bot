@@ -44,6 +44,7 @@ APP_TABLES = [
     "staff",
     "encounters",
     "consultation_amendments",
+    "patient_allergies",
     "patient_identifiers",
     "patient_merges",
     "patient_duplicate_reviews",
