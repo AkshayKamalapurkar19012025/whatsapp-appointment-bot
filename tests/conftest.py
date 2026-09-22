@@ -50,6 +50,7 @@ APP_TABLES = [
     "payments",
     "charges",
     "invoices",
+    "packages",
     "pharmacy_dispense_records",
     "pharmacy_stock",
     "prescription_items",

@@ -498,3 +498,11 @@ class UnmergeNotPermitted(ServiceError):
     surviving identity or the retired one, so unmerge refuses rather
     than guessing."""
     pass
+
+
+class PackageNotFound(ServiceError):
+    pass
+
+
+class DuplicatePackageName(ServiceError):
+    pass

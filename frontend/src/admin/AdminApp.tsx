@@ -6,6 +6,7 @@ import {
   CurrencyInr,
   Gauge,
   GearSix,
+  Gift,
   Pill,
   ShieldCheck,
   Stethoscope,
@@ -27,6 +28,7 @@ import BookAppointmentPanel from './BookAppointmentPanel'
 import QueuePanel from './QueuePanel'
 import ConsultationWorkspace from './ConsultationWorkspace'
 import PharmacyPanel from './PharmacyPanel'
+import PackagesPanel from './PackagesPanel'
 import AdminSidebar, { type AdminSidebarItem } from './AdminSidebar'
 import AdminTopBar from './AdminTopBar'
 
@@ -43,6 +45,7 @@ type Section =
   | 'staff-accounts'
   | 'billing'
   | 'pharmacy'
+  | 'packages'
 
 // Nothing in this component clears staff/getStaffToken() when `section`
 // changes -- switching sections is a plain in-memory state update, same
@@ -247,6 +250,14 @@ export default function AdminApp() {
       onSelect: () => goTo('pharmacy'),
       group: 'Manage',
     },
+    {
+      key: 'packages',
+      label: 'Packages',
+      icon: <Gift size={20} weight="regular" />,
+      active: section === 'packages',
+      onSelect: () => goTo('packages'),
+      group: 'Manage',
+    },
     ...(isAdmin
       ? [
           {
@@ -337,6 +348,7 @@ export default function AdminApp() {
           {section === 'staff-accounts' && isAdmin && <StaffAccountsPanel key={navResetKey} />}
           {section === 'billing' && <BillingPanel key={navResetKey} />}
           {section === 'pharmacy' && <PharmacyPanel key={navResetKey} isAdmin={isAdmin} />}
+          {section === 'packages' && <PackagesPanel key={navResetKey} isAdmin={isAdmin} />}
         </main>
       </div>
     </div>

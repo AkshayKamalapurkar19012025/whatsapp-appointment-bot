@@ -788,10 +788,21 @@ export interface PharmacyStockInput {
 // themselves use /bill, not /invoice, for the same reason.
 export type BillStatus = 'OPEN' | 'VOID'
 export type ChargeStatus = 'ACTIVE' | 'VOIDED'
-export type ChargeSourceType = 'CONSULTATION' | 'LAB' | 'RADIOLOGY' | 'PROCEDURE' | 'SERVICE' | 'PHARMACY' | 'OTHER'
+export type ChargeSourceType =
+  | 'CONSULTATION'
+  | 'LAB'
+  | 'RADIOLOGY'
+  | 'PROCEDURE'
+  | 'SERVICE'
+  | 'PHARMACY'
+  | 'PACKAGE'
+  | 'OTHER'
 export type BillPaymentStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID'
 export type BillPaymentMethod = 'CASH' | 'UPI' | 'CARD' | 'BANK_TRANSFER' | 'INSURANCE' | 'OTHER'
 export type BillPaymentRecordStatus = 'COMPLETED' | 'VOIDED'
+// Payer category (master spec section 40's insurance/TPA extension
+// point) -- see migrations/0039_invoice_bill_type.sql.
+export type BillType = 'CASH' | 'SELF_PAY' | 'CORPORATE' | 'INSURANCE' | 'TPA' | 'GOVERNMENT_SCHEME'
 
 export interface BillCharge {
   id: number
@@ -801,6 +812,7 @@ export interface BillCharge {
   source_type: ChargeSourceType
   source_order_id: number | null
   source_dispense_id: number | null
+  source_package_id: number | null
   status: ChargeStatus
   voided_by: number | null
   void_reason: string | null
@@ -816,6 +828,7 @@ export interface BillChargeInput {
   source_type?: ChargeSourceType
   source_order_id?: number
   source_dispense_id?: number
+  source_package_id?: number
 }
 
 export interface BillPayment {
@@ -854,6 +867,7 @@ export interface BillSummary {
   discount_amount: number
   discount_reason: string | null
   tax_rate: number
+  bill_type: BillType
   status: BillStatus
   voided_by: number | null
   void_reason: string | null
@@ -870,6 +884,24 @@ export interface BillSummary {
   paid_amount: number
   balance: number
   payment_status: BillPaymentStatus
+}
+
+// GET/POST/PUT /api/packages (OPD/HIMS master spec Phase 12, section
+// 39) -- a hospital's own priced package catalog, billed as a single
+// charges.source_type = PACKAGE line item via BillChargeInput's
+// source_package_id.
+export interface Package {
+  id: number
+  name: string
+  description: string | null
+  price: number
+  active: boolean
+}
+
+export interface PackageInput {
+  name: string
+  description?: string | null
+  price: number
 }
 
 export interface UnbilledOrder {
@@ -1030,6 +1062,7 @@ export interface TimelineInvoice {
   invoice_number: string
   discount_amount: number
   tax_rate: number
+  bill_type: BillType
   status: BillStatus
   created_at: string
   charges: TimelineCharge[]

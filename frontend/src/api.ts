@@ -12,6 +12,7 @@ import type {
   BillingReport,
   BillPaymentInput,
   BillSummary,
+  BillType,
   BookingSource,
   CalendarMonth,
   ClinicalOrder,
@@ -30,6 +31,8 @@ import type {
   ExceptionsResponse,
   OrderInput,
   OrderResultItemInput,
+  Package,
+  PackageInput,
   PharmacyQueueEntry,
   PharmacyStockBatch,
   PharmacyStockInput,
@@ -1255,7 +1258,7 @@ export function getUnbilledSources(appointmentId: number): Promise<UnbilledSourc
 
 export function updateBillTerms(
   appointmentId: number,
-  payload: { discount_amount?: number; discount_reason?: string; tax_rate?: number },
+  payload: { discount_amount?: number; discount_reason?: string; tax_rate?: number; bill_type?: BillType },
 ): Promise<BillSummary> {
   return request(`/appointments/${appointmentId}/bill`, { method: 'PATCH', auth: 'staff', body: payload })
 }
@@ -1299,4 +1302,26 @@ export function refundBillPayment(
     auth: 'staff',
     body: { amount, reason },
   })
+}
+
+// -- Packages (OPD/HIMS master spec Phase 12) -------------------------
+
+export function listPackages(): Promise<Package[]> {
+  return request('/packages', { auth: 'staff' })
+}
+
+export function listPackagesAdmin(): Promise<Package[]> {
+  return request('/packages/admin', { auth: 'staff' })
+}
+
+export function createPackage(payload: PackageInput): Promise<Package> {
+  return request('/packages', { method: 'POST', auth: 'staff', body: payload })
+}
+
+export function updatePackage(packageId: number, payload: PackageInput): Promise<Package> {
+  return request(`/packages/${packageId}`, { method: 'PUT', auth: 'staff', body: payload })
+}
+
+export function updatePackageActive(packageId: number, active: boolean): Promise<{ id: number; active: boolean }> {
+  return request(`/packages/${packageId}/active`, { method: 'PATCH', auth: 'staff', body: { active } })
 }

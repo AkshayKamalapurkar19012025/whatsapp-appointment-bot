@@ -46,9 +46,12 @@ router = APIRouter(prefix="/appointments", tags=["Billing"])
 class ChargeCreate(BaseModel):
     description: str = Field(min_length=1)
     amount: float = Field(gt=0)
-    source_type: Literal["CONSULTATION", "LAB", "RADIOLOGY", "PROCEDURE", "SERVICE", "PHARMACY", "OTHER"] = "OTHER"
+    source_type: Literal[
+        "CONSULTATION", "LAB", "RADIOLOGY", "PROCEDURE", "SERVICE", "PHARMACY", "PACKAGE", "OTHER"
+    ] = "OTHER"
     source_order_id: int | None = None
     source_dispense_id: int | None = None
+    source_package_id: int | None = None
 
 
 class VoidRequest(BaseModel):
@@ -59,6 +62,7 @@ class InvoiceTermsUpdate(BaseModel):
     discount_amount: float | None = Field(default=None, ge=0)
     discount_reason: str | None = None
     tax_rate: float | None = Field(default=None, ge=0, le=100)
+    bill_type: Literal["CASH", "SELF_PAY", "CORPORATE", "INSURANCE", "TPA", "GOVERNMENT_SCHEME"] | None = None
 
 
 class PaymentCreate(BaseModel):
@@ -156,6 +160,8 @@ def add_charge(
                     status_code=422,
                     detail="That order or dispense doesn't belong to this patient's visit",
                 )
+            except svc_exc.PackageNotFound:
+                raise _not_found("Package not found")
             except svc_exc.DuplicateCharge:
                 raise HTTPException(status_code=409, detail="That order or dispense has already been billed")
     return result

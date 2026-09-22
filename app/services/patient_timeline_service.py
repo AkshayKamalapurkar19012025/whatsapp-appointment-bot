@@ -65,7 +65,7 @@ _DISPENSE_COLUMNS = (
 
 _INVOICE_COLUMNS = (
     "id", "encounter_id", "invoice_number", "discount_amount",
-    "tax_rate", "status", "created_at",
+    "tax_rate", "bill_type", "status", "created_at",
 )
 
 _CHARGE_COLUMNS = (

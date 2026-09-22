@@ -39,6 +39,7 @@ from app.api.orders import router as orders_router
 from app.api.pharmacy import prescription_router, pharmacy_router
 from app.api.billing import router as billing_router
 from app.api.exceptions import router as exceptions_router
+from app.api.packages import router as packages_router
 
 configure_logging()
 access_logger = logging.getLogger("app.access")
@@ -243,6 +244,11 @@ app.include_router(
 
 app.include_router(
     exceptions_router,
+    prefix="/api",
+)
+
+app.include_router(
+    packages_router,
     prefix="/api",
 )
 

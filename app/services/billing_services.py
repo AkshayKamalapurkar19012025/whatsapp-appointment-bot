@@ -31,6 +31,7 @@ from app.services.exceptions import (
     ChargeAlreadyVoided,
     DuplicateCharge,
     InvalidChargeSource,
+    PackageNotFound,
     PaymentNotFound,
     PaymentAlreadyVoided,
     PaymentExceedsBalance,
@@ -42,13 +43,13 @@ import psycopg
 
 _INVOICE_COLUMNS = (
     "id", "encounter_id", "invoice_number", "discount_amount", "discount_reason",
-    "tax_rate", "status", "voided_by", "void_reason", "voided_at",
+    "tax_rate", "bill_type", "status", "voided_by", "void_reason", "voided_at",
     "created_by", "created_at", "updated_at",
 )
 
 _CHARGE_COLUMNS = (
     "id", "invoice_id", "description", "amount", "source_type",
-    "source_order_id", "source_dispense_id", "status", "voided_by",
+    "source_order_id", "source_dispense_id", "source_package_id", "status", "voided_by",
     "void_reason", "voided_at", "created_by", "created_at", "updated_at",
 )
 
@@ -186,6 +187,7 @@ def update_invoice_terms_service(
     discount_amount=None,
     discount_reason: str | None = None,
     tax_rate=None,
+    bill_type: str | None = None,
 ):
     invoice = _ensure_invoice(cur, appointment_id, staff_id)
 
@@ -198,10 +200,11 @@ def update_invoice_terms_service(
         SET discount_amount = COALESCE(%s, discount_amount),
             discount_reason = COALESCE(%s, discount_reason),
             tax_rate = COALESCE(%s, tax_rate),
+            bill_type = COALESCE(%s, bill_type),
             updated_at = NOW()
         WHERE id = %s
         """,
-        (discount_amount, discount_reason, tax_rate, invoice["id"]),
+        (discount_amount, discount_reason, tax_rate, bill_type, invoice["id"]),
     )
 
     return get_invoice_summary_service(cur, appointment_id, staff_id=staff_id)
@@ -296,6 +299,7 @@ def add_charge_service(
     source_type: str = "OTHER",
     source_order_id: int | None = None,
     source_dispense_id: int | None = None,
+    source_package_id: int | None = None,
 ):
     invoice = _ensure_invoice(cur, appointment_id, staff_id)
 
@@ -325,17 +329,38 @@ def add_charge_service(
         if row is None or row[0] != encounter_id:
             raise InvalidChargeSource()
 
+    if source_package_id is not None:
+        # Scoped by the encounter's own hospital, not the requesting
+        # staff's -- add_charge_service has no staff hospital_id in
+        # scope, and the encounter's is the one that actually matters
+        # here (billing another hospital's package to this visit would
+        # be the real bug, regardless of who's billing it).
+        cur.execute(
+            """
+            SELECT p.id
+            FROM packages p
+            JOIN encounters e ON e.hospital_id = p.hospital_id
+            WHERE p.id = %s AND e.id = %s AND p.active = TRUE
+            """,
+            (source_package_id, encounter_id),
+        )
+        if cur.fetchone() is None:
+            raise PackageNotFound()
+
     try:
         cur.execute(
             f"""
             INSERT INTO charges (
                 invoice_id, description, amount, source_type, source_order_id,
-                source_dispense_id, created_by
+                source_dispense_id, source_package_id, created_by
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING {", ".join(_CHARGE_COLUMNS)}
             """,
-            (invoice["id"], description, amount, source_type, source_order_id, source_dispense_id, staff_id),
+            (
+                invoice["id"], description, amount, source_type, source_order_id,
+                source_dispense_id, source_package_id, staff_id,
+            ),
         )
     except psycopg.errors.UniqueViolation:
         raise DuplicateCharge()
