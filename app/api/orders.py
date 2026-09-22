@@ -21,6 +21,7 @@ from app.services.order_services import (
     cancel_order_service,
     record_order_result_service,
 )
+from app.services.notification_center_service import create_notification
 
 router = APIRouter(
     prefix="/appointments",
@@ -149,5 +150,23 @@ def record_order_result(
                 raise HTTPException(
                     status_code=409,
                     detail="This order is already completed or cancelled",
+                )
+
+            # Master spec section 15's "lab result available" event --
+            # only LAB/RADIOLOGY, not every order type (a PROCEDURE/
+            # SERVICE/EXTERNAL_REFERRAL "result" isn't a report someone
+            # is waiting to review the way a lab/imaging one is).
+            if result["order_type"] in ("LAB", "RADIOLOGY"):
+                cur.execute(
+                    "SELECT name FROM patients WHERE id = (SELECT patient_id FROM appointments WHERE id = %s)",
+                    (appointment_id,),
+                )
+                (patient_name,) = cur.fetchone()
+                create_notification(
+                    cur,
+                    hospital_id=staff["hospital_id"],
+                    kind="LAB_RESULT_AVAILABLE",
+                    message=f"{result['order_type'].title()} result available for {patient_name}: {result['description']}",
+                    appointment_id=appointment_id,
                 )
     return result

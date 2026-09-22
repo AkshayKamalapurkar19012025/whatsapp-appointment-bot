@@ -146,6 +146,20 @@ export default function AdminApp() {
     goTo('consultation')
   }
 
+  // GlobalSearchBar's appointment-result click (master spec section
+  // 14): jump straight into the visit in progress when there is one,
+  // otherwise land on the Appointments list, which can find/filter to
+  // it from there -- there's no deep-link-by-id view for a PENDING/
+  // CONFIRMED/COMPLETED appointment to jump into directly the way
+  // ConsultationWorkspace is for a CHECKED_IN one.
+  function goToSearchResult(appointmentId: number, status: string) {
+    if (status === 'CHECKED_IN') {
+      goToConsultation(appointmentId)
+    } else {
+      goTo('appointments')
+    }
+  }
+
   if (checkingSession) {
     return (
       <div className="page">
@@ -300,7 +314,12 @@ export default function AdminApp() {
         <AdminSidebar items={menuItems} />
 
         <main className="admin-content">
-          <AdminTopBar username={staff.username} role={staff.role} onLogout={handleLogout} />
+          <AdminTopBar
+            username={staff.username}
+            role={staff.role}
+            onLogout={handleLogout}
+            onOpenAppointment={goToSearchResult}
+          />
 
           {section === 'dashboard' && (
             <DashboardPanel

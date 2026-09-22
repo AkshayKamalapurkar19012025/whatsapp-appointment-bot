@@ -56,6 +56,7 @@ from app.services.appointment_services import (
 )
 from app.services.availability_engine import list_available_dates_in_range
 from app.services.visit_completion_service import get_visit_completion_checklist_service
+from app.services.notification_center_service import create_notification
 from app.services.notifications import KIND_CHECK_IN, KIND_QUEUE_TOKEN, send_mock_notification
 from app.utils.timezone import convert_to_timezone, validate_timezone
 
@@ -642,6 +643,13 @@ def visit_appointment(
                 f"Hi {patient_name}, you're checked in with {doctor_name}. "
                 f"Please complete registration and payment at the front desk.",
             )
+            create_notification(
+                cur,
+                hospital_id=staff["hospital_id"],
+                kind="PATIENT_ARRIVED",
+                message=f"{patient_name} has arrived for {doctor_name}",
+                appointment_id=appointment_id,
+            )
 
     return {
         "id": result["id"],
@@ -720,6 +728,13 @@ def confirm_and_check_in_appointment(
                     KIND_CHECK_IN,
                     f"Hi {patient_name}, you're checked in with {doctor_name}. "
                     f"Please complete registration and payment at the front desk.",
+                )
+                create_notification(
+                    cur,
+                    hospital_id=staff["hospital_id"],
+                    kind="PATIENT_ARRIVED",
+                    message=f"{patient_name} has arrived for {doctor_name}",
+                    appointment_id=appointment_id,
                 )
 
     return result

@@ -580,6 +580,44 @@ export interface DoctorQueue {
   completed: QueueEntry[]
 }
 
+// GET /search's appointment result shape (master spec section 14's
+// global search) -- deliberately not the full AdminAppointment (this
+// is a lightweight, un-paginated cross-entity lookup, not a listing).
+export interface SearchAppointmentResult {
+  id: number
+  start_at: string
+  status: string
+  token_number: number | null
+  patient_id: number
+  patient_name: string
+  doctor_id: number
+  doctor_name: string
+}
+
+export interface SearchResults {
+  patients: Patient[]
+  appointments: SearchAppointmentResult[]
+}
+
+// GET /notifications (master spec section 15's staff notification
+// center).
+export type NotificationKind = 'PATIENT_ARRIVED' | 'LAB_RESULT_AVAILABLE' | 'PRESCRIPTION_READY'
+
+export interface StaffNotification {
+  id: number
+  hospital_id: number
+  kind: NotificationKind
+  message: string
+  appointment_id: number | null
+  read_at: string | null
+  created_at: string
+}
+
+export interface NotificationCenter {
+  items: StaffNotification[]
+  unread_count: number
+}
+
 // GET /appointments/{id}/completion-checklist (master spec section 43's
 // Visit Completion checklist) -- a read-only precondition summary shown
 // before "Mark completed", not a gate on it.

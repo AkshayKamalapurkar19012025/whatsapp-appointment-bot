@@ -60,6 +60,9 @@ import type {
   UnbilledSources,
   Vitals,
   VisitCompletionChecklist,
+  SearchResults,
+  NotificationCenter,
+  StaffNotification,
   VitalsInput,
 } from './types'
 
@@ -1213,6 +1216,26 @@ export function completeAdminAppointment(
 // right before completeAdminAppointment above.
 export function getVisitCompletionChecklist(appointmentId: number): Promise<VisitCompletionChecklist> {
   return request(`/appointments/${appointmentId}/completion-checklist`, { auth: 'staff' })
+}
+
+// GET /search -- master spec section 14's global search (patients +
+// appointments, one box), used by GlobalSearchBar.
+export function globalSearch(q: string): Promise<SearchResults> {
+  return request(`/search?q=${encodeURIComponent(q)}`, { auth: 'staff' })
+}
+
+// GET/POST /notifications -- master spec section 15's staff
+// notification center, used by NotificationBell.
+export function getNotifications(): Promise<NotificationCenter> {
+  return request('/notifications', { auth: 'staff' })
+}
+
+export function markNotificationRead(notificationId: number): Promise<StaffNotification> {
+  return request(`/notifications/${notificationId}/read`, { method: 'POST', auth: 'staff' })
+}
+
+export function markAllNotificationsRead(): Promise<{ updated: number }> {
+  return request('/notifications/read-all', { method: 'POST', auth: 'staff' })
 }
 
 export function noShowAdminAppointment(
