@@ -12,10 +12,13 @@ import type {
   BillingReport,
   BillPaymentInput,
   BillSummary,
+  BillType,
   BookingSource,
   CalendarMonth,
   ClinicalOrder,
   Consultation,
+  ConsultationAmendInput,
+  ConsultationAmendment,
   ConsultationInput,
   DashboardStats,
   DashboardTrends,
@@ -27,8 +30,12 @@ import type {
   DoctorProfile,
   DoctorQueue,
   EncounterSummary,
+  ExceptionsResponse,
   OrderInput,
   OrderResultItemInput,
+  Package,
+  PackageInput,
+  PaymentReceipt,
   PharmacyQueueEntry,
   PharmacyStockBatch,
   PharmacyStockInput,
@@ -42,6 +49,7 @@ import type {
   MyAppointmentsResponse,
   Patient,
   PatientGender,
+  PatientTimeline,
   PaymentActionResult,
   Staff,
   StaffAccount,
@@ -386,6 +394,12 @@ export function getBillingReport(days = 14): Promise<BillingReport> {
   return request(`/dashboard/billing?days=${days}`, { auth: 'staff' })
 }
 
+// -- Exceptions ----------------------------------------------------------
+
+export function getActiveExceptions(): Promise<ExceptionsResponse> {
+  return request('/exceptions', { auth: 'staff' })
+}
+
 // -- WEB P11: staff accounts (ADMIN only) -----------------------------------
 
 export function listStaffAccounts(): Promise<StaffAccount[]> {
@@ -667,6 +681,14 @@ export function completeConsultation(appointmentId: number): Promise<Consultatio
   return request(`/appointments/${appointmentId}/consultation/complete`, { method: 'POST', auth: 'staff' })
 }
 
+export function amendConsultation(appointmentId: number, payload: ConsultationAmendInput): Promise<Consultation> {
+  return request(`/appointments/${appointmentId}/consultation/amend`, { method: 'POST', auth: 'staff', body: payload })
+}
+
+export function getConsultationAmendments(appointmentId: number): Promise<ConsultationAmendment[]> {
+  return request(`/appointments/${appointmentId}/consultation/amendments`, { auth: 'staff' })
+}
+
 // -- Orders (OPD/HIMS master spec Phase 6) --------------------------------
 
 export function listOrders(appointmentId: number): Promise<ClinicalOrder[]> {
@@ -946,6 +968,13 @@ export function updatePatientAdmin(
       gender: gender || null,
     },
   })
+}
+
+// OPD/HIMS master spec Phase 10 (section 44) -- Patient 360 / unified
+// timeline: every visit (encounter) for this patient, most recent
+// first, each with its vitals/consultation/orders/prescription/billing.
+export function getPatientTimeline(patientId: number): Promise<PatientTimeline> {
+  return request(`/patients/${patientId}/timeline`, { auth: 'staff' })
 }
 
 // -- WEB P11: admin appointment management (ADMIN or STAFF, WEB P9) --------
@@ -1240,7 +1269,7 @@ export function getUnbilledSources(appointmentId: number): Promise<UnbilledSourc
 
 export function updateBillTerms(
   appointmentId: number,
-  payload: { discount_amount?: number; discount_reason?: string; tax_rate?: number },
+  payload: { discount_amount?: number; discount_reason?: string; tax_rate?: number; bill_type?: BillType },
 ): Promise<BillSummary> {
   return request(`/appointments/${appointmentId}/bill`, { method: 'PATCH', auth: 'staff', body: payload })
 }
@@ -1273,6 +1302,17 @@ export function voidBillPayment(appointmentId: number, paymentId: number, reason
   })
 }
 
+export function getPaymentReceipt(appointmentId: number, paymentId: number): Promise<PaymentReceipt> {
+  return request(`/appointments/${appointmentId}/bill/payments/${paymentId}/receipt`, { auth: 'staff' })
+}
+
+export function sendPaymentReceipt(appointmentId: number, paymentId: number): Promise<{ sent: boolean }> {
+  return request(`/appointments/${appointmentId}/bill/payments/${paymentId}/receipt/send`, {
+    method: 'POST',
+    auth: 'staff',
+  })
+}
+
 export function refundBillPayment(
   appointmentId: number,
   paymentId: number,
@@ -1284,4 +1324,26 @@ export function refundBillPayment(
     auth: 'staff',
     body: { amount, reason },
   })
+}
+
+// -- Packages (OPD/HIMS master spec Phase 12) -------------------------
+
+export function listPackages(): Promise<Package[]> {
+  return request('/packages', { auth: 'staff' })
+}
+
+export function listPackagesAdmin(): Promise<Package[]> {
+  return request('/packages/admin', { auth: 'staff' })
+}
+
+export function createPackage(payload: PackageInput): Promise<Package> {
+  return request('/packages', { method: 'POST', auth: 'staff', body: payload })
+}
+
+export function updatePackage(packageId: number, payload: PackageInput): Promise<Package> {
+  return request(`/packages/${packageId}`, { method: 'PUT', auth: 'staff', body: payload })
+}
+
+export function updatePackageActive(packageId: number, active: boolean): Promise<{ id: number; active: boolean }> {
+  return request(`/packages/${packageId}/active`, { method: 'PATCH', auth: 'staff', body: { active } })
 }

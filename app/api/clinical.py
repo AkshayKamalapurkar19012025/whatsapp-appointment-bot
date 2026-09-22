@@ -18,7 +18,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.api.staff_auth import get_current_staff
+from app.api.staff_auth import get_current_staff, require_permission
 from app.db.connection import get_connection
 from app.services import exceptions as svc_exc
 from app.services.clinical_services import (
@@ -28,6 +28,8 @@ from app.services.clinical_services import (
     get_or_create_consultation_service,
     save_consultation_draft_service,
     complete_consultation_service,
+    amend_consultation_service,
+    list_consultation_amendments_service,
 )
 
 router = APIRouter(
@@ -63,6 +65,10 @@ class ConsultationSave(BaseModel):
     clinical_notes: str | None = None
     follow_up_date: date | None = None
     follow_up_reason: str | None = None
+
+
+class ConsultationAmend(ConsultationSave):
+    reason: str = Field(min_length=1)
 
 
 @router.get("/{appointment_id}/encounter")
@@ -189,3 +195,51 @@ def complete_consultation(appointment_id: int, staff: dict = Depends(get_current
                     detail="Chief complaint and diagnosis are required to complete the consultation",
                 )
     return result
+
+
+# ---------------------------------------------------------------------
+# Amendment (master spec section 70) -- consultation.amend, not bare
+# get_current_staff like every endpoint above: correcting a signed-off
+# consultation is a materially more sensitive action than documenting
+# one the first time.
+# ---------------------------------------------------------------------
+
+
+@router.post("/{appointment_id}/consultation/amend")
+def amend_consultation(
+    appointment_id: int,
+    body: ConsultationAmend,
+    admin: dict = Depends(require_permission("consultation.amend")),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = amend_consultation_service(
+                    cur,
+                    appointment_id,
+                    staff_id=admin["id"],
+                    **body.model_dump(),
+                )
+            except svc_exc.EncounterNotFound:
+                raise _not_found("No consultation exists for this appointment")
+            except svc_exc.ConsultationNotAmendable:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Only a completed consultation can be amended -- a draft is simply edited",
+                )
+            except svc_exc.ConsultationIncomplete:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Chief complaint and diagnosis can't be left blank by an amendment",
+                )
+    return result
+
+
+@router.get("/{appointment_id}/consultation/amendments")
+def get_consultation_amendments(appointment_id: int, staff: dict = Depends(get_current_staff)):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                return list_consultation_amendments_service(cur, appointment_id)
+            except svc_exc.EncounterNotFound:
+                raise _not_found("No consultation exists for this appointment")

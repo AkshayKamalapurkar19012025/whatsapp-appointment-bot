@@ -2772,6 +2772,66 @@ a.link.danger {
   margin: var(--space-4) 0 0;
 }
 
+.exceptions-card {
+  grid-column: 1 / -1;
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.exceptions-card h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+}
+
+.exceptions-empty {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.exceptions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.exception-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.exception-row:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.exception-row-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.exception-row-body p {
+  margin: 0;
+}
+
+.exception-row-side {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
 .welcome-totals {
   display: flex;
   gap: var(--space-6);
@@ -7101,6 +7161,53 @@ a.link.danger {
   font-size: 0.85rem;
 }
 
+.patient-timeline-modal {
+  max-width: 860px;
+}
+
+.patient-timeline-visit-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.patient-timeline-visit-header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.patient-timeline-visit-body {
+  margin-top: var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--color-border);
+}
+
+.patient-timeline-visit-body h4 {
+  margin: var(--space-3) 0 var(--space-2);
+}
+
+.patient-timeline-visit-body h4:first-child {
+  margin-top: 0;
+}
+
+.patient-timeline-vitals-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  font-size: 0.9rem;
+}
+
 .doctor-profile-header {
   display: flex;
   align-items: flex-start;
@@ -7793,4 +7900,69 @@ a.link.danger {
   font-weight: 800;
   color: #4ade80;
   line-height: 1;
+}
+
+/* Amendment history (OPD/HIMS master spec Phase 14, section 70). */
+.amendment-history {
+  margin-top: var(--space-3);
+}
+
+.amendment-history-list {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.amendment-history-list li {
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.amendment-history-list li p {
+  margin: 0;
+}
+
+/* Payment receipt (OPD/HIMS master spec Phase 13, section 42). */
+.receipt-modal {
+  max-width: 520px;
+}
+
+.receipt-meta-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: var(--space-4) 0;
+  font-size: 0.9rem;
+}
+
+.receipt-meta-grid span:nth-child(odd) {
+  color: var(--color-text-muted);
+}
+
+.receipt-actions {
+  margin-top: var(--space-4);
+}
+
+/* Printing (or "Save as PDF" from the print dialog) shows only the
+   receipt itself -- everything else on the page (sidebar, top bar, the
+   rest of the modal chrome, the overlay backdrop) is hidden. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .receipt-print-area,
+  .receipt-print-area * {
+    visibility: visible;
+  }
+
+  .receipt-print-area {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+  }
 }

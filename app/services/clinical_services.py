@@ -30,6 +30,7 @@ from app.services.exceptions import (
     EncounterClosed,
     ConsultationAlreadyCompleted,
     ConsultationIncomplete,
+    ConsultationNotAmendable,
 )
 
 
@@ -375,3 +376,137 @@ def complete_consultation_service(cur, appointment_id: int, *, staff_id: int):
     )
 
     return _consultation_row_to_dict(cur.fetchone())
+
+
+# ---------------------------------------------------------------------
+# Amendment (master spec section 70) -- correcting a COMPLETED
+# consultation. Deliberately NOT gated on CHECKED_IN like every write
+# above: an amendment exists specifically to correct a record *after*
+# completion, which in practice usually means after the visit -- and
+# often the whole encounter -- has already closed. Gating it the same
+# way as first-time documentation would make it unusable for the one
+# thing it's for. Gated on RBAC instead (consultation.amend,
+# ADMIN-only today) -- a materially more sensitive action than routine
+# documentation, so it gets its own permission rather than piggybacking
+# on the CHECKED_IN check every other write here relies on.
+# ---------------------------------------------------------------------
+
+_AMENDMENT_COLUMNS = (
+    "id", "consultation_id", "previous_chief_complaint", "previous_history_notes",
+    "previous_examination_notes", "previous_diagnosis", "previous_clinical_notes",
+    "previous_follow_up_date", "previous_follow_up_reason", "reason", "amended_by", "amended_at",
+)
+
+
+def _amendment_row_to_dict(row) -> dict:
+    d = dict(zip(_AMENDMENT_COLUMNS, row))
+    d["previous_follow_up_date"] = d["previous_follow_up_date"].isoformat() if d["previous_follow_up_date"] else None
+    d["amended_at"] = d["amended_at"].isoformat()
+    return d
+
+
+def amend_consultation_service(
+    cur,
+    appointment_id: int,
+    *,
+    staff_id: int,
+    reason: str,
+    chief_complaint=None,
+    history_notes=None,
+    examination_notes=None,
+    diagnosis=None,
+    clinical_notes=None,
+    follow_up_date=None,
+    follow_up_reason=None,
+):
+    """Same "full-form save" semantics as save_consultation_draft_service
+    -- every field set to exactly what's passed -- but only for a
+    COMPLETED consultation, and only after archiving its pre-amendment
+    values. Keeps the same clinical-safety floor complete_consultation_
+    service itself enforces: an amendment can't blank out chief
+    complaint or diagnosis either."""
+    encounter_id = get_encounter_id_for_appointment(cur, appointment_id)
+
+    cur.execute(
+        """
+        SELECT id, status, chief_complaint, history_notes, examination_notes,
+               diagnosis, clinical_notes, follow_up_date, follow_up_reason
+        FROM consultations WHERE encounter_id = %s FOR UPDATE
+        """,
+        (encounter_id,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        raise EncounterNotFound()
+
+    (consultation_id, status, prev_cc, prev_hn, prev_en, prev_dx, prev_cn, prev_fd, prev_fr) = row
+
+    if status != "COMPLETED":
+        raise ConsultationNotAmendable()
+
+    if not (chief_complaint and chief_complaint.strip()) or not (diagnosis and diagnosis.strip()):
+        raise ConsultationIncomplete()
+
+    cur.execute(
+        """
+        INSERT INTO consultation_amendments (
+            consultation_id, previous_chief_complaint, previous_history_notes,
+            previous_examination_notes, previous_diagnosis, previous_clinical_notes,
+            previous_follow_up_date, previous_follow_up_reason, reason, amended_by
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (consultation_id, prev_cc, prev_hn, prev_en, prev_dx, prev_cn, prev_fd, prev_fr, reason, staff_id),
+    )
+
+    cur.execute(
+        f"""
+        UPDATE consultations
+        SET chief_complaint = %s,
+            history_notes = %s,
+            examination_notes = %s,
+            diagnosis = %s,
+            clinical_notes = %s,
+            follow_up_date = %s,
+            follow_up_reason = %s,
+            updated_by = %s,
+            updated_at = NOW()
+        WHERE id = %s
+        RETURNING {", ".join(_CONSULTATION_COLUMNS)}
+        """,
+        (
+            chief_complaint, history_notes, examination_notes, diagnosis,
+            clinical_notes, follow_up_date, follow_up_reason, staff_id, consultation_id,
+        ),
+    )
+
+    return _consultation_row_to_dict(cur.fetchone())
+
+
+def list_consultation_amendments_service(cur, appointment_id: int):
+    encounter_id = get_encounter_id_for_appointment(cur, appointment_id)
+
+    cur.execute(
+        "SELECT id FROM consultations WHERE encounter_id = %s",
+        (encounter_id,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        raise EncounterNotFound()
+
+    cur.execute(
+        f"""
+        SELECT {", ".join("a." + c for c in _AMENDMENT_COLUMNS)}, s.username
+        FROM consultation_amendments a
+        JOIN staff s ON s.id = a.amended_by
+        WHERE a.consultation_id = %s
+        ORDER BY a.amended_at DESC
+        """,
+        (row[0],),
+    )
+    results = []
+    for r in cur.fetchall():
+        d = _amendment_row_to_dict(r[:-1])
+        d["amended_by_username"] = r[-1]
+        results.append(d)
+    return results

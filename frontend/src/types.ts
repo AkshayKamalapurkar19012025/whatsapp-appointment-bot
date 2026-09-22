@@ -478,6 +478,45 @@ export interface DashboardTrends {
   patients: DashboardTrendPoint[]
 }
 
+// GET /api/exceptions (OPD/HIMS master spec Phase 11, sections 46-47) --
+// live-computed operational alerts, one shape per type-specific field
+// alongside the five fields every exception carries (what/why/who/
+// recommended action/status). See app/services/exception_engine.py.
+export type ExceptionType =
+  | 'WAITING_FOR_TRIAGE'
+  | 'WAITING_FOR_DOCTOR'
+  | 'ORDER_PENDING'
+  | 'PRESCRIPTION_NOT_DISPENSED'
+  | 'BILLING_NOT_STARTED'
+  | 'PAYMENT_PENDING'
+
+export interface OperationalException {
+  type: ExceptionType
+  patient_id: number
+  patient_name: string
+  appointment_id?: number
+  doctor_id?: number
+  doctor_name?: string
+  encounter_id?: number
+  order_id?: number
+  order_type?: string
+  priority?: string
+  prescription_id?: number
+  balance?: number
+  detected_at: string
+  age_minutes: number
+  what_happened: string
+  why_it_matters: string
+  who_should_act: string
+  recommended_action: string
+  current_status: string
+}
+
+export interface ExceptionsResponse {
+  exceptions: OperationalException[]
+  count: number
+}
+
 // GET /api/doctors/{id}/queue -- today's walk-in queue (migrations/0012,
 // held/is_priority added by migrations/0027).
 export interface QueueEntry {
@@ -569,6 +608,29 @@ export interface Consultation {
 export type ConsultationInput = Partial<
   Omit<Consultation, 'id' | 'encounter_id' | 'doctor_id' | 'status' | 'started_at' | 'completed_at'>
 >
+
+// POST .../consultation/amend (OPD/HIMS master spec Phase 14, section
+// 70) -- same fields as ConsultationInput plus a required reason.
+export type ConsultationAmendInput = ConsultationInput & { reason: string }
+
+// GET .../consultation/amendments -- one row per past correction, the
+// PRE-amendment snapshot (never the current values, which live on the
+// Consultation itself).
+export interface ConsultationAmendment {
+  id: number
+  consultation_id: number
+  previous_chief_complaint: string | null
+  previous_history_notes: string | null
+  previous_examination_notes: string | null
+  previous_diagnosis: string | null
+  previous_clinical_notes: string | null
+  previous_follow_up_date: string | null
+  previous_follow_up_reason: string | null
+  reason: string
+  amended_by: number
+  amended_by_username: string
+  amended_at: string
+}
 
 // OPD/HIMS master spec Phase 6 (migrations/0030_orders.sql) -- the
 // order spine. One shape for every order type; order_type is what
@@ -749,10 +811,21 @@ export interface PharmacyStockInput {
 // themselves use /bill, not /invoice, for the same reason.
 export type BillStatus = 'OPEN' | 'VOID'
 export type ChargeStatus = 'ACTIVE' | 'VOIDED'
-export type ChargeSourceType = 'CONSULTATION' | 'LAB' | 'RADIOLOGY' | 'PROCEDURE' | 'SERVICE' | 'PHARMACY' | 'OTHER'
+export type ChargeSourceType =
+  | 'CONSULTATION'
+  | 'LAB'
+  | 'RADIOLOGY'
+  | 'PROCEDURE'
+  | 'SERVICE'
+  | 'PHARMACY'
+  | 'PACKAGE'
+  | 'OTHER'
 export type BillPaymentStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID'
 export type BillPaymentMethod = 'CASH' | 'UPI' | 'CARD' | 'BANK_TRANSFER' | 'INSURANCE' | 'OTHER'
 export type BillPaymentRecordStatus = 'COMPLETED' | 'VOIDED'
+// Payer category (master spec section 40's insurance/TPA extension
+// point) -- see migrations/0039_invoice_bill_type.sql.
+export type BillType = 'CASH' | 'SELF_PAY' | 'CORPORATE' | 'INSURANCE' | 'TPA' | 'GOVERNMENT_SCHEME'
 
 export interface BillCharge {
   id: number
@@ -762,6 +835,7 @@ export interface BillCharge {
   source_type: ChargeSourceType
   source_order_id: number | null
   source_dispense_id: number | null
+  source_package_id: number | null
   status: ChargeStatus
   voided_by: number | null
   void_reason: string | null
@@ -777,6 +851,7 @@ export interface BillChargeInput {
   source_type?: ChargeSourceType
   source_order_id?: number
   source_dispense_id?: number
+  source_package_id?: number
 }
 
 export interface BillPayment {
@@ -815,6 +890,7 @@ export interface BillSummary {
   discount_amount: number
   discount_reason: string | null
   tax_rate: number
+  bill_type: BillType
   status: BillStatus
   voided_by: number | null
   void_reason: string | null
@@ -831,6 +907,50 @@ export interface BillSummary {
   paid_amount: number
   balance: number
   payment_status: BillPaymentStatus
+}
+
+// GET/POST .../bill/payments/{id}/receipt[/send] (OPD/HIMS master spec
+// Phase 13, section 42). gross_amount/discount_amount/tax_amount/
+// net_amount are the INVOICE's own totals (context for what this
+// payment was made against); payment_amount/payment_method/
+// transaction_id are THIS payment's own, not the invoice's cumulative
+// paid-to-date -- see get_payment_receipt_service's own docstring.
+export interface PaymentReceipt {
+  hospital_name: string
+  receipt_number: string
+  patient_name: string
+  patient_uhid: string
+  encounter_id: number
+  invoice_number: string
+  services: { description: string; amount: number }[]
+  gross_amount: number
+  discount_amount: number
+  tax_amount: number
+  net_amount: number
+  payment_amount: number
+  payment_method: BillPaymentMethod
+  transaction_id: string | null
+  payment_status: BillPaymentRecordStatus
+  cashier: string
+  recorded_at: string
+}
+
+// GET/POST/PUT /api/packages (OPD/HIMS master spec Phase 12, section
+// 39) -- a hospital's own priced package catalog, billed as a single
+// charges.source_type = PACKAGE line item via BillChargeInput's
+// source_package_id.
+export interface Package {
+  id: number
+  name: string
+  description: string | null
+  price: number
+  active: boolean
+}
+
+export interface PackageInput {
+  name: string
+  description?: string | null
+  price: number
 }
 
 export interface UnbilledOrder {
@@ -851,4 +971,175 @@ export interface UnbilledDispense {
 export interface UnbilledSources {
   orders: UnbilledOrder[]
   dispenses: UnbilledDispense[]
+}
+
+// OPD/HIMS master spec Phase 10 (section 44) -- Patient 360 / unified
+// timeline. GET /patients/{id}/timeline (app/services/patient_timeline_
+// service.py), a read-only aggregation over the tables above, shaped by
+// visit rather than as one flat event list. Each Timeline* type here is
+// a deliberately leaner projection of its full counterpart above (e.g.
+// TimelineConsultation omits created_by/updated_at) -- exactly the
+// columns that service selects, not a duplicate of the full record.
+export interface TimelineVitals {
+  id: number
+  encounter_id: number
+  recorded_by: number
+  bp_systolic: number | null
+  bp_diastolic: number | null
+  pulse: number | null
+  temperature_celsius: number | null
+  spo2: number | null
+  respiratory_rate: number | null
+  weight_kg: number | null
+  height_cm: number | null
+  bmi: number | null
+  pain_score: number | null
+  chief_complaint: string | null
+  priority: VitalsPriority
+  nursing_notes: string | null
+  recorded_at: string
+}
+
+export interface TimelineConsultation {
+  id: number
+  encounter_id: number
+  doctor_id: number
+  status: 'DRAFT' | 'COMPLETED'
+  chief_complaint: string | null
+  history_notes: string | null
+  examination_notes: string | null
+  diagnosis: string | null
+  clinical_notes: string | null
+  follow_up_date: string | null
+  follow_up_reason: string | null
+  started_at: string
+  completed_at: string | null
+}
+
+export interface TimelineOrderResult {
+  id: number
+  order_id: number
+  parameter: string
+  result_value: string
+  unit: string | null
+  reference_range: string | null
+  is_abnormal: boolean
+  is_critical: boolean
+  sequence: number
+  recorded_at: string
+}
+
+export interface TimelineOrder {
+  id: number
+  encounter_id: number
+  order_type: OrderType
+  description: string
+  clinical_indication: string | null
+  priority: OrderPriority
+  status: 'ORDERED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
+  external_destination: string | null
+  result_text: string | null
+  ordering_doctor_id: number
+  cancel_reason: string | null
+  ordered_at: string
+  completed_at: string | null
+  cancelled_at: string | null
+  results: TimelineOrderResult[]
+}
+
+export interface TimelineDispense {
+  id: number
+  prescription_item_id: number
+  quantity: number
+  unit_price: number
+  amount: number
+  dispensed_at: string
+}
+
+export interface TimelinePrescriptionItem {
+  id: number
+  prescription_id: number
+  medicine_name: string
+  generic_name: string | null
+  dosage: string | null
+  route: string | null
+  frequency: string | null
+  duration: string | null
+  quantity: number
+  quantity_dispensed: number
+  food_instructions: string | null
+  special_instructions: string | null
+  dispenses: TimelineDispense[]
+}
+
+export interface TimelinePrescription {
+  id: number
+  encounter_id: number
+  doctor_id: number
+  status: PrescriptionStatus
+  notes: string | null
+  prescribed_at: string | null
+  cancel_reason: string | null
+  cancelled_at: string | null
+  items: TimelinePrescriptionItem[]
+}
+
+export interface TimelineCharge {
+  id: number
+  invoice_id: number
+  description: string
+  amount: number
+  source_type: ChargeSourceType
+  status: ChargeStatus
+  created_at: string
+}
+
+export interface TimelinePayment {
+  id: number
+  invoice_id: number
+  receipt_number: string
+  amount: number
+  method: BillPaymentMethod
+  status: BillPaymentRecordStatus
+  refunded_amount: number
+  recorded_at: string
+}
+
+export interface TimelineInvoice {
+  id: number
+  encounter_id: number
+  invoice_number: string
+  discount_amount: number
+  tax_rate: number
+  bill_type: BillType
+  status: BillStatus
+  created_at: string
+  charges: TimelineCharge[]
+  payments: TimelinePayment[]
+}
+
+export interface TimelineVisit {
+  encounter_id: number
+  status: 'OPEN' | 'CLOSED'
+  started_at: string
+  closed_at: string | null
+  doctor_id: number
+  doctor_name: string
+  appointment_id: number | null
+  token_number: number | null
+  appointment_status: string | null
+  appointment_type_name: string | null
+  vitals: TimelineVitals[]
+  consultation: TimelineConsultation | null
+  orders: TimelineOrder[]
+  prescription: TimelinePrescription | null
+  invoice: TimelineInvoice | null
+}
+
+export interface PatientTimeline {
+  patient_id: number
+  patient_name: string
+  patient_uhid: string
+  redirected_from: { patient_id: number; uhid: string } | null
+  visits: TimelineVisit[]
 }

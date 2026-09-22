@@ -46,6 +46,11 @@ KIND_CHECK_IN = "CHECK_IN"
 # exception as KIND_CHECK_IN (see that constant's own note above): the
 # patient is at the front desk, not mid-chat with the bot.
 KIND_QUEUE_TOKEN = "QUEUE_TOKEN"
+# Staff-initiated "Send to patient" action on a payment receipt (master
+# spec section 42) -- same staff-initiated exception as KIND_CHECK_IN/
+# KIND_QUEUE_TOKEN above: triggered by a cashier's click, not a patient
+# action mid-chat.
+KIND_RECEIPT = "RECEIPT"
 
 
 def send_mock_notification(

@@ -254,6 +254,14 @@ class ConsultationIncomplete(ServiceError):
     pass
 
 
+class ConsultationNotAmendable(ServiceError):
+    """Raised by amend_consultation_service when the consultation is
+    still DRAFT -- a DRAFT consultation is edited directly via
+    save_consultation_draft_service; amendment exists specifically for
+    correcting a COMPLETED one, never as a second way to edit a draft."""
+    pass
+
+
 # ---------------------------------------------------------------------
 # Orders (OPD/HIMS master spec Phase 6) -- see
 # app/services/order_services.py.
@@ -497,4 +505,12 @@ class UnmergeNotPermitted(ServiceError):
     created_at -- there's no way to tell whether it belongs to the
     surviving identity or the retired one, so unmerge refuses rather
     than guessing."""
+    pass
+
+
+class PackageNotFound(ServiceError):
+    pass
+
+
+class DuplicatePackageName(ServiceError):
     pass

@@ -4,14 +4,33 @@ import {
   addBillCharge,
   getBill,
   getUnbilledSources,
+  listPackages,
   recordBillPayment,
   updateBillTerms,
   voidBill,
   voidBillCharge,
   voidBillPayment,
 } from '../api'
-import type { BillChargeInput, BillPaymentInput, BillSummary, ChargeSourceType, UnbilledSources } from '../types'
+import type {
+  BillChargeInput,
+  BillPaymentInput,
+  BillSummary,
+  BillType,
+  ChargeSourceType,
+  Package,
+  UnbilledSources,
+} from '../types'
 import { formatDateTime } from '../format'
+import PaymentReceiptModal from './PaymentReceiptModal'
+
+const BILL_TYPE_OPTIONS: { value: BillType; label: string }[] = [
+  { value: 'CASH', label: 'Cash' },
+  { value: 'SELF_PAY', label: 'Self-pay' },
+  { value: 'CORPORATE', label: 'Corporate' },
+  { value: 'INSURANCE', label: 'Insurance' },
+  { value: 'TPA', label: 'TPA' },
+  { value: 'GOVERNMENT_SCHEME', label: 'Government scheme' },
+]
 
 const BLANK_CHARGE: BillChargeInput = {
   description: '',
@@ -77,11 +96,17 @@ export default function AppointmentBillingPanel({
   const [discountAmount, setDiscountAmount] = useState('')
   const [discountReason, setDiscountReason] = useState('')
   const [taxRate, setTaxRate] = useState('')
+  const [billType, setBillType] = useState<BillType | ''>('')
   const [savingTerms, setSavingTerms] = useState(false)
   const [termsError, setTermsError] = useState<string | null>(null)
 
+  const [packages, setPackages] = useState<Package[]>([])
+  const [selectedPackageId, setSelectedPackageId] = useState<number | ''>('')
+
   const [voidingBill, setVoidingBill] = useState(false)
   const [voidBillError, setVoidBillError] = useState<string | null>(null)
+
+  const [receiptPaymentId, setReceiptPaymentId] = useState<number | null>(null)
 
   function loadBill() {
     setLoading(true)
@@ -114,6 +139,14 @@ export default function AppointmentBillingPanel({
       })
       .catch(() => {
         if (!cancelledEffect) setUnbilled(null)
+      })
+
+    listPackages()
+      .then((list) => {
+        if (!cancelledEffect) setPackages(list)
+      })
+      .catch(() => {
+        if (!cancelledEffect) setPackages([])
       })
 
     return () => {
@@ -177,12 +210,14 @@ export default function AppointmentBillingPanel({
           discount_amount: discountAmount.trim() ? Number(discountAmount) : undefined,
           discount_reason: discountReason.trim() || undefined,
           tax_rate: taxRate.trim() ? Number(taxRate) : undefined,
+          bill_type: billType || undefined,
         }),
       )
       setShowTermsForm(false)
       setDiscountAmount('')
       setDiscountReason('')
       setTaxRate('')
+      setBillType('')
     } catch (err) {
       setTermsError(err instanceof ApiError ? err.message : 'Could not update discount/tax')
     } finally {
@@ -251,6 +286,9 @@ export default function AppointmentBillingPanel({
         <span>Bill {bill.invoice_number}</span>
         <span className={`pill status-${bill.payment_status.toLowerCase()}`}>
           {bill.payment_status.replace('_', ' ')}
+        </span>
+        <span className="pill status-pending">
+          {BILL_TYPE_OPTIONS.find((o) => o.value === bill.bill_type)?.label ?? bill.bill_type}
         </span>
         {isVoid && <span className="pill status-cancelled">VOID</span>}
       </div>
@@ -329,6 +367,17 @@ export default function AppointmentBillingPanel({
                   onChange={(e) => setTaxRate(e.target.value)}
                   placeholder={String(bill.tax_rate)}
                 />
+              </label>
+              <label className="inline-label">
+                Bill type
+                <select value={billType} onChange={(e) => setBillType(e.target.value as BillType)}>
+                  <option value="">{BILL_TYPE_OPTIONS.find((o) => o.value === bill.bill_type)?.label}</option>
+                  {BILL_TYPE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
               </label>
               <div className="doctor-form-full">
                 <button type="button" className="btn btn-sm" disabled={savingTerms} onClick={handleSaveTerms}>
@@ -446,6 +495,43 @@ export default function AppointmentBillingPanel({
         </div>
       )}
 
+      {isAdmin && !isVoid && packages.length > 0 && (
+        <div className="doctor-quick-actions">
+          <label className="inline-label">
+            Bill a package
+            <select
+              value={selectedPackageId}
+              onChange={(e) => setSelectedPackageId(e.target.value ? Number(e.target.value) : '')}
+            >
+              <option value="">Select a package…</option>
+              {packages.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} — ₹{p.price.toFixed(2)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            className="btn-secondary btn btn-sm"
+            disabled={addingCharge || !selectedPackageId}
+            onClick={() => {
+              const pkg = packages.find((p) => p.id === selectedPackageId)
+              if (!pkg) return
+              handleAddCharge({
+                description: pkg.name,
+                source_type: 'PACKAGE',
+                source_package_id: pkg.id,
+                amount: pkg.price,
+              })
+              setSelectedPackageId('')
+            }}
+          >
+            Bill this
+          </button>
+        </div>
+      )}
+
       {isAdmin && !isVoid && hasUnbilled && (
         <>
           <h4>Unbilled from this visit</h4>
@@ -520,7 +606,7 @@ export default function AppointmentBillingPanel({
               <th>Refunded</th>
               <th>Status</th>
               <th>Recorded</th>
-              {isAdmin && <th>Actions</th>}
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -534,9 +620,16 @@ export default function AppointmentBillingPanel({
                   <span className={`pill status-${p.status.toLowerCase()}`}>{p.status}</span>
                 </td>
                 <td>{formatDateTime(p.recorded_at)}</td>
-                {isAdmin && (
-                  <td>
-                    {p.status === 'COMPLETED' && (
+                <td>
+                  <div className="card-grid-item-actions">
+                    <button
+                      type="button"
+                      className="btn-secondary btn btn-sm"
+                      onClick={() => setReceiptPaymentId(p.id)}
+                    >
+                      Receipt
+                    </button>
+                    {isAdmin && p.status === 'COMPLETED' && (
                       <button
                         type="button"
                         className="btn-danger btn btn-sm"
@@ -546,12 +639,20 @@ export default function AppointmentBillingPanel({
                         {voidingPaymentId === p.id ? 'Voiding…' : 'Void'}
                       </button>
                     )}
-                  </td>
-                )}
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
+      )}
+
+      {receiptPaymentId !== null && (
+        <PaymentReceiptModal
+          appointmentId={appointmentId}
+          paymentId={receiptPaymentId}
+          onClose={() => setReceiptPaymentId(null)}
+        />
       )}
 
       {!isVoid && bill.balance > 0 && (
