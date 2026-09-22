@@ -478,6 +478,45 @@ export interface DashboardTrends {
   patients: DashboardTrendPoint[]
 }
 
+// GET /api/exceptions (OPD/HIMS master spec Phase 11, sections 46-47) --
+// live-computed operational alerts, one shape per type-specific field
+// alongside the five fields every exception carries (what/why/who/
+// recommended action/status). See app/services/exception_engine.py.
+export type ExceptionType =
+  | 'WAITING_FOR_TRIAGE'
+  | 'WAITING_FOR_DOCTOR'
+  | 'ORDER_PENDING'
+  | 'PRESCRIPTION_NOT_DISPENSED'
+  | 'BILLING_NOT_STARTED'
+  | 'PAYMENT_PENDING'
+
+export interface OperationalException {
+  type: ExceptionType
+  patient_id: number
+  patient_name: string
+  appointment_id?: number
+  doctor_id?: number
+  doctor_name?: string
+  encounter_id?: number
+  order_id?: number
+  order_type?: string
+  priority?: string
+  prescription_id?: number
+  balance?: number
+  detected_at: string
+  age_minutes: number
+  what_happened: string
+  why_it_matters: string
+  who_should_act: string
+  recommended_action: string
+  current_status: string
+}
+
+export interface ExceptionsResponse {
+  exceptions: OperationalException[]
+  count: number
+}
+
 // GET /api/doctors/{id}/queue -- today's walk-in queue (migrations/0012,
 // held/is_priority added by migrations/0027).
 export interface QueueEntry {

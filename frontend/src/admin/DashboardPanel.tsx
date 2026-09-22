@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react'
 import {
+  Bell,
   CalendarBlank,
   CalendarCheck,
   CalendarPlus,
   CheckCircle,
+  CheckCircle as CheckCircleClear,
   Clock,
   HourglassMedium,
   Stethoscope,
   UserCheck,
   UsersThree,
+  WarningCircle,
   XCircle,
 } from '@phosphor-icons/react'
 import {
@@ -20,9 +23,50 @@ import {
   YAxis,
   CartesianGrid,
 } from 'recharts'
-import { ApiError, getDashboardStats, getDashboardTrends } from '../api'
-import type { DashboardStats, DashboardTrends } from '../types'
+import { ApiError, getActiveExceptions, getDashboardStats, getDashboardTrends } from '../api'
+import type { DashboardStats, DashboardTrends, ExceptionType, OperationalException } from '../types'
 import { useStaggerReveal } from '../useStaggerReveal'
+
+// Which of the .stat-icon tone-* colors each exception family gets --
+// billing/payment gaps are the most consequential (money not
+// collected), so they read as danger; queue-stage waits are warning
+// (time-sensitive but routine); everything else is informational.
+const EXCEPTION_TONE: Record<ExceptionType, 'warning' | 'danger' | 'info'> = {
+  WAITING_FOR_TRIAGE: 'warning',
+  WAITING_FOR_DOCTOR: 'warning',
+  ORDER_PENDING: 'info',
+  PRESCRIPTION_NOT_DISPENSED: 'info',
+  BILLING_NOT_STARTED: 'danger',
+  PAYMENT_PENDING: 'danger',
+}
+
+function formatAge(minutes: number): string {
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`
+}
+
+function ExceptionRow({ exception, onGoToPatients }: { exception: OperationalException; onGoToPatients: () => void }) {
+  return (
+    <li className="exception-row">
+      <span className={`stat-icon tone-${EXCEPTION_TONE[exception.type]}`} aria-hidden="true">
+        <WarningCircle size={18} weight="regular" />
+      </span>
+      <div className="exception-row-body">
+        <p>{exception.what_happened}</p>
+        <p className="muted">{exception.recommended_action}</p>
+      </div>
+      <div className="exception-row-side">
+        <span className="pill status-pending">{formatAge(exception.age_minutes)} ago</span>
+        <span className="muted">{exception.who_should_act}</span>
+        <button type="button" className="link" onClick={onGoToPatients}>
+          View Patient
+        </button>
+      </div>
+    </li>
+  )
+}
 
 interface StatCardDef {
   key: keyof DashboardStats
@@ -97,15 +141,17 @@ export default function DashboardPanel({
 }: DashboardPanelProps) {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [trends, setTrends] = useState<DashboardTrends | null>(null)
+  const [exceptions, setExceptions] = useState<OperationalException[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const statsGridRef = useStaggerReveal<HTMLDivElement>([stats])
 
   useEffect(() => {
-    Promise.all([getDashboardStats(), getDashboardTrends()])
-      .then(([statsResult, trendsResult]) => {
+    Promise.all([getDashboardStats(), getDashboardTrends(), getActiveExceptions()])
+      .then(([statsResult, trendsResult, exceptionsResult]) => {
         setStats(statsResult)
         setTrends(trendsResult)
+        setExceptions(exceptionsResult.exceptions)
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load dashboard data'))
       .finally(() => setLoading(false))
@@ -166,6 +212,29 @@ export default function DashboardPanel({
           {REVIEW_CARDS.map((def) => (
             <StatCard key={def.key} def={def} value={stats[def.key]} />
           ))}
+
+          <div className="exceptions-card">
+            <h3>
+              <Bell size={18} weight="regular" aria-hidden="true" /> Needs Attention
+              {exceptions && exceptions.length > 0 ? ` (${exceptions.length})` : ''}
+            </h3>
+            {exceptions && exceptions.length === 0 && (
+              <p className="muted exceptions-empty">
+                <CheckCircleClear size={16} weight="regular" aria-hidden="true" /> Nothing overdue right now.
+              </p>
+            )}
+            {exceptions && exceptions.length > 0 && (
+              <ul className="exceptions-list">
+                {exceptions.map((exception, index) => (
+                  <ExceptionRow
+                    key={`${exception.type}-${index}`}
+                    exception={exception}
+                    onGoToPatients={onGoToPatients}
+                  />
+                ))}
+              </ul>
+            )}
+          </div>
 
           <h3 className="dashboard-section-heading">Appointment Status</h3>
 

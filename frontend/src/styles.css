@@ -2772,6 +2772,66 @@ a.link.danger {
   margin: var(--space-4) 0 0;
 }
 
+.exceptions-card {
+  grid-column: 1 / -1;
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.exceptions-card h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+}
+
+.exceptions-empty {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.exceptions-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.exception-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.exception-row:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.exception-row-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.exception-row-body p {
+  margin: 0;
+}
+
+.exception-row-side {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
 .welcome-totals {
   display: flex;
   gap: var(--space-6);

@@ -27,6 +27,7 @@ import type {
   DoctorProfile,
   DoctorQueue,
   EncounterSummary,
+  ExceptionsResponse,
   OrderInput,
   OrderResultItemInput,
   PharmacyQueueEntry,
@@ -385,6 +386,12 @@ export function getDashboardTrends(days = 14): Promise<DashboardTrends> {
 
 export function getBillingReport(days = 14): Promise<BillingReport> {
   return request(`/dashboard/billing?days=${days}`, { auth: 'staff' })
+}
+
+// -- Exceptions ----------------------------------------------------------
+
+export function getActiveExceptions(): Promise<ExceptionsResponse> {
+  return request('/exceptions', { auth: 'staff' })
 }
 
 // -- WEB P11: staff accounts (ADMIN only) -----------------------------------
