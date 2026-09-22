@@ -63,6 +63,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import DoctorProfileSection from './DoctorProfileSection'
 import AppointmentDetailsModal from './AppointmentDetailsModal'
 import { AppointmentActionButtons, buildAppointmentActions, type AppointmentActionHandlers } from './AppointmentActions'
+import VisitCompletionDialog from './VisitCompletionDialog'
 import { isoDateToday } from './doctorSchedule'
 import ScheduleGrid from './ScheduleGrid'
 import TimeOffSection from './TimeOffSection'
@@ -526,6 +527,7 @@ function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: b
   const [loading, setLoading] = useState(true)
   const [lifecycleBusyId, setLifecycleBusyId] = useState<number | null>(null)
   const [cancelTarget, setCancelTarget] = useState<AdminAppointment | null>(null)
+  const [completionTarget, setCompletionTarget] = useState<AdminAppointment | null>(null)
   const [reschedulingId, setReschedulingId] = useState<number | null>(null)
   const [rescheduleSlot, setRescheduleSlot] = useState<Slot | null>(null)
   const [rescheduleBusy, setRescheduleBusy] = useState(false)
@@ -655,7 +657,7 @@ function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: b
     onCheckIn: (a) => runLifecycleAction(a.id, visitAdminAppointment, 'Could not check in the appointment'),
     onMarkArrived: (a) => runLifecycleAction(a.id, markArrivedAdmin, 'Could not record the arrival'),
     onNoShow: (a) => runLifecycleAction(a.id, noShowAdminAppointment, 'Could not mark the appointment as a no-show'),
-    onComplete: (a) => runLifecycleAction(a.id, completeAdminAppointment, 'Could not mark the appointment completed'),
+    onComplete: (a) => setCompletionTarget(a),
     onReschedule: startReschedule,
     onCancel: (a) => {
       setDetailsTarget(null)
@@ -883,6 +885,20 @@ function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: b
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {completionTarget && (
+        <VisitCompletionDialog
+          appointmentId={completionTarget.id}
+          patientName={completionTarget.patient_name}
+          doctorName={completionTarget.doctor_name}
+          onClose={() => setCompletionTarget(null)}
+          onConfirm={() => {
+            const target = completionTarget
+            setCompletionTarget(null)
+            runLifecycleAction(target.id, completeAdminAppointment, 'Could not mark the appointment completed')
+          }}
+        />
+      )}
     </div>
   )
 }

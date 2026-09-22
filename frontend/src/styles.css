@@ -7986,6 +7986,32 @@ a.link.danger {
   margin-left: 6px;
 }
 
+/* Visit Completion checklist (master spec section 43), inside
+   VisitCompletionDialog's AlertDialogContent. */
+.visit-completion-checklist {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.visit-completion-checklist li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+}
+
+.visit-completion-checklist li.done {
+  color: var(--color-success);
+}
+
+.visit-completion-checklist li.pending {
+  color: var(--color-text-secondary);
+}
+
 /* Table pagination (master spec section 62/80). */
 .admin-pagination {
   display: flex;

@@ -59,6 +59,7 @@ import type {
   StaffRole,
   UnbilledSources,
   Vitals,
+  VisitCompletionChecklist,
   VitalsInput,
 } from './types'
 
@@ -1205,6 +1206,13 @@ export function completeAdminAppointment(
   appointmentId: number,
 ): Promise<{ id: number; status: string }> {
   return request(`/appointments/${appointmentId}/complete`, { method: 'POST', auth: 'staff' })
+}
+
+// GET /appointments/{id}/completion-checklist -- master spec section
+// 43's Visit Completion checklist, fetched by VisitCompletionDialog
+// right before completeAdminAppointment above.
+export function getVisitCompletionChecklist(appointmentId: number): Promise<VisitCompletionChecklist> {
+  return request(`/appointments/${appointmentId}/completion-checklist`, { auth: 'staff' })
 }
 
 export function noShowAdminAppointment(

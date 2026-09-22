@@ -580,6 +580,18 @@ export interface DoctorQueue {
   completed: QueueEntry[]
 }
 
+// GET /appointments/{id}/completion-checklist (master spec section 43's
+// Visit Completion checklist) -- a read-only precondition summary shown
+// before "Mark completed", not a gate on it.
+export interface VisitCompletionChecklist {
+  consultation_completed: boolean
+  orders_created: boolean
+  prescription_created: boolean
+  billing_completed: boolean
+  payment_completed: boolean
+  follow_up_scheduled: boolean
+}
+
 // OPD/HIMS master spec Phase 5 (migrations/0029_vitals_and_
 // consultations.sql) -- GET /api/appointments/{id}/encounter.
 export interface EncounterSummary {

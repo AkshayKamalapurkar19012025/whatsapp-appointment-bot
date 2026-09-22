@@ -55,6 +55,7 @@ from app.services.appointment_services import (
     set_priority_service,
 )
 from app.services.availability_engine import list_available_dates_in_range
+from app.services.visit_completion_service import get_visit_completion_checklist_service
 from app.services.notifications import KIND_CHECK_IN, KIND_QUEUE_TOKEN, send_mock_notification
 from app.utils.timezone import convert_to_timezone, validate_timezone
 
@@ -999,6 +1000,25 @@ def refund_appointment_payment(
                 )
 
     return result
+
+
+@router.get("/{appointment_id}/completion-checklist")
+def get_completion_checklist(
+    appointment_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    """Master spec section 43's Visit Completion checklist -- a
+    read-only precondition summary for the "Mark completed" action
+    below, not a gate on it (see get_visit_completion_checklist_service's
+    own docstring for why)."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                return get_visit_completion_checklist_service(cur, appointment_id)
+            except svc_exc.AppointmentNotFound:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            except svc_exc.EncounterNotFound:
+                raise HTTPException(status_code=404, detail="No visit has been started for this appointment")
 
 
 @router.post("/{appointment_id}/complete")

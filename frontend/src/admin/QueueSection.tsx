@@ -9,6 +9,7 @@ import {
 } from '../api'
 import type { DoctorQueue, QueueEntry } from '../types'
 import { formatTime } from '../format'
+import VisitCompletionDialog from './VisitCompletionDialog'
 
 // Today's walk-in queue (ADMIN or STAFF) -- migrations/0012_appointment_
 // queue_tokens.sql, moved to fire on payment/waiver rather than
@@ -57,6 +58,11 @@ export default function QueueSection({
   // open at a time, and this doubles as which one.
   const [priorityTargetId, setPriorityTargetId] = useState<number | null>(null)
   const [priorityReason, setPriorityReason] = useState('')
+  // The now-serving entry currently showing the Visit Completion
+  // checklist -- only now_serving ever offers "Mark completed" here
+  // (see the queue-now-serving-actions button below), so this is
+  // always that same entry, never a waiting/held row.
+  const [completionTarget, setCompletionTarget] = useState<QueueEntry | null>(null)
 
   function load() {
     getDoctorQueue(doctorId)
@@ -231,7 +237,7 @@ export default function QueueSection({
                       type="button"
                       className="btn btn-sm"
                       disabled={busyId === queue.now_serving.appointment_id}
-                      onClick={() => handleComplete(queue.now_serving!.appointment_id)}
+                      onClick={() => setCompletionTarget(queue.now_serving)}
                     >
                       {busyId === queue.now_serving.appointment_id ? 'Saving…' : 'Mark completed'}
                     </button>
@@ -342,6 +348,20 @@ export default function QueueSection({
             queue.held.length === 0 &&
             queue.completed.length === 0 && <p className="muted">No one has checked in today yet.</p>}
         </>
+      )}
+
+      {completionTarget && queue && (
+        <VisitCompletionDialog
+          appointmentId={completionTarget.appointment_id}
+          patientName={completionTarget.patient_name}
+          doctorName={queue.doctor_name}
+          onClose={() => setCompletionTarget(null)}
+          onConfirm={() => {
+            const target = completionTarget
+            setCompletionTarget(null)
+            handleComplete(target.appointment_id)
+          }}
+        />
       )}
     </div>
   )
