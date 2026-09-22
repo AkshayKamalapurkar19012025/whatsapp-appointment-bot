@@ -21,6 +21,7 @@ import type {
   UnbilledSources,
 } from '../types'
 import { formatDateTime } from '../format'
+import PaymentReceiptModal from './PaymentReceiptModal'
 
 const BILL_TYPE_OPTIONS: { value: BillType; label: string }[] = [
   { value: 'CASH', label: 'Cash' },
@@ -104,6 +105,8 @@ export default function AppointmentBillingPanel({
 
   const [voidingBill, setVoidingBill] = useState(false)
   const [voidBillError, setVoidBillError] = useState<string | null>(null)
+
+  const [receiptPaymentId, setReceiptPaymentId] = useState<number | null>(null)
 
   function loadBill() {
     setLoading(true)
@@ -603,7 +606,7 @@ export default function AppointmentBillingPanel({
               <th>Refunded</th>
               <th>Status</th>
               <th>Recorded</th>
-              {isAdmin && <th>Actions</th>}
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -617,9 +620,16 @@ export default function AppointmentBillingPanel({
                   <span className={`pill status-${p.status.toLowerCase()}`}>{p.status}</span>
                 </td>
                 <td>{formatDateTime(p.recorded_at)}</td>
-                {isAdmin && (
-                  <td>
-                    {p.status === 'COMPLETED' && (
+                <td>
+                  <div className="card-grid-item-actions">
+                    <button
+                      type="button"
+                      className="btn-secondary btn btn-sm"
+                      onClick={() => setReceiptPaymentId(p.id)}
+                    >
+                      Receipt
+                    </button>
+                    {isAdmin && p.status === 'COMPLETED' && (
                       <button
                         type="button"
                         className="btn-danger btn btn-sm"
@@ -629,12 +639,20 @@ export default function AppointmentBillingPanel({
                         {voidingPaymentId === p.id ? 'Voiding…' : 'Void'}
                       </button>
                     )}
-                  </td>
-                )}
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
+      )}
+
+      {receiptPaymentId !== null && (
+        <PaymentReceiptModal
+          appointmentId={appointmentId}
+          paymentId={receiptPaymentId}
+          onClose={() => setReceiptPaymentId(null)}
+        />
       )}
 
       {!isVoid && bill.balance > 0 && (

@@ -489,3 +489,73 @@ def refund_invoice_payment_service(
     )
 
     return get_invoice_summary_service(cur, appointment_id, staff_id=staff_id)
+
+
+# ---------------------------------------------------------------------
+# Receipt (master spec section 42)
+# ---------------------------------------------------------------------
+
+
+def get_payment_receipt_service(cur, appointment_id: int, payment_id: int):
+    """One payment's receipt: the invoice's own Gross/Discount/Tax/Net
+    (the whole bill's context, so the receipt shows what this payment
+    was made against) alongside this specific payment's own Method/
+    Transaction ID/Amount (what was actually collected in this
+    transaction) -- not the invoice's cumulative paid-to-date, which a
+    multi-payment bill's second receipt would otherwise misreport as
+    "how much this transaction paid."
+    """
+    invoice = _get_invoice_for_appointment(cur, appointment_id)
+
+    cur.execute(
+        f"SELECT {', '.join(_PAYMENT_COLUMNS)} FROM payments WHERE id = %s AND invoice_id = %s",
+        (payment_id, invoice["id"]),
+    )
+    row = cur.fetchone()
+    if row is None:
+        raise PaymentNotFound()
+    payment = _payment_row_to_dict(row)
+
+    cur.execute(
+        f"SELECT {', '.join(_CHARGE_COLUMNS)} FROM charges WHERE invoice_id = %s AND status = 'ACTIVE' ORDER BY created_at",
+        (invoice["id"],),
+    )
+    services = [
+        {"description": c["description"], "amount": c["amount"]}
+        for c in (_charge_row_to_dict(r) for r in cur.fetchall())
+    ]
+    gross = sum(s["amount"] for s in services)
+    totals = _compute_totals(gross, invoice["discount_amount"], invoice["tax_rate"], paid_effective=0)
+
+    cur.execute(
+        """
+        SELECT h.name, p.name, p.uhid, s.username
+        FROM encounters e
+        JOIN hospitals h ON h.id = e.hospital_id
+        JOIN patients p ON p.id = e.patient_id
+        JOIN staff s ON s.id = %s
+        WHERE e.id = %s
+        """,
+        (payment["recorded_by"], invoice["encounter_id"]),
+    )
+    hospital_name, patient_name, patient_uhid, cashier = cur.fetchone()
+
+    return {
+        "hospital_name": hospital_name,
+        "receipt_number": payment["receipt_number"],
+        "patient_name": patient_name,
+        "patient_uhid": patient_uhid,
+        "encounter_id": invoice["encounter_id"],
+        "invoice_number": invoice["invoice_number"],
+        "services": services,
+        "gross_amount": totals["gross_amount"],
+        "discount_amount": totals["discount_amount"],
+        "tax_amount": totals["tax_amount"],
+        "net_amount": totals["net_amount"],
+        "payment_amount": payment["amount"] - payment["refunded_amount"],
+        "payment_method": payment["method"],
+        "transaction_id": payment["transaction_id"],
+        "payment_status": payment["status"],
+        "cashier": cashier,
+        "recorded_at": payment["recorded_at"],
+    }

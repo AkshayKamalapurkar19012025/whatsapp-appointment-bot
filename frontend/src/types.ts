@@ -886,6 +886,32 @@ export interface BillSummary {
   payment_status: BillPaymentStatus
 }
 
+// GET/POST .../bill/payments/{id}/receipt[/send] (OPD/HIMS master spec
+// Phase 13, section 42). gross_amount/discount_amount/tax_amount/
+// net_amount are the INVOICE's own totals (context for what this
+// payment was made against); payment_amount/payment_method/
+// transaction_id are THIS payment's own, not the invoice's cumulative
+// paid-to-date -- see get_payment_receipt_service's own docstring.
+export interface PaymentReceipt {
+  hospital_name: string
+  receipt_number: string
+  patient_name: string
+  patient_uhid: string
+  encounter_id: number
+  invoice_number: string
+  services: { description: string; amount: number }[]
+  gross_amount: number
+  discount_amount: number
+  tax_amount: number
+  net_amount: number
+  payment_amount: number
+  payment_method: BillPaymentMethod
+  transaction_id: string | null
+  payment_status: BillPaymentRecordStatus
+  cashier: string
+  recorded_at: string
+}
+
 // GET/POST/PUT /api/packages (OPD/HIMS master spec Phase 12, section
 // 39) -- a hospital's own priced package catalog, billed as a single
 // charges.source_type = PACKAGE line item via BillChargeInput's

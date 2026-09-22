@@ -38,7 +38,9 @@ from app.services.billing_services import (
     record_invoice_payment_service,
     void_invoice_payment_service,
     refund_invoice_payment_service,
+    get_payment_receipt_service,
 )
+from app.services.notifications import KIND_RECEIPT, send_mock_notification
 
 router = APIRouter(prefix="/appointments", tags=["Billing"])
 
@@ -255,3 +257,64 @@ def refund_payment(
             except svc_exc.PaymentRefundExceedsAmount:
                 raise HTTPException(status_code=422, detail="Refund amount exceeds what's left to refund")
     return result
+
+
+# ---------------------------------------------------------------------
+# Receipt (master spec section 42) -- bare-staff, same tier as viewing
+# the bill and recording a payment: reading or (re-)sending a receipt
+# changes no financial state, unlike everything ADMIN-gated above.
+# ---------------------------------------------------------------------
+
+
+@router.get("/{appointment_id}/bill/payments/{payment_id}/receipt")
+def get_payment_receipt(
+    appointment_id: int,
+    payment_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                return get_payment_receipt_service(cur, appointment_id, payment_id)
+            except svc_exc.InvoiceNotFound:
+                raise _not_found("No invoice exists for this appointment")
+            except svc_exc.PaymentNotFound:
+                raise _not_found("Payment not found")
+
+
+@router.post("/{appointment_id}/bill/payments/{payment_id}/receipt/send")
+def send_payment_receipt(
+    appointment_id: int,
+    payment_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                receipt = get_payment_receipt_service(cur, appointment_id, payment_id)
+            except svc_exc.InvoiceNotFound:
+                raise _not_found("No invoice exists for this appointment")
+            except svc_exc.PaymentNotFound:
+                raise _not_found("Payment not found")
+
+            cur.execute(
+                """
+                SELECT p.whatsapp_number
+                FROM encounters e
+                JOIN patients p ON p.id = e.patient_id
+                WHERE e.id = %s
+                """,
+                (receipt["encounter_id"],),
+            )
+            (whatsapp_number,) = cur.fetchone()
+
+            send_mock_notification(
+                cur,
+                whatsapp_number,
+                KIND_RECEIPT,
+                f"Receipt {receipt['receipt_number']} from {receipt['hospital_name']}: "
+                f"₹{receipt['payment_amount']:.2f} received via {receipt['payment_method']} "
+                f"for {receipt['patient_name']} (Bill {receipt['invoice_number']}). Thank you.",
+            )
+
+    return {"sent": True}

@@ -33,6 +33,7 @@ import type {
   OrderResultItemInput,
   Package,
   PackageInput,
+  PaymentReceipt,
   PharmacyQueueEntry,
   PharmacyStockBatch,
   PharmacyStockInput,
@@ -1288,6 +1289,17 @@ export function voidBillPayment(appointmentId: number, paymentId: number, reason
     method: 'POST',
     auth: 'staff',
     body: { reason },
+  })
+}
+
+export function getPaymentReceipt(appointmentId: number, paymentId: number): Promise<PaymentReceipt> {
+  return request(`/appointments/${appointmentId}/bill/payments/${paymentId}/receipt`, { auth: 'staff' })
+}
+
+export function sendPaymentReceipt(appointmentId: number, paymentId: number): Promise<{ sent: boolean }> {
+  return request(`/appointments/${appointmentId}/bill/payments/${paymentId}/receipt/send`, {
+    method: 'POST',
+    auth: 'staff',
   })
 }
 
