@@ -10,6 +10,11 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
+    // Binds IPv4 explicitly -- on some Node/macOS setups "localhost" with
+    // no host set resolves to the IPv6 loopback (::1) only, which leaves
+    // 127.0.0.1 (what scripts/start_tunnel.sh and curl default to)
+    // connection-refused even though the server is "up".
+    host: '127.0.0.1',
     // Lets a Cloudflare Quick Tunnel (random *.trycloudflare.com hostname,
     // see scripts/start_tunnel.sh) reach this dev server -- Vite otherwise
     // rejects requests whose Host header isn't localhost, to block DNS
