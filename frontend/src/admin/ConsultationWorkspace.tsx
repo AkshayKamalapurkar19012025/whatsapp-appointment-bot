@@ -227,6 +227,18 @@ export default function ConsultationWorkspace({
   const [resultTargetId, setResultTargetId] = useState<number | null>(null)
   const [resultItems, setResultItems] = useState<OrderResultItemInput[]>([])
   const [resultSaving, setResultSaving] = useState(false)
+  // Master spec section 54's gap #6: lab/radiology orders had no
+  // requisition print view. Only one order's print-only layout exists
+  // in the DOM at a time (see the useEffect below) -- printing whatever
+  // *every* LAB/RADIOLOGY row's own print-area would otherwise put on
+  // the page isn't what "Print requisition" on one row means.
+  const [printOrderTarget, setPrintOrderTarget] = useState<ClinicalOrder | null>(null)
+
+  useEffect(() => {
+    if (printOrderTarget) {
+      window.print()
+    }
+  }, [printOrderTarget])
 
   useEffect(() => {
     let cancelled = false
@@ -594,7 +606,13 @@ export default function ConsultationWorkspace({
             available below.
           </div>
           <h4>Billing</h4>
-          <AppointmentBillingPanel appointmentId={appointmentId} isAdmin={isAdmin} />
+          <AppointmentBillingPanel
+            appointmentId={appointmentId}
+            isAdmin={isAdmin}
+            patientName={encounter?.patient_name ?? ''}
+            patientUhid={encounter?.patient_uhid ?? ''}
+            doctorName={encounter?.doctor_name ?? ''}
+          />
         </>
       )}
 
@@ -1228,6 +1246,15 @@ export default function ConsultationWorkspace({
                             </td>
                             <td>{formatDateTime(order.ordered_at)}</td>
                             <td>
+                              {(order.order_type === 'LAB' || order.order_type === 'RADIOLOGY') && (
+                                <button
+                                  type="button"
+                                  className="btn-secondary btn btn-sm"
+                                  onClick={() => setPrintOrderTarget(order)}
+                                >
+                                  Print requisition
+                                </button>
+                              )}
                               {actionable &&
                                 (cancelTargetId === order.id ? (
                                   <div className="queue-priority-form">
@@ -1405,6 +1432,34 @@ export default function ConsultationWorkspace({
                   </tbody>
                 </table>
               )}
+
+              {/* master spec section 54's gap #6: lab/radiology orders
+                  had no requisition print view. Only ever holds ONE
+                  order at a time (printOrderTarget) -- a per-row Print
+                  requisition button setting shared state, not a
+                  print-area rendered once per row, which would put
+                  every LAB/RADIOLOGY order on the page at once. */}
+              {printOrderTarget && encounter && (
+                <div className="print-area print-only requisition-print-area">
+                  <h3>{ORDER_TYPE_LABELS[printOrderTarget.order_type]} Requisition</h3>
+                  <p>
+                    {encounter.patient_name} ({encounter.patient_uhid})
+                  </p>
+                  <p>{encounter.doctor_name}</p>
+                  <p className="muted">{formatDateTime(printOrderTarget.ordered_at)}</p>
+                  <p>
+                    <strong>Test/procedure:</strong> {printOrderTarget.description}
+                  </p>
+                  {printOrderTarget.clinical_indication && (
+                    <p>
+                      <strong>Clinical indication:</strong> {printOrderTarget.clinical_indication}
+                    </p>
+                  )}
+                  <p>
+                    <strong>Priority:</strong> {printOrderTarget.priority}
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
@@ -1412,10 +1467,21 @@ export default function ConsultationWorkspace({
             <PrescriptionPanel
               appointmentId={appointmentId}
               appointmentCheckedIn={encounter.appointment_status === 'CHECKED_IN'}
+              patientName={encounter.patient_name}
+              patientUhid={encounter.patient_uhid}
+              doctorName={encounter.doctor_name}
             />
           )}
 
-          {tab === 'billing' && <AppointmentBillingPanel appointmentId={appointmentId} isAdmin={isAdmin} />}
+          {tab === 'billing' && encounter && (
+            <AppointmentBillingPanel
+              appointmentId={appointmentId}
+              isAdmin={isAdmin}
+              patientName={encounter.patient_name}
+              patientUhid={encounter.patient_uhid}
+              doctorName={encounter.doctor_name}
+            />
+          )}
         </>
       )}
     </section>

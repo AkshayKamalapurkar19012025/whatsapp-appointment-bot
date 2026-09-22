@@ -8254,22 +8254,74 @@ a.link.danger {
 }
 
 /* Printing (or "Save as PDF" from the print dialog) shows only the
-   receipt itself -- everything else on the page (sidebar, top bar, the
-   rest of the modal chrome, the overlay backdrop) is hidden. */
+   document being printed -- everything else on the page (sidebar, top
+   bar, the rest of the modal chrome, the overlay backdrop) is hidden.
+   .receipt-print-area is the original (Phase 13); .print-area is the
+   shared class every other print view (master spec section 54's gap
+   #6 -- token/prescription/bill/order requisition) uses instead of
+   inventing its own near-identical @media print block each time. */
 @media print {
   body * {
     visibility: hidden;
   }
 
   .receipt-print-area,
-  .receipt-print-area * {
+  .receipt-print-area *,
+  .print-area,
+  .print-area * {
     visibility: visible;
   }
 
-  .receipt-print-area {
+  .receipt-print-area,
+  .print-area {
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
   }
+}
+
+/* Print-only content (the token slip, prescription/bill/requisition
+   layouts below): invisible on screen -- these are compact,
+   print-formatted summaries of data the screen already shows in its
+   own (differently laid out) form, not a second on-screen copy of the
+   same view. */
+.print-only {
+  display: none;
+}
+
+@media print {
+  .print-only {
+    display: block;
+  }
+}
+
+/* Token slip (BookAppointmentPanel's walk-in "Print Token"). */
+.token-slip {
+  max-width: 320px;
+  text-align: center;
+}
+
+.token-slip h3 {
+  font-size: 2rem;
+  margin: 0 0 var(--space-3);
+}
+
+.token-slip p {
+  margin: 4px 0;
+}
+
+/* Prescription/bill/order-requisition print layouts (master spec
+   section 54's gap #6) -- same shared header spacing, the rest is the
+   existing .data-table styling already used everywhere else. */
+.prescription-print-area h3,
+.invoice-print-area h3,
+.requisition-print-area h3 {
+  margin: 0 0 var(--space-2);
+}
+
+.prescription-print-area p,
+.invoice-print-area p,
+.requisition-print-area p {
+  margin: 2px 0;
 }

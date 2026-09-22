@@ -533,6 +533,28 @@ export default function BookAppointmentPanel({
               Create Another Visit
             </button>
           </div>
+
+          {/* master spec section 54's gap #6: "Print Token" used to
+              call window.print() with no print CSS scoping it, so it
+              printed the entire visible page (sidebar included) rather
+              than a token slip. print-area + print-only (styles.css)
+              give it its own compact, print-only layout instead. */}
+          {paymentSettleResult?.token_number != null && (
+            <div className="print-area print-only token-slip">
+              <h3>Token #{paymentSettleResult.token_number}</h3>
+              <p>
+                {justBooked.patientName} ({justBooked.patientUhid})
+              </p>
+              <p>
+                {justBookedDepartment ? `${justBookedDepartment} · ` : ''}
+                {justBooked.doctorName}
+              </p>
+              <p>{justBooked.appointmentTypeName}</p>
+              <p>
+                {formatDate(justBooked.slot.start_at)} · {formatTime(justBooked.slot.start_at)}
+              </p>
+            </div>
+          )}
         </div>
       </section>
     )

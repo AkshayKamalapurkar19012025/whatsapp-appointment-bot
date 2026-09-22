@@ -72,9 +72,15 @@ const SOURCE_TYPE_OPTIONS: ChargeSourceType[] = [
 export default function AppointmentBillingPanel({
   appointmentId,
   isAdmin,
+  patientName,
+  patientUhid,
+  doctorName,
 }: {
   appointmentId: number
   isAdmin: boolean
+  patientName: string
+  patientUhid: string
+  doctorName: string
 }) {
   const [bill, setBill] = useState<BillSummary | null>(null)
   const [loading, setLoading] = useState(true)
@@ -294,6 +300,12 @@ export default function AppointmentBillingPanel({
       </div>
       {isVoid && bill.void_reason && <p className="muted">Voided: {bill.void_reason}</p>}
 
+      {activeCharges.length > 0 && (
+        <button type="button" className="btn-secondary btn btn-sm" onClick={() => window.print()}>
+          Print bill
+        </button>
+      )}
+
       <table className="data-table">
         <tbody>
           <tr>
@@ -330,6 +342,76 @@ export default function AppointmentBillingPanel({
           </tr>
         </tbody>
       </table>
+
+      {/* master spec section 54's gap #6: the bill/invoice had no print
+          view at all -- only a single payment's receipt (Phase 13) did.
+          print-area + print-only (styles.css) give the whole bill its
+          own layout, separate from the on-screen table above (which
+          has no per-charge line items, just the rolled-up totals). */}
+      {activeCharges.length > 0 && (
+        <div className="print-area print-only invoice-print-area">
+          <h3>Bill {bill.invoice_number}</h3>
+          <p>
+            {patientName} ({patientUhid})
+          </p>
+          <p>{doctorName}</p>
+          <p className="muted">{formatDateTime(bill.created_at)}</p>
+
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Description</th>
+                <th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {activeCharges.map((c) => (
+                <tr key={c.id}>
+                  <td>{c.description}</td>
+                  <td>₹{c.amount.toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <table className="data-table">
+            <tbody>
+              <tr>
+                <td>Gross</td>
+                <td>₹{bill.gross_amount.toFixed(2)}</td>
+              </tr>
+              <tr>
+                <td>Discount{bill.discount_reason ? ` (${bill.discount_reason})` : ''}</td>
+                <td>−₹{bill.discount_amount.toFixed(2)}</td>
+              </tr>
+              <tr>
+                <td>Tax ({bill.tax_rate}%)</td>
+                <td>₹{bill.tax_amount.toFixed(2)}</td>
+              </tr>
+              <tr>
+                <td>
+                  <strong>Net</strong>
+                </td>
+                <td>
+                  <strong>₹{bill.net_amount.toFixed(2)}</strong>
+                </td>
+              </tr>
+              <tr>
+                <td>Paid</td>
+                <td>₹{bill.paid_amount.toFixed(2)}</td>
+              </tr>
+              <tr>
+                <td>
+                  <strong>Balance</strong>
+                </td>
+                <td>
+                  <strong>₹{bill.balance.toFixed(2)}</strong>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {isAdmin && !isVoid && (
         <div className="doctor-quick-actions">
