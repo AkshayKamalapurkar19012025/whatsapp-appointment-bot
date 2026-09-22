@@ -3,6 +3,7 @@ import {
   Buildings,
   CalendarCheck,
   ChartLineUp,
+  ClockCounterClockwise,
   CurrencyInr,
   Gauge,
   GearSix,
@@ -29,6 +30,7 @@ import QueuePanel from './QueuePanel'
 import ConsultationWorkspace from './ConsultationWorkspace'
 import PharmacyPanel from './PharmacyPanel'
 import PackagesPanel from './PackagesPanel'
+import AuditLogPanel from './AuditLogPanel'
 import AdminSidebar, { type AdminSidebarItem } from './AdminSidebar'
 import AdminTopBar from './AdminTopBar'
 
@@ -43,6 +45,7 @@ type Section =
   | 'appointment-types'
   | 'patients'
   | 'staff-accounts'
+  | 'audit-log'
   | 'billing'
   | 'pharmacy'
   | 'packages'
@@ -282,6 +285,14 @@ export default function AdminApp() {
             onSelect: () => goTo('staff-accounts'),
             group: 'Admin',
           } satisfies AdminSidebarItem,
+          {
+            key: 'audit-log',
+            label: 'Audit Log',
+            icon: <ClockCounterClockwise size={20} weight="regular" />,
+            active: section === 'audit-log',
+            onSelect: () => goTo('audit-log'),
+            group: 'Admin',
+          } satisfies AdminSidebarItem,
         ]
       : []),
     {
@@ -365,6 +376,7 @@ export default function AdminApp() {
           {section === 'appointment-types' && <AppointmentTypesPanel key={navResetKey} isAdmin={isAdmin} />}
           {section === 'patients' && <PatientsPanel key={navResetKey} />}
           {section === 'staff-accounts' && isAdmin && <StaffAccountsPanel key={navResetKey} />}
+          {section === 'audit-log' && isAdmin && <AuditLogPanel key={navResetKey} />}
           {section === 'billing' && <BillingPanel key={navResetKey} />}
           {section === 'pharmacy' && <PharmacyPanel key={navResetKey} isAdmin={isAdmin} />}
           {section === 'packages' && <PackagesPanel key={navResetKey} isAdmin={isAdmin} />}

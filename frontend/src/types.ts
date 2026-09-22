@@ -618,6 +618,20 @@ export interface NotificationCenter {
   unread_count: number
 }
 
+// GET /audit-log (master spec audit "subsequent gaps" list: "no
+// frontend page to view the audit log" -- the backend endpoint
+// existed already, gated on staff.manage same as Staff Accounts).
+export interface AuditLogEntry {
+  id: number
+  staff_id: number | null
+  staff_username: string | null
+  action: string
+  resource_type: string
+  resource_id: number | null
+  details: Record<string, unknown> | null
+  created_at: string
+}
+
 // GET /appointments/{id}/completion-checklist (master spec section 43's
 // Visit Completion checklist) -- a read-only precondition summary shown
 // before "Mark completed", not a gate on it.

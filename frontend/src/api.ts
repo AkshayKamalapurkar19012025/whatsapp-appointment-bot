@@ -60,6 +60,7 @@ import type {
   UnbilledSources,
   Vitals,
   VisitCompletionChecklist,
+  AuditLogEntry,
   SearchResults,
   NotificationCenter,
   StaffNotification,
@@ -435,6 +436,23 @@ export function setStaffAccountActive(
     auth: 'staff',
     body: { active },
   })
+}
+
+// GET /audit-log (staff.manage-gated, same tier as Staff Accounts).
+export function getAuditLog(filters: {
+  staff_id?: number
+  action?: string
+  resource_type?: string
+  resource_id?: number
+  date_from?: string
+  date_to?: string
+}): Promise<AuditLogEntry[]> {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') query.set(key, String(value))
+  }
+  const qs = query.toString()
+  return request(`/audit-log${qs ? `?${qs}` : ''}`, { auth: 'staff' })
 }
 
 // -- WEB P11: departments/doctors/appointment-types admin writes -----------
