@@ -2,9 +2,11 @@ import { Fragment, useEffect, useState } from 'react'
 import { ArrowLeft, CheckCircle, Warning } from '@phosphor-icons/react'
 import {
   ApiError,
+  amendConsultation,
   cancelOrder,
   completeConsultation,
   createOrder,
+  getConsultationAmendments,
   getEncounterSummary,
   getLatestVitals,
   getOrCreateConsultation,
@@ -16,6 +18,7 @@ import {
 import type {
   ClinicalOrder,
   Consultation,
+  ConsultationAmendment,
   EncounterSummary,
   OrderPriority,
   OrderResultItemInput,
@@ -176,6 +179,17 @@ export default function ConsultationWorkspace({
   const [completing, setCompleting] = useState(false)
   const [completeError, setCompleteError] = useState<string | null>(null)
 
+  // Amendment (master spec section 70) -- correcting a COMPLETED
+  // consultation. `amending` locally re-enables the consultation tab's
+  // fields without touching the global `readOnly` (vitals/orders stay
+  // exactly as read-only as the visit's own state says).
+  const [amending, setAmending] = useState(false)
+  const [amendReason, setAmendReason] = useState('')
+  const [amendSaving, setAmendSaving] = useState(false)
+  const [amendError, setAmendError] = useState<string | null>(null)
+  const [amendments, setAmendments] = useState<ConsultationAmendment[]>([])
+  const [showAmendHistory, setShowAmendHistory] = useState(false)
+
   const [orders, setOrders] = useState<ClinicalOrder[]>([])
   const [orderType, setOrderType] = useState<OrderType>('LAB')
   const [orderDescription, setOrderDescription] = useState('')
@@ -247,6 +261,54 @@ export default function ConsultationWorkspace({
       cancelled = true
     }
   }, [appointmentId])
+
+  useEffect(() => {
+    if (consultation?.status !== 'COMPLETED') return
+    let cancelled = false
+    getConsultationAmendments(appointmentId)
+      .then((list) => {
+        if (!cancelled) setAmendments(list)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [appointmentId, consultation?.status])
+
+  function startAmend() {
+    if (!consultation) return
+    setConsultationForm(consultationFormFromRecord(consultation))
+    setFollowUpChoice(consultation.follow_up_date ? 'custom' : null)
+    setFollowUpCustomDate(consultation.follow_up_date ?? '')
+    setAmendReason('')
+    setAmendError(null)
+    setAmending(true)
+  }
+
+  async function handleSaveAmendment() {
+    setAmendSaving(true)
+    setAmendError(null)
+    try {
+      const saved = await amendConsultation(appointmentId, {
+        reason: amendReason.trim(),
+        chief_complaint: consultationForm.chief_complaint.trim() || undefined,
+        history_notes: consultationForm.history_notes.trim() || undefined,
+        examination_notes: consultationForm.examination_notes.trim() || undefined,
+        diagnosis: consultationForm.diagnosis.trim() || undefined,
+        clinical_notes: consultationForm.clinical_notes.trim() || undefined,
+        follow_up_date: currentFollowUpDate(),
+        follow_up_reason: consultationForm.follow_up_reason.trim() || undefined,
+      })
+      setConsultation(saved)
+      setAmending(false)
+      const history = await getConsultationAmendments(appointmentId).catch(() => amendments)
+      setAmendments(history)
+    } catch (err) {
+      setAmendError(err instanceof ApiError ? err.message : 'Could not save this amendment')
+    } finally {
+      setAmendSaving(false)
+    }
+  }
 
   async function handleSaveVitals() {
     setVitalsSaving(true)
@@ -654,11 +716,17 @@ export default function ConsultationWorkspace({
 
           {tab === 'consultation' && (
             <div className="detail-section">
-              {readOnly && (
+              {readOnly && !amending && (
                 <p className="muted">
                   {consultation?.status === 'COMPLETED'
                     ? `Completed ${consultation.completed_at ? formatDateTime(consultation.completed_at) : ''}`
                     : 'This visit is no longer in progress -- the consultation can be viewed but not edited.'}
+                </p>
+              )}
+              {amending && (
+                <p className="muted">
+                  Amending a completed consultation -- every field below is editable, and the previous values
+                  will be kept in the amendment history.
                 </p>
               )}
               {consultationError && <p className="error">{consultationError}</p>}
@@ -669,7 +737,7 @@ export default function ConsultationWorkspace({
                 <textarea
                   rows={2}
                   value={consultationForm.chief_complaint}
-                  disabled={readOnly}
+                  disabled={readOnly && !amending}
                   onChange={(e) => setConsultationForm({ ...consultationForm, chief_complaint: e.target.value })}
                 />
               </label>
@@ -678,7 +746,7 @@ export default function ConsultationWorkspace({
                 <textarea
                   rows={3}
                   value={consultationForm.history_notes}
-                  disabled={readOnly}
+                  disabled={readOnly && !amending}
                   onChange={(e) => setConsultationForm({ ...consultationForm, history_notes: e.target.value })}
                 />
               </label>
@@ -687,7 +755,7 @@ export default function ConsultationWorkspace({
                 <textarea
                   rows={3}
                   value={consultationForm.examination_notes}
-                  disabled={readOnly}
+                  disabled={readOnly && !amending}
                   onChange={(e) => setConsultationForm({ ...consultationForm, examination_notes: e.target.value })}
                 />
               </label>
@@ -696,7 +764,7 @@ export default function ConsultationWorkspace({
                 <textarea
                   rows={2}
                   value={consultationForm.diagnosis}
-                  disabled={readOnly}
+                  disabled={readOnly && !amending}
                   onChange={(e) => setConsultationForm({ ...consultationForm, diagnosis: e.target.value })}
                 />
               </label>
@@ -705,7 +773,7 @@ export default function ConsultationWorkspace({
                 <textarea
                   rows={3}
                   value={consultationForm.clinical_notes}
-                  disabled={readOnly}
+                  disabled={readOnly && !amending}
                   onChange={(e) => setConsultationForm({ ...consultationForm, clinical_notes: e.target.value })}
                 />
               </label>
@@ -715,7 +783,7 @@ export default function ConsultationWorkspace({
                   Follow-up
                   <select
                     value={followUpChoice ?? ''}
-                    disabled={readOnly}
+                    disabled={readOnly && !amending}
                     onChange={(e) => setFollowUpChoice(e.target.value || null)}
                   >
                     <option value="">No follow-up</option>
@@ -732,7 +800,7 @@ export default function ConsultationWorkspace({
                     <input
                       type="date"
                       value={followUpCustomDate}
-                      disabled={readOnly}
+                      disabled={readOnly && !amending}
                       onChange={(e) => setFollowUpCustomDate(e.target.value)}
                     />
                   </label>
@@ -744,10 +812,86 @@ export default function ConsultationWorkspace({
                   <input
                     type="text"
                     value={consultationForm.follow_up_reason}
-                    disabled={readOnly}
+                    disabled={readOnly && !amending}
                     onChange={(e) => setConsultationForm({ ...consultationForm, follow_up_reason: e.target.value })}
                   />
                 </label>
+              )}
+
+              {amending && (
+                <>
+                  <label className="inline-label">
+                    Reason for amendment *
+                    <textarea
+                      rows={2}
+                      value={amendReason}
+                      onChange={(e) => setAmendReason(e.target.value)}
+                      placeholder="Why is this consultation being corrected?"
+                    />
+                  </label>
+                  {amendError && <p className="error">{amendError}</p>}
+                  <div className="doctor-quick-actions">
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={
+                        amendSaving ||
+                        !amendReason.trim() ||
+                        !consultationForm.chief_complaint.trim() ||
+                        !consultationForm.diagnosis.trim()
+                      }
+                      onClick={handleSaveAmendment}
+                    >
+                      {amendSaving ? 'Saving…' : 'Save amendment'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary btn"
+                      disabled={amendSaving}
+                      onClick={() => {
+                        setAmending(false)
+                        if (consultation) setConsultationForm(consultationFormFromRecord(consultation))
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {!amending && consultation?.status === 'COMPLETED' && isAdmin && (
+                <div className="doctor-quick-actions">
+                  <button type="button" className="btn-secondary btn btn-sm" onClick={startAmend}>
+                    Amend consultation
+                  </button>
+                </div>
+              )}
+
+              {!amending && amendments.length > 0 && (
+                <div className="amendment-history">
+                  <button
+                    type="button"
+                    className="link"
+                    onClick={() => setShowAmendHistory(!showAmendHistory)}
+                  >
+                    {showAmendHistory ? 'Hide' : 'Show'} amendment history ({amendments.length})
+                  </button>
+                  {showAmendHistory && (
+                    <ul className="amendment-history-list">
+                      {amendments.map((a) => (
+                        <li key={a.id}>
+                          <p className="muted">
+                            {formatDateTime(a.amended_at)} · {a.amended_by_username}
+                          </p>
+                          <p>{a.reason}</p>
+                          {a.previous_diagnosis && (
+                            <p className="muted">Previous diagnosis: {a.previous_diagnosis}</p>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               )}
 
               {!readOnly && (

@@ -254,6 +254,14 @@ class ConsultationIncomplete(ServiceError):
     pass
 
 
+class ConsultationNotAmendable(ServiceError):
+    """Raised by amend_consultation_service when the consultation is
+    still DRAFT -- a DRAFT consultation is edited directly via
+    save_consultation_draft_service; amendment exists specifically for
+    correcting a COMPLETED one, never as a second way to edit a draft."""
+    pass
+
+
 # ---------------------------------------------------------------------
 # Orders (OPD/HIMS master spec Phase 6) -- see
 # app/services/order_services.py.

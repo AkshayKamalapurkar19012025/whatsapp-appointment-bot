@@ -62,6 +62,11 @@ EXEMPT_TABLES = {
     "pharmacy_dispense_records",  # -> prescription_items -> prescriptions
     "charges",                # -> invoices
     "payments",                # -> invoices
+    # Child of consultations (consultation_id FK, NOT NULL) -- tenant
+    # derivable through it, same category as the direct-children-of-
+    # encounters group above. OPD/HIMS master spec Phase 14 (section
+    # 70's controlled amendment/void processes).
+    "consultation_amendments",
     # pharmacy_stock is NOT in this list -- it has no FK to any
     # hospital-scoped entity at all (physical inventory, not a child of
     # a visit), so it got its own hospital_id column instead

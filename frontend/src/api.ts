@@ -17,6 +17,8 @@ import type {
   CalendarMonth,
   ClinicalOrder,
   Consultation,
+  ConsultationAmendInput,
+  ConsultationAmendment,
   ConsultationInput,
   DashboardStats,
   DashboardTrends,
@@ -677,6 +679,14 @@ export function saveConsultationDraft(
 
 export function completeConsultation(appointmentId: number): Promise<Consultation> {
   return request(`/appointments/${appointmentId}/consultation/complete`, { method: 'POST', auth: 'staff' })
+}
+
+export function amendConsultation(appointmentId: number, payload: ConsultationAmendInput): Promise<Consultation> {
+  return request(`/appointments/${appointmentId}/consultation/amend`, { method: 'POST', auth: 'staff', body: payload })
+}
+
+export function getConsultationAmendments(appointmentId: number): Promise<ConsultationAmendment[]> {
+  return request(`/appointments/${appointmentId}/consultation/amendments`, { auth: 'staff' })
 }
 
 // -- Orders (OPD/HIMS master spec Phase 6) --------------------------------

@@ -609,6 +609,29 @@ export type ConsultationInput = Partial<
   Omit<Consultation, 'id' | 'encounter_id' | 'doctor_id' | 'status' | 'started_at' | 'completed_at'>
 >
 
+// POST .../consultation/amend (OPD/HIMS master spec Phase 14, section
+// 70) -- same fields as ConsultationInput plus a required reason.
+export type ConsultationAmendInput = ConsultationInput & { reason: string }
+
+// GET .../consultation/amendments -- one row per past correction, the
+// PRE-amendment snapshot (never the current values, which live on the
+// Consultation itself).
+export interface ConsultationAmendment {
+  id: number
+  consultation_id: number
+  previous_chief_complaint: string | null
+  previous_history_notes: string | null
+  previous_examination_notes: string | null
+  previous_diagnosis: string | null
+  previous_clinical_notes: string | null
+  previous_follow_up_date: string | null
+  previous_follow_up_reason: string | null
+  reason: string
+  amended_by: number
+  amended_by_username: string
+  amended_at: string
+}
+
 // OPD/HIMS master spec Phase 6 (migrations/0030_orders.sql) -- the
 // order spine. One shape for every order type; order_type is what
 // distinguishes a lab test from a radiology study from an external
