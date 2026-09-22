@@ -711,6 +711,28 @@ def confirm_and_check_in_appointment(
                     status_code=409,
                     detail="Only a Pending or Confirmed appointment can be confirmed and checked in",
                 )
+            except svc_exc.AppointmentSlotPassed:
+                # Found during a Production Hardening pass (master spec
+                # section 77/Phase 12, docs/OPD_HIMS_MASTER_SPEC_AUDIT.md
+                # gap #7): this composed action calls confirm_appointment_
+                # service internally when starting from PENDING, which
+                # itself still enforces "the requested slot's start_at
+                # hasn't already gone by" -- unlike plain POST /confirm
+                # above (which has caught this since it was added), this
+                # endpoint had no handler for it at all, so a walk-in
+                # booked with start_at="now" (BookAppointmentPanel's own
+                # immediate-slot booking) would crash with an unhandled
+                # 500 the moment even a few seconds passed between
+                # booking and clicking Confirm & Check In. This function's
+                # own docstring promises "always reaches CHECKED_IN...
+                # instead of dead-ending the front desk" -- that promise
+                # already doesn't hold for a genuinely stale request (the
+                # slot really has passed), so this is a clean error, not
+                # a silent swallow of the underlying business rule.
+                raise HTTPException(
+                    status_code=409,
+                    detail="This appointment's scheduled time has already passed and can no longer be confirmed",
+                )
 
             if result["arrival_kind"] == "checked_in":
                 cur.execute(
