@@ -936,6 +936,7 @@ export type ChargeSourceType =
   | 'SERVICE'
   | 'PHARMACY'
   | 'PACKAGE'
+  | 'CONSUMABLES'
   | 'OTHER'
 export type BillPaymentStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID'
 export type BillPaymentMethod = 'CASH' | 'UPI' | 'CARD' | 'BANK_TRANSFER' | 'INSURANCE' | 'OTHER'

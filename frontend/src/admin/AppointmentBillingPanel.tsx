@@ -50,6 +50,7 @@ const SOURCE_TYPE_OPTIONS: ChargeSourceType[] = [
   'PROCEDURE',
   'SERVICE',
   'PHARMACY',
+  'CONSUMABLES',
   'OTHER',
 ]
 
