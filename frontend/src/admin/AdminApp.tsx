@@ -37,6 +37,7 @@ import AuditLogPanel from './AuditLogPanel'
 import DepartmentQueuePanel from './DepartmentQueuePanel'
 import BillingHistoryPanel from './BillingHistoryPanel'
 import PaymentHistoryPanel from './PaymentHistoryPanel'
+import WaitingTimeAnalyticsPanel from './WaitingTimeAnalyticsPanel'
 import AdminSidebar, { type AdminSidebarItem } from './AdminSidebar'
 import AdminTopBar from './AdminTopBar'
 
@@ -56,6 +57,7 @@ type Section =
   | 'billing'
   | 'billing-history'
   | 'payment-history'
+  | 'waiting-time-analytics'
   | 'pharmacy'
   | 'packages'
 
@@ -337,10 +339,11 @@ export default function AdminApp() {
       group: 'Reports',
     },
     {
-      key: 'analytics',
-      label: 'Analytics',
+      key: 'waiting-time-analytics',
+      label: 'Waiting-Time Analytics',
       icon: <ChartLineUp size={20} weight="regular" />,
-      disabled: true,
+      active: section === 'waiting-time-analytics',
+      onSelect: () => goTo('waiting-time-analytics'),
       group: 'Reports',
     },
     {
@@ -416,6 +419,7 @@ export default function AdminApp() {
           {section === 'billing' && <BillingPanel key={navResetKey} />}
           {section === 'billing-history' && <BillingHistoryPanel key={navResetKey} />}
           {section === 'payment-history' && <PaymentHistoryPanel key={navResetKey} />}
+          {section === 'waiting-time-analytics' && <WaitingTimeAnalyticsPanel key={navResetKey} />}
           {section === 'pharmacy' && <PharmacyPanel key={navResetKey} isAdmin={isAdmin} />}
           {section === 'packages' && <PackagesPanel key={navResetKey} isAdmin={isAdmin} />}
         </main>

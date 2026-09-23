@@ -58,6 +58,7 @@ import type {
   StaffAccount,
   StaffRole,
   UnbilledSources,
+  WaitingTimeAnalytics,
   Vitals,
   VisitCompletionChecklist,
   AuditLogEntry,
@@ -405,6 +406,12 @@ export function getDashboardTrends(days = 14): Promise<DashboardTrends> {
 
 export function getBillingReport(days = 14): Promise<BillingReport> {
   return request(`/dashboard/billing?days=${days}`, { auth: 'staff' })
+}
+
+export function getWaitingTimeAnalytics(days = 14, doctorId?: number): Promise<WaitingTimeAnalytics> {
+  const query = new URLSearchParams({ days: String(days) })
+  if (doctorId !== undefined) query.set('doctor_id', String(doctorId))
+  return request(`/analytics/waiting-time?${query.toString()}`, { auth: 'staff' })
 }
 
 // -- Exceptions ----------------------------------------------------------

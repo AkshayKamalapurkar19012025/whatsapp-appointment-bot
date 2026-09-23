@@ -531,6 +531,36 @@ export interface DashboardTrends {
   patients: DashboardTrendPoint[]
 }
 
+// GET /api/analytics/waiting-time (master spec audit "subsequent gaps"
+// list, screen 33) -- the historical counterpart to AppointmentsPanel.
+// tsx's own client-side avgWaitMinutes snapshot (today's currently-
+// waiting patients only). Wait is measured check-in (visited_at) to
+// the doctor opening the consultation (consultations.started_at).
+export interface WaitingTimeOverall {
+  count: number
+  avg_wait_minutes: number
+}
+
+export interface WaitingTimeDayPoint {
+  date: string
+  count: number
+  avg_wait_minutes: number
+}
+
+export interface WaitingTimeDoctorBreakdown {
+  doctor_id: number
+  doctor_name: string
+  count: number
+  avg_wait_minutes: number
+}
+
+export interface WaitingTimeAnalytics {
+  window_days: number
+  overall: WaitingTimeOverall
+  by_day: WaitingTimeDayPoint[]
+  by_doctor: WaitingTimeDoctorBreakdown[]
+}
+
 // GET /api/exceptions (OPD/HIMS master spec Phase 11, sections 46-47) --
 // live-computed operational alerts, one shape per type-specific field
 // alongside the five fields every exception carries (what/why/who/
