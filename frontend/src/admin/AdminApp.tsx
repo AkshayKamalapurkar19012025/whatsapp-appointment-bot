@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Stethoscope,
   Tag,
+  UsersFour,
   UsersThree,
 } from '@phosphor-icons/react'
 import { clearStaffToken, getStaffMe, getStaffToken, staffLogout } from '../api'
@@ -31,6 +32,7 @@ import ConsultationWorkspace from './ConsultationWorkspace'
 import PharmacyPanel from './PharmacyPanel'
 import PackagesPanel from './PackagesPanel'
 import AuditLogPanel from './AuditLogPanel'
+import DepartmentQueuePanel from './DepartmentQueuePanel'
 import AdminSidebar, { type AdminSidebarItem } from './AdminSidebar'
 import AdminTopBar from './AdminTopBar'
 
@@ -41,6 +43,7 @@ type Section =
   | 'queue'
   | 'consultation'
   | 'doctors'
+  | 'department-queue'
   | 'departments'
   | 'appointment-types'
   | 'patients'
@@ -236,6 +239,14 @@ export default function AdminApp() {
       group: 'Manage',
     },
     {
+      key: 'department-queue',
+      label: 'Department Queue',
+      icon: <UsersFour size={20} weight="regular" />,
+      active: section === 'department-queue',
+      onSelect: () => goTo('department-queue'),
+      group: 'Manage',
+    },
+    {
       key: 'patients',
       label: 'Patients',
       icon: <UsersThree size={20} weight="regular" />,
@@ -372,6 +383,9 @@ export default function AdminApp() {
             />
           )}
           {section === 'doctors' && <DoctorsPanel key={navResetKey} isAdmin={isAdmin} onGoToQueue={goToQueueForDoctor} />}
+          {section === 'department-queue' && (
+            <DepartmentQueuePanel key={navResetKey} onOpenConsultation={goToConsultation} />
+          )}
           {section === 'departments' && <DepartmentsPanel key={navResetKey} isAdmin={isAdmin} />}
           {section === 'appointment-types' && <AppointmentTypesPanel key={navResetKey} isAdmin={isAdmin} />}
           {section === 'patients' && <PatientsPanel key={navResetKey} />}

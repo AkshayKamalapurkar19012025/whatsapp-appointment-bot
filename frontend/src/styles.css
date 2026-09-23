@@ -5272,6 +5272,19 @@ a.link.danger {
   opacity: 0.5;
 }
 
+/* Department Queue (master spec audit gap: screen 23) -- one
+   QueueSection per doctor in the chosen department, visually
+   separated. */
+.department-queue-doctor-section {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.department-queue-doctor-section h4 {
+  margin: 0 0 var(--space-2);
+}
+
 /* ===========================================================
    Doctor queue (DoctorDetail.tsx's QueueSection)
    =========================================================== */
