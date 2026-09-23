@@ -23,6 +23,7 @@ import type {
   ClinicalOrder,
   Consultation,
   ConsultationAmendment,
+  ConsultationDisposition,
   EncounterSummary,
   OrderPriority,
   OrderResultItemInput,
@@ -125,6 +126,8 @@ type ConsultationFormState = {
   diagnosis: string
   clinical_notes: string
   follow_up_reason: string
+  disposition: ConsultationDisposition | ''
+  disposition_notes: string
 }
 
 function consultationFormFromRecord(c: Consultation): ConsultationFormState {
@@ -135,7 +138,16 @@ function consultationFormFromRecord(c: Consultation): ConsultationFormState {
     diagnosis: c.diagnosis ?? '',
     clinical_notes: c.clinical_notes ?? '',
     follow_up_reason: c.follow_up_reason ?? '',
+    disposition: c.disposition ?? '',
+    disposition_notes: c.disposition_notes ?? '',
   }
+}
+
+const DISPOSITION_LABELS: Record<ConsultationDisposition, string> = {
+  FOLLOW_UP: 'Follow-up',
+  REFER: 'Refer',
+  ADMIT_TO_IPD: 'Admit to IPD',
+  EMERGENCY: 'Emergency',
 }
 
 // OPD/HIMS master spec Phase 5 -- the doctor/nurse "Full Workspace" for
@@ -330,6 +342,8 @@ export default function ConsultationWorkspace({
         clinical_notes: consultationForm.clinical_notes.trim() || undefined,
         follow_up_date: currentFollowUpDate(),
         follow_up_reason: consultationForm.follow_up_reason.trim() || undefined,
+        disposition: consultationForm.disposition || undefined,
+        disposition_notes: consultationForm.disposition_notes.trim() || undefined,
       })
       setConsultation(saved)
       setAmending(false)
@@ -426,6 +440,8 @@ export default function ConsultationWorkspace({
         clinical_notes: consultationForm.clinical_notes.trim() || undefined,
         follow_up_date: currentFollowUpDate(),
         follow_up_reason: consultationForm.follow_up_reason.trim() || undefined,
+        disposition: consultationForm.disposition || undefined,
+        disposition_notes: consultationForm.disposition_notes.trim() || undefined,
       })
       setConsultation(saved)
       setConsultationSavedAt(Date.now())
@@ -451,6 +467,8 @@ export default function ConsultationWorkspace({
         clinical_notes: consultationForm.clinical_notes.trim() || undefined,
         follow_up_date: currentFollowUpDate(),
         follow_up_reason: consultationForm.follow_up_reason.trim() || undefined,
+        disposition: consultationForm.disposition || undefined,
+        disposition_notes: consultationForm.disposition_notes.trim() || undefined,
       })
       const completed = await completeConsultation(appointmentId)
       setConsultation(completed)
@@ -1024,6 +1042,49 @@ export default function ConsultationWorkspace({
                 </label>
               )}
 
+              <div className="doctor-form-grid">
+                <label className="inline-label">
+                  Disposition
+                  <select
+                    value={consultationForm.disposition}
+                    disabled={readOnly && !amending}
+                    onChange={(e) =>
+                      setConsultationForm({
+                        ...consultationForm,
+                        disposition: e.target.value as ConsultationDisposition | '',
+                      })
+                    }
+                  >
+                    <option value="">Not specified</option>
+                    {(Object.keys(DISPOSITION_LABELS) as ConsultationDisposition[]).map((d) => (
+                      <option key={d} value={d}>
+                        {DISPOSITION_LABELS[d]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {consultationForm.disposition && (
+                  <label className="inline-label">
+                    Disposition notes
+                    <input
+                      type="text"
+                      placeholder={
+                        consultationForm.disposition === 'REFER'
+                          ? 'e.g. Refer to cardiology'
+                          : consultationForm.disposition === 'ADMIT_TO_IPD'
+                            ? 'e.g. Reason for admission'
+                            : undefined
+                      }
+                      value={consultationForm.disposition_notes}
+                      disabled={readOnly && !amending}
+                      onChange={(e) =>
+                        setConsultationForm({ ...consultationForm, disposition_notes: e.target.value })
+                      }
+                    />
+                  </label>
+                )}
+              </div>
+
               {amending && (
                 <>
                   <label className="inline-label">
@@ -1092,6 +1153,11 @@ export default function ConsultationWorkspace({
                           <p>{a.reason}</p>
                           {a.previous_diagnosis && (
                             <p className="muted">Previous diagnosis: {a.previous_diagnosis}</p>
+                          )}
+                          {a.previous_disposition && (
+                            <p className="muted">
+                              Previous disposition: {DISPOSITION_LABELS[a.previous_disposition]}
+                            </p>
                           )}
                         </li>
                       ))}

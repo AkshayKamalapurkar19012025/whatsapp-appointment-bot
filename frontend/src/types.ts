@@ -706,6 +706,8 @@ export type VitalsInput = Partial<
 
 export type ConsultationStatus = 'DRAFT' | 'COMPLETED'
 
+export type ConsultationDisposition = 'FOLLOW_UP' | 'REFER' | 'ADMIT_TO_IPD' | 'EMERGENCY'
+
 export interface Consultation {
   id: number
   encounter_id: number
@@ -718,6 +720,11 @@ export interface Consultation {
   clinical_notes: string | null
   follow_up_date: string | null
   follow_up_reason: string | null
+  // migrations/0047_consultation_disposition.sql -- master spec
+  // section 44-47's "Admit to IPD" disposition scaffold, a stub
+  // (captures the choice, no IPD/referral workflow behind it yet).
+  disposition: ConsultationDisposition | null
+  disposition_notes: string | null
   started_at: string
   completed_at: string | null
 }
@@ -743,6 +750,8 @@ export interface ConsultationAmendment {
   previous_clinical_notes: string | null
   previous_follow_up_date: string | null
   previous_follow_up_reason: string | null
+  previous_disposition: ConsultationDisposition | null
+  previous_disposition_notes: string | null
   reason: string
   amended_by: number
   amended_by_username: string

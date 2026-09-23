@@ -65,6 +65,12 @@ class ConsultationSave(BaseModel):
     clinical_notes: str | None = None
     follow_up_date: date | None = None
     follow_up_reason: str | None = None
+    # master spec section 44-47's "Admit to IPD" disposition scaffold
+    # (docs/OPD_HIMS_MASTER_SPEC_AUDIT.md gap) -- a stub, same category
+    # as orders.order_type = EXTERNAL_REFERRAL: captures the choice,
+    # doesn't itself trigger any IPD/referral workflow.
+    disposition: Literal["FOLLOW_UP", "REFER", "ADMIT_TO_IPD", "EMERGENCY"] | None = None
+    disposition_notes: str | None = None
 
 
 class ConsultationAmend(ConsultationSave):

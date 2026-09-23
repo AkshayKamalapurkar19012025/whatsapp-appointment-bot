@@ -222,6 +222,39 @@ def test_save_consultation_draft_updates_fields(client, db_connection):
     assert body["chief_complaint"] == "Sore throat, worsening"
 
 
+def test_save_consultation_records_disposition(client, db_connection):
+    """migrations/0047_consultation_disposition.sql -- master spec
+    audit gap: "Admit to IPD" disposition scaffold ... a stub, same
+    category as orders.order_type = EXTERNAL_REFERRAL."""
+    ctx = _checked_in_context(client, db_connection, "Dr. Disposition Save")
+    appointment_id = ctx["appointment"]["id"]
+
+    response = client.put(
+        f"/api/appointments/{appointment_id}/consultation",
+        json={
+            "chief_complaint": "Chest pain",
+            "diagnosis": "Suspected ACS",
+            "disposition": "ADMIT_TO_IPD",
+            "disposition_notes": "Bed requested in cardiology ward",
+        },
+        headers=ctx["admin_headers"],
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["disposition"] == "ADMIT_TO_IPD"
+    assert body["disposition_notes"] == "Bed requested in cardiology ward"
+
+
+def test_save_consultation_rejects_invalid_disposition(client, db_connection):
+    ctx = _checked_in_context(client, db_connection, "Dr. Disposition Invalid")
+    response = client.put(
+        f"/api/appointments/{ctx['appointment']['id']}/consultation",
+        json={"disposition": "SEND_HOME"},
+        headers=ctx["admin_headers"],
+    )
+    assert response.status_code == 422
+
+
 def test_complete_consultation_requires_chief_complaint_and_diagnosis(client, db_connection):
     ctx = _checked_in_context(client, db_connection, "Dr. Consult Incomplete")
     appointment_id = ctx["appointment"]["id"]

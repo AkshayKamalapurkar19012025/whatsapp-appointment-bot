@@ -202,7 +202,8 @@ def get_latest_vitals_service(cur, appointment_id: int):
 _CONSULTATION_COLUMNS = (
     "id", "encounter_id", "doctor_id", "status", "chief_complaint",
     "history_notes", "examination_notes", "diagnosis", "clinical_notes",
-    "follow_up_date", "follow_up_reason", "started_at", "completed_at",
+    "follow_up_date", "follow_up_reason", "disposition", "disposition_notes",
+    "started_at", "completed_at",
 )
 
 
@@ -270,6 +271,8 @@ def save_consultation_draft_service(
     clinical_notes=None,
     follow_up_date=None,
     follow_up_reason=None,
+    disposition=None,
+    disposition_notes=None,
 ):
     """Full-form save (every field is set to exactly what's passed, not
     merged field-by-field) -- the consultation workspace always submits
@@ -296,15 +299,15 @@ def save_consultation_draft_service(
             INSERT INTO consultations (
                 encounter_id, doctor_id, chief_complaint, history_notes,
                 examination_notes, diagnosis, clinical_notes,
-                follow_up_date, follow_up_reason, created_by
+                follow_up_date, follow_up_reason, disposition, disposition_notes, created_by
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING {", ".join(_CONSULTATION_COLUMNS)}
             """,
             (
                 encounter_id, appointment["doctor_id"], chief_complaint,
                 history_notes, examination_notes, diagnosis, clinical_notes,
-                follow_up_date, follow_up_reason, staff_id,
+                follow_up_date, follow_up_reason, disposition, disposition_notes, staff_id,
             ),
         )
     else:
@@ -318,6 +321,8 @@ def save_consultation_draft_service(
                 clinical_notes = %s,
                 follow_up_date = %s,
                 follow_up_reason = %s,
+                disposition = %s,
+                disposition_notes = %s,
                 updated_by = %s,
                 updated_at = NOW()
             WHERE id = %s
@@ -325,7 +330,8 @@ def save_consultation_draft_service(
             """,
             (
                 chief_complaint, history_notes, examination_notes, diagnosis,
-                clinical_notes, follow_up_date, follow_up_reason, staff_id,
+                clinical_notes, follow_up_date, follow_up_reason,
+                disposition, disposition_notes, staff_id,
                 existing[0],
             ),
         )
@@ -394,7 +400,9 @@ def complete_consultation_service(cur, appointment_id: int, *, staff_id: int):
 _AMENDMENT_COLUMNS = (
     "id", "consultation_id", "previous_chief_complaint", "previous_history_notes",
     "previous_examination_notes", "previous_diagnosis", "previous_clinical_notes",
-    "previous_follow_up_date", "previous_follow_up_reason", "reason", "amended_by", "amended_at",
+    "previous_follow_up_date", "previous_follow_up_reason",
+    "previous_disposition", "previous_disposition_notes",
+    "reason", "amended_by", "amended_at",
 )
 
 
@@ -418,6 +426,8 @@ def amend_consultation_service(
     clinical_notes=None,
     follow_up_date=None,
     follow_up_reason=None,
+    disposition=None,
+    disposition_notes=None,
 ):
     """Same "full-form save" semantics as save_consultation_draft_service
     -- every field set to exactly what's passed -- but only for a
@@ -430,7 +440,8 @@ def amend_consultation_service(
     cur.execute(
         """
         SELECT id, status, chief_complaint, history_notes, examination_notes,
-               diagnosis, clinical_notes, follow_up_date, follow_up_reason
+               diagnosis, clinical_notes, follow_up_date, follow_up_reason,
+               disposition, disposition_notes
         FROM consultations WHERE encounter_id = %s FOR UPDATE
         """,
         (encounter_id,),
@@ -439,7 +450,8 @@ def amend_consultation_service(
     if row is None:
         raise EncounterNotFound()
 
-    (consultation_id, status, prev_cc, prev_hn, prev_en, prev_dx, prev_cn, prev_fd, prev_fr) = row
+    (consultation_id, status, prev_cc, prev_hn, prev_en, prev_dx, prev_cn, prev_fd, prev_fr,
+     prev_disp, prev_disp_notes) = row
 
     if status != "COMPLETED":
         raise ConsultationNotAmendable()
@@ -452,11 +464,15 @@ def amend_consultation_service(
         INSERT INTO consultation_amendments (
             consultation_id, previous_chief_complaint, previous_history_notes,
             previous_examination_notes, previous_diagnosis, previous_clinical_notes,
-            previous_follow_up_date, previous_follow_up_reason, reason, amended_by
+            previous_follow_up_date, previous_follow_up_reason,
+            previous_disposition, previous_disposition_notes, reason, amended_by
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
-        (consultation_id, prev_cc, prev_hn, prev_en, prev_dx, prev_cn, prev_fd, prev_fr, reason, staff_id),
+        (
+            consultation_id, prev_cc, prev_hn, prev_en, prev_dx, prev_cn, prev_fd, prev_fr,
+            prev_disp, prev_disp_notes, reason, staff_id,
+        ),
     )
 
     cur.execute(
@@ -469,6 +485,8 @@ def amend_consultation_service(
             clinical_notes = %s,
             follow_up_date = %s,
             follow_up_reason = %s,
+            disposition = %s,
+            disposition_notes = %s,
             updated_by = %s,
             updated_at = NOW()
         WHERE id = %s
@@ -476,7 +494,8 @@ def amend_consultation_service(
         """,
         (
             chief_complaint, history_notes, examination_notes, diagnosis,
-            clinical_notes, follow_up_date, follow_up_reason, staff_id, consultation_id,
+            clinical_notes, follow_up_date, follow_up_reason,
+            disposition, disposition_notes, staff_id, consultation_id,
         ),
     )
 
