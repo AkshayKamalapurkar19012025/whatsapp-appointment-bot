@@ -386,6 +386,15 @@ export interface AdminAppointment {
   invoice_number: string
 }
 
+// GET /appointments -- paginated (master spec audit gap #1), same
+// {items, total, limit, offset} shape as PaginatedPatients above.
+export interface PaginatedAppointments {
+  items: AdminAppointment[]
+  total: number
+  limit: number
+  offset: number
+}
+
 // GET /appointments/{id}/invoice -- consultation_fee plus any ad-hoc
 // invoice_line_items (migrations/0026), and the total record_payment_
 // service actually charges.

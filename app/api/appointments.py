@@ -25,7 +25,7 @@ import calendar as calendar_module
 from datetime import date, datetime, timedelta
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.staff_auth import get_current_staff, require_permission
@@ -166,15 +166,25 @@ def get_appointments(
     appointment_type_id: int | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    limit: int = Query(default=1000, ge=1, le=5000),
+    offset: int = Query(default=0, ge=0),
     staff: dict = Depends(get_current_staff),
 ):
     """
     The admin appointment dashboard's listing, per
     docs/WEB_EXPANSION_ARCHITECTURE.md section 4 ("existing
     appointments.py GET can likely be reused/extended with query
-    filters rather than duplicated") -- all filters optional, so the
-    unfiltered call still returns everything, matching this endpoint's
-    pre-P9 behavior exactly.
+    filters rather than duplicated") -- all filters optional.
+
+    Paginated (master spec audit gap #1, section 80: "avoid load entire
+    table"): every real caller (AppointmentsPanel, DoctorWorkspace,
+    schedule-conflict modals -- see frontend/src/api.ts's
+    listAdminAppointments) already bounds this by date and/or doctor_id,
+    so limit/offset default generously (1000/page) purely as a real,
+    enforced ceiling rather than something any current screen needs to
+    page through -- same shape as GET /patients/admin's total/limit/
+    offset. Returns {items, total, limit, offset}, not a bare array
+    (every caller was updated alongside this change).
 
     date_from/date_to filter on each row's own doctor-local calendar
     date -- the same ambiguity this docstring used to flag ("which
@@ -184,7 +194,16 @@ def get_appointments(
     notion of "date" at the SQL level. Applied in Python after that
     conversion, not as a WHERE clause, for exactly that reason: the SQL
     layer only knows start_at's UTC instant, not which doctor-local day
-    it falls on.
+    it falls on. limit/offset are applied in Python too, after that
+    same precise trim, for the same reason -- pushing them into the SQL
+    query would paginate the widened (imprecise) pre-filtered set, not
+    the actual doctor-local-day-correct one. The one exception is the
+    hardcoded LIMIT 5000 in the SQL query below: a fixed outer safety
+    net (not the caller-controlled `limit` above) so a truly unfiltered
+    call -- no date range, no doctor_id -- can never pull an unbounded
+    number of rows into app memory before the Python-side trim/page
+    runs, at the cost of a theoretical undercount in `total` only in
+    that same pathological, currently-nonexistent-in-practice case.
 
     start_at/end_at are now converted to each row's own doctor's local
     timezone before being returned -- a real, pre-existing display bug
@@ -273,6 +292,7 @@ def get_appointments(
                    AND dat.appointment_type_id = a.appointment_type_id
                 {where_sql}
                 ORDER BY a.start_at
+                LIMIT 5000
                 """,
                 params,
             )
@@ -333,7 +353,13 @@ def get_appointments(
             }
         )
 
-    return results
+    total = len(results)
+    return {
+        "items": results[offset : offset + limit],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.get("/calendar")

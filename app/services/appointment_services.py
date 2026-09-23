@@ -422,7 +422,8 @@ def create_appointment_service(
                 end_at,
                 status,
                 booking_source,
-                encounter_id
+                encounter_id,
+                hospital_id
             )
             VALUES (
                 %s,
@@ -431,6 +432,7 @@ def create_appointment_service(
                 %s,
                 %s,
                 'PENDING',
+                %s,
                 %s,
                 %s
             )
@@ -452,6 +454,7 @@ def create_appointment_service(
                 end_at,
                 booking_source,
                 encounter_id,
+                doctor_hospital_id,
             ),
         )
     except psycopg.errors.ExclusionViolation:
@@ -643,9 +646,10 @@ def reschedule_appointment_service(
     # fix pattern used throughout this project for this exact bug class
     # (e.g. list_patient_appointments_service just above).
     # ---------------------------------------------------------
-    cur.execute("SELECT timezone FROM doctors WHERE id = %s", (doctor_id,))
+    cur.execute("SELECT timezone, hospital_id FROM doctors WHERE id = %s", (doctor_id,))
     doctor_tz_row = cur.fetchone()
     doctor_tz = doctor_tz_row[0] if doctor_tz_row else None
+    doctor_hospital_id = doctor_tz_row[1] if doctor_tz_row else None
     if not doctor_tz or not validate_timezone(doctor_tz):
         doctor_tz = "Asia/Kolkata"
 
@@ -776,9 +780,10 @@ def reschedule_appointment_service(
                 start_at,
                 end_at,
                 status,
-                encounter_id
+                encounter_id,
+                hospital_id
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING
                 id,
                 doctor_id,
@@ -796,7 +801,7 @@ def reschedule_appointment_service(
             # same encounter carries forward onto the new row too (see
             # below) -- a reschedule is the same care episode moved in
             # time, not a new one.
-            (doctor_id, patient_id, appointment_type_id, new_start_at, new_end_at, status, old_encounter_id),
+            (doctor_id, patient_id, appointment_type_id, new_start_at, new_end_at, status, old_encounter_id, doctor_hospital_id),
         )
     except psycopg.errors.ExclusionViolation:
         # Unlike create_appointment_service's equivalent catch, this one

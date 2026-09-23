@@ -463,7 +463,7 @@ function TimeOffForm({
       return
     }
     listAdminAppointments({ doctor_id: doctorId, date_from: startDate, date_to: endDate })
-      .then((all) => {
+      .then(({ items: all }) => {
         const relevant = all.filter((a) => ['PENDING', 'CONFIRMED', 'CHECKED_IN'].includes(a.status))
         const inWindow = relevant.filter((a) => {
           const apptDate = instantToLocalDate(a.start_at)

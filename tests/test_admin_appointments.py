@@ -13,6 +13,7 @@ new reschedule endpoint's own wiring.
 """
 
 from datetime import date, timedelta
+import secrets
 
 from tests.helpers import create_admin_and_get_headers, create_staff_and_get_headers, seed_basic_doctor
 
@@ -89,7 +90,7 @@ def test_either_staff_role_can_list_create_cancel_and_reschedule(client, db_conn
 
     listed = client.get("/api/appointments", headers=staff_only_headers)
     assert listed.status_code == 200
-    assert any(a["id"] == created["id"] for a in listed.json())
+    assert any(a["id"] == created["id"] for a in listed.json()["items"])
 
     reschedule_date = _next_weekday(date.today() + timedelta(days=11))
     rescheduled = client.post(
@@ -128,24 +129,24 @@ def test_list_filters_by_doctor_patient_and_status(client, db_connection):
 
     by_doctor = client.get(
         "/api/appointments", params={"doctor_id": seeded_a["doctor_id"]}, headers=admin_headers
-    ).json()
+    ).json()["items"]
     assert {a["id"] for a in by_doctor} == {created_a["id"]}
 
     by_patient = client.get(
         "/api/appointments", params={"patient_id": patient_b["id"]}, headers=admin_headers
-    ).json()
+    ).json()["items"]
     assert {a["id"] for a in by_patient} == {created_b["id"]}
 
     client.delete(f"/api/appointments/{created_a['id']}", headers=admin_headers)
 
     by_status_cancelled = client.get(
         "/api/appointments", params={"status": "CANCELLED"}, headers=admin_headers
-    ).json()
+    ).json()["items"]
     assert {a["id"] for a in by_status_cancelled} == {created_a["id"]}
 
     by_status_pending = client.get(
         "/api/appointments", params={"status": "PENDING"}, headers=admin_headers
-    ).json()
+    ).json()["items"]
     assert created_a["id"] not in {a["id"] for a in by_status_pending}
     assert created_b["id"] in {a["id"] for a in by_status_pending}
 
@@ -191,7 +192,7 @@ def test_list_shows_doctor_local_time_not_utc(client, db_connection):
 
     listed = client.get(
         "/api/appointments", params={"patient_id": patient["id"]}, headers=admin_headers
-    ).json()
+    ).json()["items"]
     row = next(a for a in listed if a["id"] == created["id"])
     assert row["start_at"].startswith(f"{scheduling_date.isoformat()}T09:00:00")
 
@@ -232,7 +233,7 @@ def test_list_filters_by_appointment_type(client, db_connection):
         "/api/appointments",
         params={"appointment_type_id": seeded_a["appointment_type_id"]},
         headers=admin_headers,
-    ).json()
+    ).json()["items"]
     assert {a["id"] for a in by_type_a} == {created_a["id"]}
 
 
@@ -291,14 +292,14 @@ def test_list_filters_by_date_range_using_doctor_local_date_not_utc(client, db_c
         "/api/appointments",
         params={"date_from": scheduling_date.isoformat(), "date_to": scheduling_date.isoformat()},
         headers=admin_headers,
-    ).json()
+    ).json()["items"]
     assert created["id"] in {a["id"] for a in by_local_date}
 
     by_utc_date = client.get(
         "/api/appointments",
         params={"date_from": utc_date.isoformat(), "date_to": utc_date.isoformat()},
         headers=admin_headers,
-    ).json()
+    ).json()["items"]
     assert created["id"] not in {a["id"] for a in by_utc_date}
 
 
@@ -353,8 +354,117 @@ def test_list_date_filter_covers_extreme_utc_offset(client, db_connection):
         "/api/appointments",
         params={"date_from": scheduling_date.isoformat(), "date_to": scheduling_date.isoformat()},
         headers=admin_headers,
-    ).json()
+    ).json()["items"]
     assert created["id"] in {a["id"] for a in by_local_date}
+
+
+def test_list_paginates_with_limit_and_offset(client, db_connection):
+    """Master spec audit gap #1 (section 80: "avoid load entire
+    table"): GET /appointments now returns {items, total, limit,
+    offset} with real server-side LIMIT/OFFSET, same shape as
+    GET /patients/admin."""
+    admin_headers, seeded, patient, created_a = _seed_and_book(
+        client, db_connection, "Dr. P9 Pagination A"
+    )
+    _, _, _, created_b = _seed_and_book(client, db_connection, "Dr. P9 Pagination B")
+
+    page = client.get(
+        "/api/appointments", params={"limit": 1, "offset": 0}, headers=admin_headers
+    ).json()
+    assert page["limit"] == 1
+    assert page["offset"] == 0
+    assert len(page["items"]) == 1
+    assert page["total"] >= 2
+
+    all_ids = set()
+    offset = 0
+    while True:
+        one_page = client.get(
+            "/api/appointments", params={"limit": 1, "offset": offset}, headers=admin_headers
+        ).json()
+        if not one_page["items"]:
+            break
+        all_ids.update(a["id"] for a in one_page["items"])
+        offset += 1
+        if offset > one_page["total"]:
+            break
+    assert {created_a["id"], created_b["id"]} <= all_ids
+
+
+def test_appointment_and_reschedule_carry_the_booking_doctors_real_hospital_id(client, db_connection):
+    """Regression test for a real bug found during the master-spec-audit
+    verification pass: create_appointment_service's INSERT never listed
+    hospital_id, so every appointment silently got the column's
+    DEFAULT 1 (migrations/0027) regardless of which hospital its doctor
+    actually belongs to -- invisible in every other test because they
+    all run against the single seeded hospital (id=1), where the wrong
+    default happens to equal the right answer. This undermined
+    app/services/search_service.py's global-search appointment branch
+    (WHERE a.hospital_id = %s) for any hospital other than id=1. Fixed
+    by passing the doctor's real hospital_id (already looked up for the
+    encounter insert, and for reschedule's own timezone lookup) into
+    both INSERT INTO appointments statements.
+
+    Exercised directly against the DB rather than through a second
+    hospital's own staff/auth flow -- this app has no API to create a
+    second hospital or a staff account scoped to one yet (migrations/
+    0027's own comment: "this application is still single-tenant in
+    every behavior except the schema itself"), so a second hospital row
+    plus reassigning a doctor to it, done directly via db_connection, is
+    the minimum real setup that proves the fix without inventing
+    multi-tenant onboarding infrastructure nothing else in this app has
+    either."""
+    admin_headers, seeded, patient, _ = _seed_and_book(
+        client, db_connection, "Dr. P9 Hospital Id"
+    )
+
+    # hospitals is deliberately never truncated between tests (reference
+    # data, same category as roles/permissions -- see conftest.py's
+    # APP_TABLES), so a fixed code here would collide with a leftover
+    # row from a previous run of this same test against the persistent
+    # test database. Randomized per run, same reasoning
+    # tests/helpers.py's create_staff_and_get_headers already uses for
+    # usernames.
+    with db_connection.cursor() as cur:
+        cur.execute(
+            "INSERT INTO hospitals (code, name) VALUES (%s, %s) RETURNING id",
+            (f"TEST-{secrets.token_hex(4)}", "Second Hospital"),
+        )
+        (second_hospital_id,) = cur.fetchone()
+        cur.execute(
+            "UPDATE doctors SET hospital_id = %s WHERE id = %s",
+            (second_hospital_id, seeded["doctor_id"]),
+        )
+    db_connection.commit()
+
+    scheduling_date = _next_weekday(date.today() + timedelta(days=12))
+    rebooked = client.post(
+        "/api/appointments",
+        json={
+            "doctor_id": seeded["doctor_id"],
+            "patient_id": patient["id"],
+            "appointment_type_id": seeded["appointment_type_id"],
+            "start_at": f"{scheduling_date.isoformat()}T09:00:00+05:30",
+        },
+        headers=admin_headers,
+    ).json()
+
+    with db_connection.cursor() as cur:
+        cur.execute("SELECT hospital_id FROM appointments WHERE id = %s", (rebooked["id"],))
+        (booked_hospital_id,) = cur.fetchone()
+    assert booked_hospital_id == second_hospital_id
+
+    reschedule_date = _next_weekday(date.today() + timedelta(days=13))
+    rescheduled = client.post(
+        f"/api/appointments/{rebooked['id']}/reschedule",
+        json={"new_start_at": f"{reschedule_date.isoformat()}T09:00:00+05:30"},
+        headers=admin_headers,
+    ).json()
+
+    with db_connection.cursor() as cur:
+        cur.execute("SELECT hospital_id FROM appointments WHERE id = %s", (rescheduled["id"],))
+        (rescheduled_hospital_id,) = cur.fetchone()
+    assert rescheduled_hospital_id == second_hospital_id
 
 
 def test_calendar_requires_authentication(client, db_connection):

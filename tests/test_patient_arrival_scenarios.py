@@ -48,7 +48,7 @@ def _create_confirmed_started_appointment(client, db_connection, admin_headers, 
 
 
 def _get_listed(client, admin_headers, appointment_id):
-    listing = client.get("/api/appointments", headers=admin_headers).json()
+    listing = client.get("/api/appointments", headers=admin_headers).json()["items"]
     return next(a for a in listing if a["id"] == appointment_id)
 
 

@@ -1,5 +1,4 @@
 import type {
-  AdminAppointment,
   AdminAppointmentActionResult,
   ArrivalActionResult,
   MarkArrivedResult,
@@ -48,6 +47,7 @@ import type {
   Invoice,
   MyAppointmentsResponse,
   AllergyInput,
+  PaginatedAppointments,
   PaginatedPatients,
   Patient,
   PatientAllergy,
@@ -1106,6 +1106,12 @@ export function getPatientTimeline(patientId: number): Promise<PatientTimeline> 
 
 // -- WEB P11: admin appointment management (ADMIN or STAFF, WEB P9) --------
 
+// Paginated (master spec audit gap #1) -- {items, total, limit, offset},
+// not a bare array. limit/offset are optional: every current caller
+// leaves them unset and gets the generous 1000-row default page (see
+// app/api/appointments.py's own docstring for why that's a safe
+// default, not a silent truncation risk, for every one of today's
+// callers), and just reads .items same as before.
 export function listAdminAppointments(filters: {
   doctor_id?: number
   patient_id?: number
@@ -1113,7 +1119,9 @@ export function listAdminAppointments(filters: {
   appointment_type_id?: number
   date_from?: string
   date_to?: string
-}): Promise<AdminAppointment[]> {
+  limit?: number
+  offset?: number
+}): Promise<PaginatedAppointments> {
   const params = new URLSearchParams()
   if (filters.doctor_id !== undefined) params.set('doctor_id', String(filters.doctor_id))
   if (filters.patient_id !== undefined) params.set('patient_id', String(filters.patient_id))
@@ -1123,6 +1131,8 @@ export function listAdminAppointments(filters: {
   }
   if (filters.date_from) params.set('date_from', filters.date_from)
   if (filters.date_to) params.set('date_to', filters.date_to)
+  if (filters.limit !== undefined) params.set('limit', String(filters.limit))
+  if (filters.offset !== undefined) params.set('offset', String(filters.offset))
   const query = params.toString()
   return request(`/appointments${query ? `?${query}` : ''}`, { auth: 'staff' })
 }

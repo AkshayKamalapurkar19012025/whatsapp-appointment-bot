@@ -292,7 +292,7 @@ export default function ConfigureScheduleModal({
         ? initialDate
         : (resolvedEditScope === 'entire' ? groupEnd : groupEnd) ?? shiftDateStr(initialDate, 90)
     listAdminAppointments({ doctor_id: doctorId, date_from: from, date_to: to })
-      .then((all) => setAffectedAppointments(all.filter((a) => ['PENDING', 'CONFIRMED', 'CHECKED_IN'].includes(a.status))))
+      .then(({ items: all }) => setAffectedAppointments(all.filter((a) => ['PENDING', 'CONFIRMED', 'CHECKED_IN'].includes(a.status))))
       .catch(() => setAffectedAppointments([]))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, resolvedEditScope, doctorId, initialDate, groupStart, groupEnd])

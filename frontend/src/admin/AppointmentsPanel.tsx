@@ -433,7 +433,7 @@ export default function AppointmentsPanel({
     setLoading(true)
     setError(null)
     listAdminAppointments({ date_from: range.from, date_to: range.to })
-      .then((list) => {
+      .then(({ items: list }) => {
         const sorted = [...list].sort((a, b) => a.start_at.localeCompare(b.start_at))
         setDateScopedAppointments(sorted)
         return fetchQueues(sorted)

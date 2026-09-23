@@ -1038,7 +1038,7 @@ def test_admin_listing_includes_invoice_number_and_refund_fields(client, db_conn
     _check_in(client, admin_headers, appointment_id)
     _pay(client, admin_headers, appointment_id)
 
-    before = client.get("/api/appointments", headers=admin_headers).json()
+    before = client.get("/api/appointments", headers=admin_headers).json()["items"]
     row_before = next(a for a in before if a["id"] == appointment_id)
     assert row_before["invoice_number"].startswith("INV-")
     assert row_before["refund_amount"] is None
@@ -1051,7 +1051,7 @@ def test_admin_listing_includes_invoice_number_and_refund_fields(client, db_conn
         headers=admin_headers,
     )
 
-    after = client.get("/api/appointments", headers=admin_headers).json()
+    after = client.get("/api/appointments", headers=admin_headers).json()["items"]
     row_after = next(a for a in after if a["id"] == appointment_id)
     assert row_after["payment_status"] == "REFUNDED"
     assert float(row_after["refund_amount"]) == 500.0
