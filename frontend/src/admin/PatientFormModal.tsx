@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { CaretDown, CaretRight, X } from '@phosphor-icons/react'
 import { ApiError, createPatientAdmin, updatePatientAdmin } from '../api'
-import type { Patient, PatientGender } from '../types'
+import type { BloodGroup, Patient, PatientGender } from '../types'
 import PhoneInput from '../PhoneInput'
 import DobPicker from './DobPicker'
 
@@ -11,6 +11,8 @@ const GENDER_OPTIONS: { value: PatientGender; label: string }[] = [
   { value: 'FEMALE', label: 'Female' },
   { value: 'OTHER', label: 'Other' },
 ]
+
+const BLOOD_GROUP_OPTIONS: BloodGroup[] = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']
 
 // The ONE patient registration/edit implementation in the app -- same
 // createPortal + modal-overlay/modal-panel shape as AddDepartmentModal.tsx/
@@ -40,10 +42,33 @@ export default function PatientFormModal({
   const [phone, setPhone] = useState(patient?.whatsapp_number ?? '')
   const [dateOfBirth, setDateOfBirth] = useState(patient?.date_of_birth ?? '')
   const [gender, setGender] = useState<PatientGender | ''>(patient?.gender ?? '')
+  const [email, setEmail] = useState(patient?.email ?? '')
+  const [alternatePhone, setAlternatePhone] = useState(patient?.alternate_whatsapp_number ?? '')
+  const [addressLine, setAddressLine] = useState(patient?.address_line ?? '')
+  const [city, setCity] = useState(patient?.city ?? '')
+  const [state, setState] = useState(patient?.state ?? '')
+  const [pincode, setPincode] = useState(patient?.pincode ?? '')
+  const [emergencyContactName, setEmergencyContactName] = useState(patient?.emergency_contact_name ?? '')
+  const [emergencyContactPhone, setEmergencyContactPhone] = useState(patient?.emergency_contact_phone ?? '')
+  const [bloodGroup, setBloodGroup] = useState<BloodGroup | ''>(patient?.blood_group ?? '')
   // Open by default only when editing a patient who already has one of
   // these set -- otherwise stays collapsed so a brand-new registration
   // (the common walk-in case) starts on the fast, two-field path.
-  const [showMore, setShowMore] = useState(Boolean(patient?.date_of_birth || patient?.gender))
+  const [showMore, setShowMore] = useState(
+    Boolean(
+      patient?.date_of_birth ||
+        patient?.gender ||
+        patient?.email ||
+        patient?.alternate_whatsapp_number ||
+        patient?.address_line ||
+        patient?.city ||
+        patient?.state ||
+        patient?.pincode ||
+        patient?.emergency_contact_name ||
+        patient?.emergency_contact_phone ||
+        patient?.blood_group,
+    ),
+  )
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -52,10 +77,21 @@ export default function PatientFormModal({
     setError(null)
     setBusy(true)
     try {
+      const details = {
+        email: email.trim() || null,
+        alternate_whatsapp_number: alternatePhone.trim() || null,
+        address_line: addressLine.trim() || null,
+        city: city.trim() || null,
+        state: state.trim() || null,
+        pincode: pincode.trim() || null,
+        emergency_contact_name: emergencyContactName.trim() || null,
+        emergency_contact_phone: emergencyContactPhone.trim() || null,
+        blood_group: bloodGroup || null,
+      }
       const saved =
         mode === 'edit' && patient
-          ? await updatePatientAdmin(patient.id, name.trim(), phone, dateOfBirth || null, gender || null)
-          : await createPatientAdmin(name.trim(), phone, dateOfBirth || null, gender || null)
+          ? await updatePatientAdmin(patient.id, name.trim(), phone, dateOfBirth || null, gender || null, details)
+          : await createPatientAdmin(name.trim(), phone, dateOfBirth || null, gender || null, details)
       onSaved(saved)
       onClose()
     } catch (err) {
@@ -97,7 +133,7 @@ export default function PatientFormModal({
           </button>
 
           {showMore && (
-            <div className="inline-form wrap" style={{ marginTop: 0 }}>
+            <div className="doctor-form-grid" style={{ marginTop: 0 }}>
               <label className="inline-label">
                 Date of birth
                 <DobPicker value={dateOfBirth} onChange={setDateOfBirth} />
@@ -112,6 +148,53 @@ export default function PatientFormModal({
                     </option>
                   ))}
                 </select>
+              </label>
+              <label className="inline-label">
+                Blood group
+                <select value={bloodGroup} onChange={(e) => setBloodGroup(e.target.value as BloodGroup | '')}>
+                  <option value="">Not specified</option>
+                  {BLOOD_GROUP_OPTIONS.map((bg) => (
+                    <option key={bg} value={bg}>
+                      {bg}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="inline-label">
+                Email
+                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+              </label>
+              <label className="inline-label">
+                Alternate mobile
+                <input type="tel" value={alternatePhone} onChange={(e) => setAlternatePhone(e.target.value)} />
+              </label>
+              <label className="inline-label doctor-form-full">
+                Address
+                <input value={addressLine} onChange={(e) => setAddressLine(e.target.value)} placeholder="Street address" />
+              </label>
+              <label className="inline-label">
+                City
+                <input value={city} onChange={(e) => setCity(e.target.value)} />
+              </label>
+              <label className="inline-label">
+                State
+                <input value={state} onChange={(e) => setState(e.target.value)} />
+              </label>
+              <label className="inline-label">
+                PIN code
+                <input value={pincode} onChange={(e) => setPincode(e.target.value)} />
+              </label>
+              <label className="inline-label">
+                Emergency contact name
+                <input value={emergencyContactName} onChange={(e) => setEmergencyContactName(e.target.value)} />
+              </label>
+              <label className="inline-label">
+                Emergency contact phone
+                <input
+                  type="tel"
+                  value={emergencyContactPhone}
+                  onChange={(e) => setEmergencyContactPhone(e.target.value)}
+                />
               </label>
             </div>
           )}

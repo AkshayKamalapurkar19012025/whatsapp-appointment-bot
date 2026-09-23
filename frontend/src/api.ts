@@ -61,6 +61,7 @@ import type {
   Vitals,
   VisitCompletionChecklist,
   AuditLogEntry,
+  BloodGroup,
   SearchResults,
   NotificationCenter,
   StaffNotification,
@@ -990,11 +991,30 @@ export function searchPatientsAdmin(query: string, dob?: string | null): Promise
   return request(`/patients/search?${params.toString()}`, { auth: 'staff' })
 }
 
+// migrations/0045_patient_registration_fields.sql -- the spec's mock
+// registration layout beyond name/mobile/DOB/gender, every one of
+// these optional (never blocking fast walk-in registration). Grouped
+// into its own object rather than more positional params: createPatientAdmin/
+// updatePatientAdmin already had 4, a 5th-13th positional param apiece
+// would be unreadable at the call site.
+export interface PatientOptionalDetails {
+  email?: string | null
+  alternate_whatsapp_number?: string | null
+  address_line?: string | null
+  city?: string | null
+  state?: string | null
+  pincode?: string | null
+  emergency_contact_name?: string | null
+  emergency_contact_phone?: string | null
+  blood_group?: BloodGroup | null
+}
+
 export function createPatientAdmin(
   name: string,
   whatsappNumber: string,
   dateOfBirth?: string | null,
   gender?: PatientGender | null,
+  details?: PatientOptionalDetails,
 ): Promise<Patient> {
   return request('/patients', {
     method: 'POST',
@@ -1004,6 +1024,7 @@ export function createPatientAdmin(
       whatsapp_number: whatsappNumber,
       date_of_birth: dateOfBirth || null,
       gender: gender || null,
+      ...details,
     },
   })
 }
@@ -1017,6 +1038,7 @@ export function updatePatientAdmin(
   whatsappNumber: string,
   dateOfBirth?: string | null,
   gender?: PatientGender | null,
+  details?: PatientOptionalDetails,
 ): Promise<Patient> {
   return request(`/patients/${patientId}`, {
     method: 'PATCH',
@@ -1026,6 +1048,7 @@ export function updatePatientAdmin(
       whatsapp_number: whatsappNumber,
       date_of_birth: dateOfBirth || null,
       gender: gender || null,
+      ...details,
     },
   })
 }

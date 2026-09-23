@@ -1,5 +1,7 @@
 export type PatientGender = 'MALE' | 'FEMALE' | 'OTHER'
 
+export type BloodGroup = 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-' | 'O+' | 'O-'
+
 export interface Patient {
   id: number
   name: string
@@ -28,6 +30,18 @@ export interface Patient {
   // search/contact attribute. Always present (a stored generated
   // column), unlike the appointment_count/last_visit_at fields above.
   uhid: string
+  // migrations/0045_patient_registration_fields.sql -- all optional,
+  // present only on the create/update response (like date_of_birth/
+  // gender above, absent on the plain list endpoint's rows).
+  email?: string | null
+  alternate_whatsapp_number?: string | null
+  address_line?: string | null
+  city?: string | null
+  state?: string | null
+  pincode?: string | null
+  emergency_contact_name?: string | null
+  emergency_contact_phone?: string | null
+  blood_group?: BloodGroup | null
 }
 
 // GET /patients/admin's response shape (search + pagination, master

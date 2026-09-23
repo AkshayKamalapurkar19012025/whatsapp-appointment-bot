@@ -25,6 +25,13 @@ router = APIRouter(
 )
 
 
+_PATIENT_OPTIONAL_DETAIL_COLUMNS = (
+    "email", "alternate_whatsapp_number", "address_line", "city",
+    "state", "pincode", "emergency_contact_name", "emergency_contact_phone",
+    "blood_group",
+)
+
+
 def insert_patient(
     cur,
     name: str,
@@ -32,6 +39,15 @@ def insert_patient(
     date_of_birth: date | None = None,
     gender: str | None = None,
     government_id: str | None = None,
+    email: str | None = None,
+    alternate_whatsapp_number: str | None = None,
+    address_line: str | None = None,
+    city: str | None = None,
+    state: str | None = None,
+    pincode: str | None = None,
+    emergency_contact_name: str | None = None,
+    emergency_contact_phone: str | None = None,
+    blood_group: str | None = None,
 ):
     """date_of_birth/gender are optional everywhere this is called from
     (admin create_patient below, and app/api/scheduling.py's WhatsApp
@@ -58,16 +74,18 @@ def insert_patient(
     """
     try:
         cur.execute(
-            """
+            f"""
             INSERT INTO patients (
                 name,
                 whatsapp_number,
                 date_of_birth,
                 gender,
-                government_id
+                government_id,
+                {', '.join(_PATIENT_OPTIONAL_DETAIL_COLUMNS)}
             )
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id, government_id, uhid
+            VALUES (%s, %s, %s, %s, %s, {', '.join(['%s'] * len(_PATIENT_OPTIONAL_DETAIL_COLUMNS))})
+            RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id, government_id, uhid,
+                      {', '.join(_PATIENT_OPTIONAL_DETAIL_COLUMNS)}
             """,
             (
                 name,
@@ -75,6 +93,15 @@ def insert_patient(
                 date_of_birth,
                 gender,
                 government_id,
+                email,
+                alternate_whatsapp_number,
+                address_line,
+                city,
+                state,
+                pincode,
+                emergency_contact_name,
+                emergency_contact_phone,
+                blood_group,
             ),
         )
     except psycopg.errors.UniqueViolation:
@@ -96,6 +123,7 @@ def insert_patient(
         "gender": row[4],
         "government_id": row[6],
         "uhid": row[7],
+        **dict(zip(_PATIENT_OPTIONAL_DETAIL_COLUMNS, row[8:])),
     }
 
 
@@ -137,8 +165,33 @@ class _PatientFieldValidators:
             raise ValueError("gender must be one of MALE, FEMALE, OTHER")
         return value
 
+    @field_validator("blood_group")
+    @classmethod
+    def validate_blood_group(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value not in ("A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"):
+            raise ValueError("blood_group must be one of A+, A-, B+, B-, AB+, AB-, O+, O-")
+        return value
 
-class PatientCreate(_PatientFieldValidators, BaseModel):
+
+# migrations/0045_patient_registration_fields.sql: the spec's mock
+# registration layout (section 17) beyond name/mobile/DOB/gender --
+# every one of these is optional everywhere, same as date_of_birth/
+# gender already were, never blocking fast walk-in registration.
+class _PatientOptionalDetails(BaseModel):
+    email: str | None = None
+    alternate_whatsapp_number: str | None = None
+    address_line: str | None = None
+    city: str | None = None
+    state: str | None = None
+    pincode: str | None = None
+    emergency_contact_name: str | None = None
+    emergency_contact_phone: str | None = None
+    blood_group: str | None = None
+
+
+class PatientCreate(_PatientFieldValidators, _PatientOptionalDetails, BaseModel):
     name: str = Field(min_length=1, max_length=150)
     whatsapp_number: str = Field(min_length=1, max_length=30)
     # Optional -- fast registration (especially for a walk-in) must
@@ -152,7 +205,7 @@ class PatientCreate(_PatientFieldValidators, BaseModel):
     government_id: str | None = None
 
 
-class PatientUpdate(_PatientFieldValidators, BaseModel):
+class PatientUpdate(_PatientFieldValidators, _PatientOptionalDetails, BaseModel):
     """For PATCH /patients/{id} -- staff correcting a patient's name or
     WhatsApp number discovered wrong during front-desk verification.
     Same two required fields, same validation as PatientCreate, plus
@@ -386,6 +439,7 @@ def create_patient(
                 patient.date_of_birth,
                 patient.gender,
                 patient.government_id,
+                **patient.model_dump(include=set(_PATIENT_OPTIONAL_DETAIL_COLUMNS)),
             )
 
             if created_patient is None:
@@ -443,16 +497,18 @@ def update_patient(
                 )
 
             cur.execute(
-                """
+                f"""
                 UPDATE patients
                 SET name = %s,
                     whatsapp_number = %s,
                     date_of_birth = %s,
                     gender = %s,
                     government_id = %s,
+                    {', '.join(f'{col} = %s' for col in _PATIENT_OPTIONAL_DETAIL_COLUMNS)},
                     updated_at = NOW()
                 WHERE id = %s
-                RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id, government_id, uhid
+                RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id, government_id, uhid,
+                          {', '.join(_PATIENT_OPTIONAL_DETAIL_COLUMNS)}
                 """,
                 (
                     patient.name,
@@ -460,6 +516,7 @@ def update_patient(
                     patient.date_of_birth,
                     patient.gender,
                     patient.government_id,
+                    *(getattr(patient, col) for col in _PATIENT_OPTIONAL_DETAIL_COLUMNS),
                     patient_id,
                 ),
             )
@@ -479,6 +536,7 @@ def update_patient(
         "gender": row[4],
         "government_id": row[6],
         "uhid": row[7],
+        **dict(zip(_PATIENT_OPTIONAL_DETAIL_COLUMNS, row[8:])),
     }
 
 
