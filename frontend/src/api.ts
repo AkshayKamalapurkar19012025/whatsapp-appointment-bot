@@ -61,7 +61,10 @@ import type {
   Vitals,
   VisitCompletionChecklist,
   AuditLogEntry,
+  BillPaymentMethod,
   BloodGroup,
+  PaginatedInvoices,
+  PaginatedPayments,
   SearchResults,
   NotificationCenter,
   StaffNotification,
@@ -437,6 +440,40 @@ export function setStaffAccountActive(
     auth: 'staff',
     body: { active },
   })
+}
+
+// GET /billing/invoices, /billing/payments (master spec audit
+// "subsequent gaps" list, screens 29-30) -- cross-visit billing/
+// payment history, paginated.
+export function getInvoiceHistory(filters: {
+  patient_name?: string
+  date_from?: string
+  date_to?: string
+  limit?: number
+  offset?: number
+}): Promise<PaginatedInvoices> {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') query.set(key, String(value))
+  }
+  const qs = query.toString()
+  return request(`/billing/invoices${qs ? `?${qs}` : ''}`, { auth: 'staff' })
+}
+
+export function getPaymentHistory(filters: {
+  patient_name?: string
+  date_from?: string
+  date_to?: string
+  method?: BillPaymentMethod
+  limit?: number
+  offset?: number
+}): Promise<PaginatedPayments> {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') query.set(key, String(value))
+  }
+  const qs = query.toString()
+  return request(`/billing/payments${qs ? `?${qs}` : ''}`, { auth: 'staff' })
 }
 
 // GET /audit-log (staff.manage-gated, same tier as Staff Accounts).

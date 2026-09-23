@@ -4,11 +4,13 @@ import {
   CalendarCheck,
   ChartLineUp,
   ClockCounterClockwise,
+  CreditCard,
   CurrencyInr,
   Gauge,
   GearSix,
   Gift,
   Pill,
+  Receipt,
   ShieldCheck,
   Stethoscope,
   Tag,
@@ -33,6 +35,8 @@ import PharmacyPanel from './PharmacyPanel'
 import PackagesPanel from './PackagesPanel'
 import AuditLogPanel from './AuditLogPanel'
 import DepartmentQueuePanel from './DepartmentQueuePanel'
+import BillingHistoryPanel from './BillingHistoryPanel'
+import PaymentHistoryPanel from './PaymentHistoryPanel'
 import AdminSidebar, { type AdminSidebarItem } from './AdminSidebar'
 import AdminTopBar from './AdminTopBar'
 
@@ -50,6 +54,8 @@ type Section =
   | 'staff-accounts'
   | 'audit-log'
   | 'billing'
+  | 'billing-history'
+  | 'payment-history'
   | 'pharmacy'
   | 'packages'
 
@@ -315,6 +321,22 @@ export default function AdminApp() {
       group: 'Reports',
     },
     {
+      key: 'billing-history',
+      label: 'Billing History',
+      icon: <Receipt size={20} weight="regular" />,
+      active: section === 'billing-history',
+      onSelect: () => goTo('billing-history'),
+      group: 'Reports',
+    },
+    {
+      key: 'payment-history',
+      label: 'Payment History',
+      icon: <CreditCard size={20} weight="regular" />,
+      active: section === 'payment-history',
+      onSelect: () => goTo('payment-history'),
+      group: 'Reports',
+    },
+    {
       key: 'analytics',
       label: 'Analytics',
       icon: <ChartLineUp size={20} weight="regular" />,
@@ -392,6 +414,8 @@ export default function AdminApp() {
           {section === 'staff-accounts' && isAdmin && <StaffAccountsPanel key={navResetKey} />}
           {section === 'audit-log' && isAdmin && <AuditLogPanel key={navResetKey} />}
           {section === 'billing' && <BillingPanel key={navResetKey} />}
+          {section === 'billing-history' && <BillingHistoryPanel key={navResetKey} />}
+          {section === 'payment-history' && <PaymentHistoryPanel key={navResetKey} />}
           {section === 'pharmacy' && <PharmacyPanel key={navResetKey} isAdmin={isAdmin} />}
           {section === 'packages' && <PackagesPanel key={navResetKey} isAdmin={isAdmin} />}
         </main>

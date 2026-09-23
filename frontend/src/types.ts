@@ -1062,6 +1062,60 @@ export interface PaymentReceipt {
   recorded_at: string
 }
 
+// GET /billing/invoices, /billing/payments (master spec audit
+// "subsequent gaps" list, screens 29-30) -- cross-visit billing/
+// payment history, paginated. InvoiceHistoryEntry's totals are the
+// same shape _compute_totals returns everywhere else (BillSummary
+// above included).
+export interface InvoiceHistoryEntry {
+  id: number
+  invoice_number: string
+  status: BillStatus
+  created_at: string
+  patient_id: number
+  patient_name: string
+  patient_uhid: string
+  doctor_name: string
+  appointment_id: number
+  gross_amount: number
+  discount_amount: number
+  taxable_amount: number
+  tax_amount: number
+  net_amount: number
+  paid_amount: number
+  balance: number
+  payment_status: BillPaymentStatus
+}
+
+export interface PaymentHistoryEntry {
+  id: number
+  receipt_number: string
+  amount: number
+  method: BillPaymentMethod
+  status: BillPaymentRecordStatus
+  refunded_amount: number
+  recorded_at: string
+  patient_id: number
+  patient_name: string
+  patient_uhid: string
+  invoice_number: string
+  appointment_id: number
+}
+
+export interface PaginatedInvoices {
+  items: InvoiceHistoryEntry[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface PaginatedPayments {
+  items: PaymentHistoryEntry[]
+  total: number
+  limit: number
+  offset: number
+}
+
 // GET/POST/PUT /api/packages (OPD/HIMS master spec Phase 12, section
 // 39) -- a hospital's own priced package catalog, billed as a single
 // charges.source_type = PACKAGE line item via BillChargeInput's
