@@ -72,13 +72,13 @@ const SOURCE_TYPE_OPTIONS: ChargeSourceType[] = [
 // notCheckedIn state is true.
 export default function AppointmentBillingPanel({
   appointmentId,
-  isAdmin,
+  canManageBilling,
   patientName,
   patientUhid,
   doctorName,
 }: {
   appointmentId: number
-  isAdmin: boolean
+  canManageBilling: boolean
   patientName: string
   patientUhid: string
   doctorName: string
@@ -414,7 +414,7 @@ export default function AppointmentBillingPanel({
         </div>
       )}
 
-      {isAdmin && !isVoid && (
+      {canManageBilling && !isVoid && (
         <div className="doctor-quick-actions">
           {showTermsForm ? (
             <div className="doctor-form-grid">
@@ -499,7 +499,7 @@ export default function AppointmentBillingPanel({
               <th>Description</th>
               <th>Type</th>
               <th>Amount</th>
-              {isAdmin && !isVoid && <th>Actions</th>}
+              {canManageBilling && !isVoid && <th>Actions</th>}
             </tr>
           </thead>
           <tbody>
@@ -508,7 +508,7 @@ export default function AppointmentBillingPanel({
                 <td>{c.description}</td>
                 <td>{c.source_type}</td>
                 <td>₹{c.amount.toFixed(2)}</td>
-                {isAdmin && !isVoid && (
+                {canManageBilling && !isVoid && (
                   <td>
                     <button
                       type="button"
@@ -531,7 +531,7 @@ export default function AppointmentBillingPanel({
         </p>
       )}
 
-      {isAdmin && !isVoid && (
+      {canManageBilling && !isVoid && (
         <div className="doctor-form-grid">
           <label className="inline-label doctor-form-full">
             Description *
@@ -578,7 +578,7 @@ export default function AppointmentBillingPanel({
         </div>
       )}
 
-      {isAdmin && !isVoid && packages.length > 0 && (
+      {canManageBilling && !isVoid && packages.length > 0 && (
         <div className="doctor-quick-actions">
           <label className="inline-label">
             Bill a package
@@ -615,7 +615,7 @@ export default function AppointmentBillingPanel({
         </div>
       )}
 
-      {isAdmin && !isVoid && hasUnbilled && (
+      {canManageBilling && !isVoid && hasUnbilled && (
         <>
           <h4>Unbilled from this visit</h4>
           {unbilled!.orders.map((o) => (
@@ -712,7 +712,7 @@ export default function AppointmentBillingPanel({
                     >
                       Receipt
                     </button>
-                    {isAdmin && p.status === 'COMPLETED' && (
+                    {canManageBilling && p.status === 'COMPLETED' && (
                       <button
                         type="button"
                         className="btn-danger btn btn-sm"

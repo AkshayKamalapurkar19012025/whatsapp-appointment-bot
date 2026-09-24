@@ -245,7 +245,13 @@ export interface MyAppointmentsResponse {
 export interface Staff {
   id: number
   username: string
-  role: 'ADMIN' | 'STAFF'
+  // Was 'ADMIN' | 'STAFF' only -- stale since migrations/0043_role_
+  // based_access.sql widened staff.role's own FK to every StaffRole
+  // below (GET /auth/staff/me has returned any of them ever since;
+  // this type just hadn't caught up, which meant AdminApp.tsx's own
+  // per-role sidebar/landing-screen logic couldn't compare staff.role
+  // against anything but ADMIN/STAFF without a type error).
+  role: StaffRole
 }
 
 // Every role migrations/0031_rbac_decomposition.sql seeded, now

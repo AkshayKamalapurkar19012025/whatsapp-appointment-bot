@@ -161,11 +161,21 @@ const DISPOSITION_LABELS: Record<ConsultationDisposition, string> = {
 // copy of it.
 export default function ConsultationWorkspace({
   appointmentId,
-  isAdmin,
+  canAmendConsultation,
+  canManageBilling,
   onBack,
 }: {
   appointmentId: number
-  isAdmin: boolean
+  // Two distinct capabilities, not one -- server-enforced by
+  // consultation.amend (DOCTOR + ADMIN) and the bill.*/appointment.
+  // *_payment set (BILLING + ADMIN) respectively (migrations/0043_
+  // role_based_access.sql). A DOCTOR who can amend their own
+  // consultation notes has no business voiding a charge, and a BILLING
+  // account managing this visit's bill has no business amending
+  // clinical notes -- collapsing these into one boolean would grant
+  // either role the other's capability by accident.
+  canAmendConsultation: boolean
+  canManageBilling: boolean
   onBack: () => void
 }) {
   const [tab, setTab] = useState<Tab>('triage')
@@ -626,7 +636,7 @@ export default function ConsultationWorkspace({
           <h4>Billing</h4>
           <AppointmentBillingPanel
             appointmentId={appointmentId}
-            isAdmin={isAdmin}
+            canManageBilling={canManageBilling}
             patientName={encounter?.patient_name ?? ''}
             patientUhid={encounter?.patient_uhid ?? ''}
             doctorName={encounter?.doctor_name ?? ''}
@@ -1126,7 +1136,7 @@ export default function ConsultationWorkspace({
                 </>
               )}
 
-              {!amending && consultation?.status === 'COMPLETED' && isAdmin && (
+              {!amending && consultation?.status === 'COMPLETED' && canAmendConsultation && (
                 <div className="doctor-quick-actions">
                   <button type="button" className="btn-secondary btn btn-sm" onClick={startAmend}>
                     Amend consultation
@@ -1542,7 +1552,7 @@ export default function ConsultationWorkspace({
           {tab === 'billing' && encounter && (
             <AppointmentBillingPanel
               appointmentId={appointmentId}
-              isAdmin={isAdmin}
+              canManageBilling={canManageBilling}
               patientName={encounter.patient_name}
               patientUhid={encounter.patient_uhid}
               doctorName={encounter.doctor_name}
