@@ -242,3 +242,43 @@ def test_update_patient_sets_optional_registration_fields(client, db_connection)
     body = response.json()
     assert body["email"] == "updated@example.com"
     assert body["blood_group"] == "AB-"
+
+
+def test_get_patient_returns_full_record(client, db_connection):
+    """GET /patients/{id} -- unlike listPatientsAdmin's rows, this
+    includes the optional detail columns (migrations/0045), for the
+    printable Patient Registration Summary (Printing phase section 1)."""
+    admin_headers = create_admin_and_get_headers(db_connection)
+    created = client.post(
+        "/api/patients",
+        json={
+            "name": "Full Record Patient",
+            "whatsapp_number": "+919700000020",
+            "address_line": "12 MG Road",
+            "emergency_contact_name": "Next of Kin",
+            "emergency_contact_phone": "+919700000021",
+        },
+        headers=admin_headers,
+    ).json()
+
+    response = client.get(f"/api/patients/{created['id']}", headers=admin_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == created["id"]
+    assert body["name"] == "Full Record Patient"
+    assert body["uhid"] == created["uhid"]
+    assert body["address_line"] == "12 MG Road"
+    assert body["emergency_contact_name"] == "Next of Kin"
+    assert body["emergency_contact_phone"] == "+919700000021"
+    assert body["registered_at"]
+
+
+def test_get_patient_404_for_nonexistent_patient(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    response = client.get("/api/patients/999999", headers=admin_headers)
+    assert response.status_code == 404
+
+
+def test_get_patient_requires_authentication(client):
+    response = client.get("/api/patients/1")
+    assert response.status_code == 401

@@ -49,6 +49,7 @@ from app.services.appointment_services import (
     settle_free_visit_service,
     record_refund_service,
     get_invoice_service,
+    get_appointment_slip_service,
     add_invoice_line_item_service,
     hold_queue_entry_service,
     recall_queue_entry_service,
@@ -827,6 +828,24 @@ def get_appointment_invoice(
                     status_code=409,
                     detail="This doctor/appointment-type combination no longer has a configured fee",
                 )
+
+    return result
+
+
+@router.get("/{appointment_id}/slip")
+def get_appointment_slip(
+    appointment_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    """The printable OPD Appointment Slip (Printing phase section 3) --
+    bare-staff readable, same tier as GET .../charge and .../invoice:
+    viewing it changes no state."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                result = get_appointment_slip_service(cur, appointment_id)
+            except svc_exc.AppointmentNotFound:
+                raise HTTPException(status_code=404, detail="Appointment not found")
 
     return result
 

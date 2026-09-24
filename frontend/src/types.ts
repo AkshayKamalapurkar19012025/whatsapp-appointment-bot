@@ -42,6 +42,31 @@ export interface Patient {
   emergency_contact_name?: string | null
   emergency_contact_phone?: string | null
   blood_group?: BloodGroup | null
+  // GET /patients/{id} only -- when this patient's record was created,
+  // for the printable Patient Registration Summary's "Registration
+  // date". Absent everywhere else (like the optional detail columns
+  // above), not because it's secret, just because no other caller has
+  // needed it yet.
+  registered_at?: string
+}
+
+// GET /appointments/{id}/slip -- the printable OPD Appointment Slip
+// (Printing phase section 3). department_name is the doctor's own
+// department and can be null (a doctor with no department assigned).
+export interface AppointmentSlip {
+  appointment_id: number
+  hospital_name: string
+  appointment_number: string
+  patient_name: string
+  patient_uhid: string
+  patient_contact: string
+  doctor_name: string
+  department_name: string | null
+  visit_type: string
+  start_at: string
+  end_at: string
+  status: string
+  booked_at: string
 }
 
 // GET /patients/admin's response shape (search + pagination, master

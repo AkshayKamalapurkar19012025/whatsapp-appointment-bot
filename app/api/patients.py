@@ -459,6 +459,49 @@ def create_patient(
     return created_patient
 
 
+@router.get("/{patient_id}")
+def get_patient(
+    patient_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    """A single patient's full record, including the optional detail
+    columns (migrations/0045: email/address/emergency contact/blood
+    group) the list/admin endpoints above deliberately leave out. Added
+    for the printable Patient Registration Summary (Printing phase
+    section 1), whose field list needs exactly what's here -- but this
+    is a plain single-record GET, not a document-specific endpoint, so
+    any future caller needing one patient's full details can reuse it
+    rather than growing a second near-identical query.
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT id, name, whatsapp_number, date_of_birth, gender, government_id, uhid, created_at,
+                       {', '.join(_PATIENT_OPTIONAL_DETAIL_COLUMNS)}
+                FROM patients
+                WHERE id = %s AND hospital_id = %s
+                """,
+                (patient_id, staff["hospital_id"]),
+            )
+            row = cur.fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    return {
+        "id": row[0],
+        "name": row[1],
+        "whatsapp_number": row[2],
+        "date_of_birth": row[3].isoformat() if row[3] else None,
+        "gender": row[4],
+        "government_id": row[5],
+        "uhid": row[6],
+        "registered_at": row[7].isoformat(),
+        **dict(zip(_PATIENT_OPTIONAL_DETAIL_COLUMNS, row[8:])),
+    }
+
+
 @router.patch("/{patient_id}")
 def update_patient(
     patient_id: int,

@@ -6,6 +6,7 @@ import { formatDateTime } from '../format'
 import { useStaggerReveal } from '../useStaggerReveal'
 import PatientFormModal from './PatientFormModal'
 import PatientTimelineModal from './PatientTimelineModal'
+import PatientRegistrationSummaryModal from './PatientRegistrationSummaryModal'
 
 const PAGE_SIZE = 50
 
@@ -36,6 +37,9 @@ export default function PatientsPanel() {
   // doctor, or what actually happened); this is the drill-in (OPD/HIMS
   // master spec Phase 10, section 44's Patient 360 view).
   const [historyTarget, setHistoryTarget] = useState<Patient | null>(null)
+  // Opens PatientRegistrationSummaryModal for the clicked row -- the
+  // printable Patient Registration Summary (Printing phase section 1).
+  const [printTarget, setPrintTarget] = useState<Patient | null>(null)
 
   const tbodyRef = useStaggerReveal<HTMLTableSectionElement>([patients])
 
@@ -168,9 +172,14 @@ export default function PatientsPanel() {
                       )}
                     </td>
                     <td>
-                      <button type="button" className="btn-secondary btn btn-sm" onClick={() => setFormTarget(p)}>
-                        View / Edit
-                      </button>
+                      <div className="doctor-quick-actions" style={{ marginBottom: 0 }}>
+                        <button type="button" className="btn-secondary btn btn-sm" onClick={() => setFormTarget(p)}>
+                          View / Edit
+                        </button>
+                        <button type="button" className="btn-secondary btn btn-sm" onClick={() => setPrintTarget(p)}>
+                          Print Summary
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 )
@@ -217,6 +226,10 @@ export default function PatientsPanel() {
       )}
 
       {historyTarget && <PatientTimelineModal patient={historyTarget} onClose={() => setHistoryTarget(null)} />}
+
+      {printTarget && (
+        <PatientRegistrationSummaryModal patientId={printTarget.id} onClose={() => setPrintTarget(null)} />
+      )}
     </section>
   )
 }
