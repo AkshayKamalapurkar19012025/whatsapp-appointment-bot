@@ -49,7 +49,7 @@ class ChargeCreate(BaseModel):
     description: str = Field(min_length=1)
     amount: float = Field(gt=0)
     source_type: Literal[
-        "CONSULTATION", "LAB", "RADIOLOGY", "PROCEDURE", "SERVICE", "PHARMACY", "PACKAGE", "OTHER"
+        "CONSULTATION", "LAB", "RADIOLOGY", "PROCEDURE", "SERVICE", "PHARMACY", "PACKAGE", "CONSUMABLES", "OTHER"
     ] = "OTHER"
     source_order_id: int | None = None
     source_dispense_id: int | None = None

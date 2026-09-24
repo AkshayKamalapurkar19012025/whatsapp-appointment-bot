@@ -54,6 +54,7 @@ import { isoDateToday } from './doctorSchedule'
 import AdminSlotPicker from './AdminSlotPicker'
 import AppointmentDetailsModal from './AppointmentDetailsModal'
 import { AppointmentActionButtons, buildAppointmentActions, type AppointmentActionHandlers, type QueuePosition } from './AppointmentActions'
+import VisitCompletionDialog from './VisitCompletionDialog'
 
 // Radix Select.Item disallows an empty-string value (reserved internally
 // for "no selection") -- the "All" filter option, which maps to '' for
@@ -390,6 +391,7 @@ export default function AppointmentsPanel({
   const [detailsTarget, setDetailsTarget] = useState<AdminAppointment | null>(null)
   const [cancelTarget, setCancelTarget] = useState<AdminAppointment | null>(null)
   const [lifecycleBusyId, setLifecycleBusyId] = useState<number | null>(null)
+  const [completionTarget, setCompletionTarget] = useState<AdminAppointment | null>(null)
 
   const range = dateRangeFor(dateScope, customFrom, customTo)
   const isTodayScope = dateScope === 'today'
@@ -431,7 +433,7 @@ export default function AppointmentsPanel({
     setLoading(true)
     setError(null)
     listAdminAppointments({ date_from: range.from, date_to: range.to })
-      .then((list) => {
+      .then(({ items: list }) => {
         const sorted = [...list].sort((a, b) => a.start_at.localeCompare(b.start_at))
         setDateScopedAppointments(sorted)
         return fetchQueues(sorted)
@@ -640,7 +642,7 @@ export default function AppointmentsPanel({
     onCheckIn: (a) => runLifecycleAction(a.id, visitAdminAppointment, 'Could not check in the appointment'),
     onMarkArrived: (a) => runLifecycleAction(a.id, markArrivedAdmin, 'Could not record the arrival'),
     onNoShow: (a) => runLifecycleAction(a.id, noShowAdminAppointment, 'Could not mark the appointment as a no-show'),
-    onComplete: (a) => runLifecycleAction(a.id, completeAdminAppointment, 'Could not mark the appointment completed'),
+    onComplete: (a) => setCompletionTarget(a),
     onReschedule: startReschedule,
     onCancel: (a) => {
       setDetailsTarget(null)
@@ -1157,6 +1159,20 @@ export default function AppointmentsPanel({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {completionTarget && (
+        <VisitCompletionDialog
+          appointmentId={completionTarget.id}
+          patientName={completionTarget.patient_name}
+          doctorName={completionTarget.doctor_name}
+          onClose={() => setCompletionTarget(null)}
+          onConfirm={() => {
+            const target = completionTarget
+            setCompletionTarget(null)
+            runLifecycleAction(target.id, completeAdminAppointment, 'Could not mark the appointment completed')
+          }}
+        />
+      )}
 
       {detailsTarget && (
         <AppointmentDetailsModal

@@ -33,9 +33,15 @@ const BLANK_ITEM: PrescriptionItemInput = {
 export default function PrescriptionPanel({
   appointmentId,
   appointmentCheckedIn,
+  patientName,
+  patientUhid,
+  doctorName,
 }: {
   appointmentId: number
   appointmentCheckedIn: boolean
+  patientName: string
+  patientUhid: string
+  doctorName: string
 }) {
   const [prescription, setPrescription] = useState<Prescription | null>(null)
   const [loading, setLoading] = useState(true)
@@ -328,11 +334,16 @@ export default function PrescriptionPanel({
         </table>
       )}
 
-      {(canPrescribe || canCancel) && (
+      {(canPrescribe || canCancel || prescription.items.length > 0) && (
         <div className="doctor-quick-actions">
           {canPrescribe && (
             <button type="button" className="btn" disabled={prescribing} onClick={handlePrescribe}>
               {prescribing ? 'Sending…' : 'Send to pharmacy'}
+            </button>
+          )}
+          {prescription.items.length > 0 && (
+            <button type="button" className="btn-secondary btn btn-sm" onClick={() => window.print()}>
+              Print prescription
             </button>
           )}
           {canCancel &&
@@ -362,6 +373,52 @@ export default function PrescriptionPanel({
                 Cancel prescription
               </button>
             ))}
+        </div>
+      )}
+
+      {/* master spec section 54's gap #6: prescription had no print
+          view at all. print-area + print-only (styles.css) give it
+          its own layout, separate from the on-screen editable table
+          above (which includes Remove buttons/dispense status that
+          don't belong on a prescription slip). */}
+      {prescription.items.length > 0 && (
+        <div className="print-area print-only prescription-print-area">
+          <h3>Prescription</h3>
+          <p>
+            {patientName} ({patientUhid})
+          </p>
+          <p>{doctorName}</p>
+          <p className="muted">{formatDateTime(prescription.prescribed_at ?? new Date().toISOString())}</p>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Medicine</th>
+                <th>Dosage</th>
+                <th>Frequency</th>
+                <th>Duration</th>
+                <th>Qty</th>
+              </tr>
+            </thead>
+            <tbody>
+              {prescription.items.map((item) => (
+                <tr key={item.id}>
+                  <td>
+                    {item.medicine_name}
+                    {item.generic_name && <div className="muted">{item.generic_name}</div>}
+                    {(item.food_instructions || item.special_instructions) && (
+                      <div className="muted">
+                        {[item.food_instructions, item.special_instructions].filter(Boolean).join(' · ')}
+                      </div>
+                    )}
+                  </td>
+                  <td>{item.dosage || '—'}</td>
+                  <td>{item.frequency || '—'}</td>
+                  <td>{item.duration || '—'}</td>
+                  <td>{item.quantity}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

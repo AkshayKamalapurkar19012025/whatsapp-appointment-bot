@@ -31,6 +31,7 @@ from app.services.pharmacy_services import (
     create_pharmacy_stock_service,
     record_dispense_service,
 )
+from app.services.notification_center_service import create_notification
 
 prescription_router = APIRouter(prefix="/appointments", tags=["Prescription"])
 pharmacy_router = APIRouter(prefix="/pharmacy", tags=["Pharmacy"])
@@ -245,4 +246,34 @@ def dispense_prescription_item(
                 )
             except svc_exc.InsufficientStock:
                 raise HTTPException(status_code=409, detail="Not enough stock on hand in that batch")
+
+            # Master spec section 15's "prescription ready" event --
+            # fires once, exactly when the last still-outstanding item
+            # on this prescription is fully dispensed (not on every
+            # partial dispense along the way).
+            cur.execute(
+                "SELECT NOT EXISTS (SELECT 1 FROM prescription_items WHERE prescription_id = %s AND quantity_dispensed < quantity)",
+                (result["prescription_id"],),
+            )
+            (fully_dispensed,) = cur.fetchone()
+            if fully_dispensed:
+                cur.execute(
+                    """
+                    SELECT a.id, p.name
+                    FROM prescriptions pr
+                    JOIN encounters e ON e.id = pr.encounter_id
+                    JOIN patients p ON p.id = e.patient_id
+                    JOIN appointments a ON a.encounter_id = e.id
+                    WHERE pr.id = %s
+                    """,
+                    (result["prescription_id"],),
+                )
+                appointment_id, patient_name = cur.fetchone()
+                create_notification(
+                    cur,
+                    hospital_id=staff["hospital_id"],
+                    kind="PRESCRIPTION_READY",
+                    message=f"Prescription ready for {patient_name}",
+                    appointment_id=appointment_id,
+                )
     return result

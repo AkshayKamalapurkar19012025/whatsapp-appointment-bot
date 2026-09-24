@@ -60,7 +60,13 @@ class StaffLoginBody(BaseModel):
 class StaffCreateBody(BaseModel):
     username: str = Field(min_length=3, max_length=100)
     password: str = Field(min_length=8, max_length=200)
-    role: Literal["ADMIN", "STAFF"]
+    # Every role migrations/0031_rbac_decomposition.sql seeded into
+    # `roles`, now actually usable (master spec audit gap #3) --
+    # migrations/0043_role_based_access.sql is what actually enforces
+    # this set at the database layer (a foreign key to roles.name);
+    # this Literal is just the same set spelled out for early,
+    # request-time validation and OpenAPI docs, not the source of truth.
+    role: Literal["ADMIN", "STAFF", "DOCTOR", "NURSE", "RECEPTIONIST", "LAB_TECH", "PHARMACIST", "BILLING"]
 
 
 class StaffActiveBody(BaseModel):

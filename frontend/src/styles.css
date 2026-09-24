@@ -5272,6 +5272,19 @@ a.link.danger {
   opacity: 0.5;
 }
 
+/* Department Queue (master spec audit gap: screen 23) -- one
+   QueueSection per doctor in the chosen department, visually
+   separated. */
+.department-queue-doctor-section {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.department-queue-doctor-section h4 {
+  margin: 0 0 var(--space-2);
+}
+
 /* ===========================================================
    Doctor queue (DoctorDetail.tsx's QueueSection)
    =========================================================== */
@@ -5356,6 +5369,22 @@ a.link.danger {
 }
 
 .pill.role-staff {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-secondary);
+}
+
+/* DOCTOR/NURSE/RECEPTIONIST/LAB_TECH/PHARMACIST/BILLING (master spec
+   audit gap #3, migrations/0043) -- same muted treatment as STAFF
+   rather than a distinct color per role: the Staff Accounts table's
+   job here is just to show which specific role an account holds, not
+   to rank roles by visual weight the way ADMIN's own highlighted pill
+   does. */
+.pill.role-doctor,
+.pill.role-nurse,
+.pill.role-receptionist,
+.pill.role-lab_tech,
+.pill.role-pharmacist,
+.pill.role-billing {
   background: var(--color-bg-subtle);
   color: var(--color-text-secondary);
 }
@@ -6057,8 +6086,192 @@ a.link.danger {
 
 .admin-topbar {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
   margin-bottom: var(--space-5);
+}
+
+.admin-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+/* Global search (master spec section 14), AdminTopBar's left side. */
+.global-search {
+  position: relative;
+  flex: 1;
+  max-width: 420px;
+}
+
+.global-search-input {
+  width: 100%;
+}
+
+.global-search-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: var(--space-2) 0;
+}
+
+.global-search-status {
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-text-secondary);
+  font-size: 0.88rem;
+}
+
+.global-search-status.error {
+  color: var(--color-danger);
+}
+
+.global-search-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.global-search-group-label {
+  padding: var(--space-2) var(--space-3) 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.global-search-result {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: var(--color-text);
+}
+
+.global-search-result:hover {
+  background: var(--color-surface-hover);
+}
+
+.global-search-result .muted {
+  font-size: 0.82rem;
+}
+
+/* Notification bell (master spec section 15), AdminTopBar's right side. */
+.notification-bell {
+  position: relative;
+}
+
+.notification-bell-trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.notification-bell-trigger:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-strong);
+}
+
+.notification-bell-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--color-danger);
+  color: var(--color-on-primary);
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.notification-bell-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  width: 340px;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-3);
+}
+
+.notification-bell-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+
+.notification-bell-empty {
+  padding: var(--space-2) 0;
+}
+
+.notification-bell-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.notification-bell-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+
+.notification-bell-list li.unread {
+  background: var(--color-primary-soft);
+  font-weight: 600;
+}
+
+.notification-bell-list li:hover {
+  background: var(--color-surface-hover);
+}
+
+.notification-bell-list li .muted {
+  font-size: 0.76rem;
+  font-weight: 400;
 }
 
 .admin-account-trigger {
@@ -7902,6 +8115,113 @@ a.link.danger {
   line-height: 1;
 }
 
+/* Allergy warning badge in the consultation workspace's patient header
+   (master spec section 91: a named clinical-safety UX requirement --
+   shown right next to UHID/doctor, same placement as the spec's own
+   "Allergies: Penicillin ⚠" mock). Danger-colored and always visible
+   whenever the patient has any active allergy, not tucked away in a tab. */
+.patient-context-allergy-warning {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--space-2);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-size: 0.85rem;
+  font-weight: 600;
+  width: fit-content;
+}
+
+/* Allergy list + add form, in the Triage tab (master spec section 91). */
+.allergy-panel {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.allergy-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.allergy-panel-header h4 {
+  margin: 0;
+}
+
+.allergy-list {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.allergy-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.pill.severity-mild,
+.pill.severity-moderate {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+  margin-left: 6px;
+}
+
+.pill.severity-severe {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  margin-left: 6px;
+}
+
+/* Visit Completion checklist (master spec section 43), inside
+   VisitCompletionDialog's AlertDialogContent. */
+.visit-completion-checklist {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.visit-completion-checklist li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+}
+
+.visit-completion-checklist li.done {
+  color: var(--color-success);
+}
+
+.visit-completion-checklist li.pending {
+  color: var(--color-text-secondary);
+}
+
+/* Table pagination (master spec section 62/80). */
+.admin-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-3);
+}
+
+.admin-pagination-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
 /* Amendment history (OPD/HIMS master spec Phase 14, section 70). */
 .amendment-history {
   margin-top: var(--space-3);
@@ -7947,22 +8267,74 @@ a.link.danger {
 }
 
 /* Printing (or "Save as PDF" from the print dialog) shows only the
-   receipt itself -- everything else on the page (sidebar, top bar, the
-   rest of the modal chrome, the overlay backdrop) is hidden. */
+   document being printed -- everything else on the page (sidebar, top
+   bar, the rest of the modal chrome, the overlay backdrop) is hidden.
+   .receipt-print-area is the original (Phase 13); .print-area is the
+   shared class every other print view (master spec section 54's gap
+   #6 -- token/prescription/bill/order requisition) uses instead of
+   inventing its own near-identical @media print block each time. */
 @media print {
   body * {
     visibility: hidden;
   }
 
   .receipt-print-area,
-  .receipt-print-area * {
+  .receipt-print-area *,
+  .print-area,
+  .print-area * {
     visibility: visible;
   }
 
-  .receipt-print-area {
+  .receipt-print-area,
+  .print-area {
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
   }
+}
+
+/* Print-only content (the token slip, prescription/bill/requisition
+   layouts below): invisible on screen -- these are compact,
+   print-formatted summaries of data the screen already shows in its
+   own (differently laid out) form, not a second on-screen copy of the
+   same view. */
+.print-only {
+  display: none;
+}
+
+@media print {
+  .print-only {
+    display: block;
+  }
+}
+
+/* Token slip (BookAppointmentPanel's walk-in "Print Token"). */
+.token-slip {
+  max-width: 320px;
+  text-align: center;
+}
+
+.token-slip h3 {
+  font-size: 2rem;
+  margin: 0 0 var(--space-3);
+}
+
+.token-slip p {
+  margin: 4px 0;
+}
+
+/* Prescription/bill/order-requisition print layouts (master spec
+   section 54's gap #6) -- same shared header spacing, the rest is the
+   existing .data-table styling already used everywhere else. */
+.prescription-print-area h3,
+.invoice-print-area h3,
+.requisition-print-area h3 {
+  margin: 0 0 var(--space-2);
+}
+
+.prescription-print-area p,
+.invoice-print-area p,
+.requisition-print-area p {
+  margin: 2px 0;
 }

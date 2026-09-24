@@ -1,5 +1,4 @@
 import type {
-  AdminAppointment,
   AdminAppointmentActionResult,
   ArrivalActionResult,
   MarkArrivedResult,
@@ -47,14 +46,29 @@ import type {
   DoctorWithSlots,
   Invoice,
   MyAppointmentsResponse,
+  AllergyInput,
+  PaginatedAppointments,
+  PaginatedPatients,
   Patient,
+  PatientAllergy,
   PatientGender,
   PatientTimeline,
   PaymentActionResult,
   Staff,
   StaffAccount,
+  StaffRole,
   UnbilledSources,
+  WaitingTimeAnalytics,
   Vitals,
+  VisitCompletionChecklist,
+  AuditLogEntry,
+  BillPaymentMethod,
+  BloodGroup,
+  PaginatedInvoices,
+  PaginatedPayments,
+  SearchResults,
+  NotificationCenter,
+  StaffNotification,
   VitalsInput,
 } from './types'
 
@@ -394,6 +408,12 @@ export function getBillingReport(days = 14): Promise<BillingReport> {
   return request(`/dashboard/billing?days=${days}`, { auth: 'staff' })
 }
 
+export function getWaitingTimeAnalytics(days = 14, doctorId?: number): Promise<WaitingTimeAnalytics> {
+  const query = new URLSearchParams({ days: String(days) })
+  if (doctorId !== undefined) query.set('doctor_id', String(doctorId))
+  return request(`/analytics/waiting-time?${query.toString()}`, { auth: 'staff' })
+}
+
 // -- Exceptions ----------------------------------------------------------
 
 export function getActiveExceptions(): Promise<ExceptionsResponse> {
@@ -409,7 +429,7 @@ export function listStaffAccounts(): Promise<StaffAccount[]> {
 export function createStaffAccount(
   username: string,
   password: string,
-  role: 'ADMIN' | 'STAFF',
+  role: StaffRole,
 ): Promise<StaffAccount> {
   return request('/auth/staff/accounts', {
     method: 'POST',
@@ -427,6 +447,57 @@ export function setStaffAccountActive(
     auth: 'staff',
     body: { active },
   })
+}
+
+// GET /billing/invoices, /billing/payments (master spec audit
+// "subsequent gaps" list, screens 29-30) -- cross-visit billing/
+// payment history, paginated.
+export function getInvoiceHistory(filters: {
+  patient_name?: string
+  date_from?: string
+  date_to?: string
+  limit?: number
+  offset?: number
+}): Promise<PaginatedInvoices> {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') query.set(key, String(value))
+  }
+  const qs = query.toString()
+  return request(`/billing/invoices${qs ? `?${qs}` : ''}`, { auth: 'staff' })
+}
+
+export function getPaymentHistory(filters: {
+  patient_name?: string
+  date_from?: string
+  date_to?: string
+  method?: BillPaymentMethod
+  limit?: number
+  offset?: number
+}): Promise<PaginatedPayments> {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') query.set(key, String(value))
+  }
+  const qs = query.toString()
+  return request(`/billing/payments${qs ? `?${qs}` : ''}`, { auth: 'staff' })
+}
+
+// GET /audit-log (staff.manage-gated, same tier as Staff Accounts).
+export function getAuditLog(filters: {
+  staff_id?: number
+  action?: string
+  resource_type?: string
+  resource_id?: number
+  date_from?: string
+  date_to?: string
+}): Promise<AuditLogEntry[]> {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') query.set(key, String(value))
+  }
+  const qs = query.toString()
+  return request(`/audit-log${qs ? `?${qs}` : ''}`, { auth: 'staff' })
 }
 
 // -- WEB P11: departments/doctors/appointment-types admin writes -----------
@@ -917,12 +988,46 @@ export function listPatients(): Promise<Patient[]> {
   return request('/patients', { auth: 'staff' })
 }
 
+// GET /patients/admin -- server-searched, server-paginated (master
+// spec section 62/80: never load the whole registry into the browser).
+// PatientsPanel's directory table uses this, not listPatients above --
+// that one stays unpaginated for its one remaining caller
+// (AppointmentsPanel's per-row patient lookup map, which genuinely
+// needs every patient, not a page of them).
+export function listPatientsAdmin(params: { search?: string; limit?: number; offset?: number }): Promise<PaginatedPatients> {
+  const query = new URLSearchParams()
+  if (params.search) query.set('search', params.search)
+  if (params.limit !== undefined) query.set('limit', String(params.limit))
+  if (params.offset !== undefined) query.set('offset', String(params.offset))
+  return request(`/patients/admin?${query.toString()}`, { auth: 'staff' })
+}
+
+// Patient allergy list (master spec section 91's clinical-safety
+// warning) -- GET/POST /patients/{id}/allergies, POST
+// .../allergies/{id}/resolve. Active-only by default, matching
+// list_patient_allergies_service.
+export function getPatientAllergies(patientId: number): Promise<PatientAllergy[]> {
+  return request(`/patients/${patientId}/allergies`, { auth: 'staff' })
+}
+
+export function addPatientAllergy(patientId: number, payload: AllergyInput): Promise<PatientAllergy> {
+  return request(`/patients/${patientId}/allergies`, { method: 'POST', auth: 'staff', body: payload })
+}
+
+export function resolvePatientAllergy(patientId: number, allergyId: number, reason: string): Promise<PatientAllergy> {
+  return request(`/patients/${patientId}/allergies/${allergyId}/resolve`, {
+    method: 'POST',
+    auth: 'staff',
+    body: { reason },
+  })
+}
+
 // GET /patients/search -- the OPD find/register step's backend lookup
-// (name/phone/UHID substring, optional exact DOB match), unlike
-// listPatients above (the whole registry, filtered client-side by
-// PatientsPanel's directory table). At least one of query/dob is
-// required server-side; returns [] rather than 404 when nothing
-// matches.
+// (name/phone/UHID substring, optional exact DOB match), a different
+// endpoint from listPatientsAdmin above: capped at 20 results, meant
+// for "find the one existing patient before registering a duplicate,"
+// not a paginated browse. At least one of query/dob is required
+// server-side; returns [] rather than 404 when nothing matches.
 export function searchPatientsAdmin(query: string, dob?: string | null): Promise<Patient[]> {
   const params = new URLSearchParams()
   if (query.trim()) params.set('q', query.trim())
@@ -930,11 +1035,30 @@ export function searchPatientsAdmin(query: string, dob?: string | null): Promise
   return request(`/patients/search?${params.toString()}`, { auth: 'staff' })
 }
 
+// migrations/0045_patient_registration_fields.sql -- the spec's mock
+// registration layout beyond name/mobile/DOB/gender, every one of
+// these optional (never blocking fast walk-in registration). Grouped
+// into its own object rather than more positional params: createPatientAdmin/
+// updatePatientAdmin already had 4, a 5th-13th positional param apiece
+// would be unreadable at the call site.
+export interface PatientOptionalDetails {
+  email?: string | null
+  alternate_whatsapp_number?: string | null
+  address_line?: string | null
+  city?: string | null
+  state?: string | null
+  pincode?: string | null
+  emergency_contact_name?: string | null
+  emergency_contact_phone?: string | null
+  blood_group?: BloodGroup | null
+}
+
 export function createPatientAdmin(
   name: string,
   whatsappNumber: string,
   dateOfBirth?: string | null,
   gender?: PatientGender | null,
+  details?: PatientOptionalDetails,
 ): Promise<Patient> {
   return request('/patients', {
     method: 'POST',
@@ -944,6 +1068,7 @@ export function createPatientAdmin(
       whatsapp_number: whatsappNumber,
       date_of_birth: dateOfBirth || null,
       gender: gender || null,
+      ...details,
     },
   })
 }
@@ -957,6 +1082,7 @@ export function updatePatientAdmin(
   whatsappNumber: string,
   dateOfBirth?: string | null,
   gender?: PatientGender | null,
+  details?: PatientOptionalDetails,
 ): Promise<Patient> {
   return request(`/patients/${patientId}`, {
     method: 'PATCH',
@@ -966,6 +1092,7 @@ export function updatePatientAdmin(
       whatsapp_number: whatsappNumber,
       date_of_birth: dateOfBirth || null,
       gender: gender || null,
+      ...details,
     },
   })
 }
@@ -979,6 +1106,12 @@ export function getPatientTimeline(patientId: number): Promise<PatientTimeline> 
 
 // -- WEB P11: admin appointment management (ADMIN or STAFF, WEB P9) --------
 
+// Paginated (master spec audit gap #1) -- {items, total, limit, offset},
+// not a bare array. limit/offset are optional: every current caller
+// leaves them unset and gets the generous 1000-row default page (see
+// app/api/appointments.py's own docstring for why that's a safe
+// default, not a silent truncation risk, for every one of today's
+// callers), and just reads .items same as before.
 export function listAdminAppointments(filters: {
   doctor_id?: number
   patient_id?: number
@@ -986,7 +1119,9 @@ export function listAdminAppointments(filters: {
   appointment_type_id?: number
   date_from?: string
   date_to?: string
-}): Promise<AdminAppointment[]> {
+  limit?: number
+  offset?: number
+}): Promise<PaginatedAppointments> {
   const params = new URLSearchParams()
   if (filters.doctor_id !== undefined) params.set('doctor_id', String(filters.doctor_id))
   if (filters.patient_id !== undefined) params.set('patient_id', String(filters.patient_id))
@@ -996,6 +1131,8 @@ export function listAdminAppointments(filters: {
   }
   if (filters.date_from) params.set('date_from', filters.date_from)
   if (filters.date_to) params.set('date_to', filters.date_to)
+  if (filters.limit !== undefined) params.set('limit', String(filters.limit))
+  if (filters.offset !== undefined) params.set('offset', String(filters.offset))
   const query = params.toString()
   return request(`/appointments${query ? `?${query}` : ''}`, { auth: 'staff' })
 }
@@ -1167,6 +1304,33 @@ export function completeAdminAppointment(
   appointmentId: number,
 ): Promise<{ id: number; status: string }> {
   return request(`/appointments/${appointmentId}/complete`, { method: 'POST', auth: 'staff' })
+}
+
+// GET /appointments/{id}/completion-checklist -- master spec section
+// 43's Visit Completion checklist, fetched by VisitCompletionDialog
+// right before completeAdminAppointment above.
+export function getVisitCompletionChecklist(appointmentId: number): Promise<VisitCompletionChecklist> {
+  return request(`/appointments/${appointmentId}/completion-checklist`, { auth: 'staff' })
+}
+
+// GET /search -- master spec section 14's global search (patients +
+// appointments, one box), used by GlobalSearchBar.
+export function globalSearch(q: string): Promise<SearchResults> {
+  return request(`/search?q=${encodeURIComponent(q)}`, { auth: 'staff' })
+}
+
+// GET/POST /notifications -- master spec section 15's staff
+// notification center, used by NotificationBell.
+export function getNotifications(): Promise<NotificationCenter> {
+  return request('/notifications', { auth: 'staff' })
+}
+
+export function markNotificationRead(notificationId: number): Promise<StaffNotification> {
+  return request(`/notifications/${notificationId}/read`, { method: 'POST', auth: 'staff' })
+}
+
+export function markAllNotificationsRead(): Promise<{ updated: number }> {
+  return request('/notifications/read-all', { method: 'POST', auth: 'staff' })
 }
 
 export function noShowAdminAppointment(

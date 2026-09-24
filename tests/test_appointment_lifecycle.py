@@ -523,3 +523,50 @@ def test_lifecycle_endpoints_usable_by_plain_staff_not_just_admin(client, db_con
 
     response = client.post(f"/api/appointments/{ctx['appointment']['id']}/confirm", headers=staff_headers)
     assert response.status_code == 200
+
+
+def test_confirm_and_checkin_rejects_slot_passed_cleanly(client, db_connection):
+    """Production Hardening pass finding (master spec section 77/Phase
+    12, docs/OPD_HIMS_MASTER_SPEC_AUDIT.md gap #7): POST .../confirm
+    has always caught AppointmentSlotPassed and returned a clean 409,
+    but .../confirm-and-checkin (the walk-in button, which calls the
+    same confirm_appointment_service internally when starting from
+    PENDING) had no handler for it at all -- a PENDING appointment
+    whose start_at has already gone by crashed with an unhandled 500
+    instead."""
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Slot Passed Checkin",
+        department_name="Slot Passed Checkin Dept", appointment_type_name="Slot Passed Checkin Type",
+    )
+    patient = client.post(
+        "/api/patients",
+        json={"name": "Slot Passed Checkin Patient", "whatsapp_number": "+919912340099"},
+        headers=admin_headers,
+    ).json()
+
+    scheduling_date = date.today() + timedelta(days=10)
+    while scheduling_date.isoweekday() not in (1, 2, 3, 4, 5):
+        scheduling_date += timedelta(days=1)
+    created = client.post(
+        "/api/appointments",
+        json={
+            "doctor_id": seeded["doctor_id"],
+            "patient_id": patient["id"],
+            "appointment_type_id": seeded["appointment_type_id"],
+            "start_at": f"{scheduling_date.isoformat()}T09:00:00+05:30",
+        },
+        headers=admin_headers,
+    ).json()
+
+    past_start = datetime.now(dt_timezone.utc) - timedelta(minutes=5)
+    with db_connection.cursor() as cur:
+        cur.execute(
+            "UPDATE appointments SET start_at = %s WHERE id = %s",
+            (past_start, created["id"]),
+        )
+    db_connection.commit()
+
+    response = client.post(f"/api/appointments/{created['id']}/confirm-and-checkin", headers=admin_headers)
+    assert response.status_code == 409
+    assert "already passed" in response.json()["detail"]

@@ -1,5 +1,7 @@
 export type PatientGender = 'MALE' | 'FEMALE' | 'OTHER'
 
+export type BloodGroup = 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-' | 'O+' | 'O-'
+
 export interface Patient {
   id: number
   name: string
@@ -28,6 +30,52 @@ export interface Patient {
   // search/contact attribute. Always present (a stored generated
   // column), unlike the appointment_count/last_visit_at fields above.
   uhid: string
+  // migrations/0045_patient_registration_fields.sql -- all optional,
+  // present only on the create/update response (like date_of_birth/
+  // gender above, absent on the plain list endpoint's rows).
+  email?: string | null
+  alternate_whatsapp_number?: string | null
+  address_line?: string | null
+  city?: string | null
+  state?: string | null
+  pincode?: string | null
+  emergency_contact_name?: string | null
+  emergency_contact_phone?: string | null
+  blood_group?: BloodGroup | null
+}
+
+// GET /patients/admin's response shape (search + pagination, master
+// spec section 62).
+export interface PaginatedPatients {
+  items: Patient[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export type AllergySeverity = 'MILD' | 'MODERATE' | 'SEVERE'
+
+// GET/POST /patients/{id}/allergies, POST .../allergies/{id}/resolve
+// (master spec section 91's clinical-safety warning). Mirrors
+// app/services/patient_allergies.py's _ALLERGY_COLUMNS exactly.
+export interface PatientAllergy {
+  id: number
+  patient_id: number
+  allergen: string
+  reaction: string | null
+  severity: AllergySeverity | null
+  active: boolean
+  recorded_by: number
+  recorded_at: string
+  resolved_by: number | null
+  resolved_reason: string | null
+  resolved_at: string | null
+}
+
+export interface AllergyInput {
+  allergen: string
+  reaction?: string
+  severity?: AllergySeverity
 }
 
 // ONLINE covers both the patient web app and WhatsApp self-service
@@ -200,10 +248,15 @@ export interface Staff {
   role: 'ADMIN' | 'STAFF'
 }
 
+// Every role migrations/0031_rbac_decomposition.sql seeded, now
+// actually assignable (master spec audit gap #3) -- see
+// migrations/0043_role_based_access.sql.
+export type StaffRole = 'ADMIN' | 'STAFF' | 'DOCTOR' | 'NURSE' | 'RECEPTIONIST' | 'LAB_TECH' | 'PHARMACIST' | 'BILLING'
+
 export interface StaffAccount {
   id: number
   username: string
-  role: 'ADMIN' | 'STAFF'
+  role: StaffRole
   active: boolean
 }
 
@@ -331,6 +384,15 @@ export interface AdminAppointment {
   // Permanent per-appointment identifier (migrations/0026), e.g.
   // "INV-00000123" -- always present, independent of payment_status.
   invoice_number: string
+}
+
+// GET /appointments -- paginated (master spec audit gap #1), same
+// {items, total, limit, offset} shape as PaginatedPatients above.
+export interface PaginatedAppointments {
+  items: AdminAppointment[]
+  total: number
+  limit: number
+  offset: number
 }
 
 // GET /appointments/{id}/invoice -- consultation_fee plus any ad-hoc
@@ -478,6 +540,36 @@ export interface DashboardTrends {
   patients: DashboardTrendPoint[]
 }
 
+// GET /api/analytics/waiting-time (master spec audit "subsequent gaps"
+// list, screen 33) -- the historical counterpart to AppointmentsPanel.
+// tsx's own client-side avgWaitMinutes snapshot (today's currently-
+// waiting patients only). Wait is measured check-in (visited_at) to
+// the doctor opening the consultation (consultations.started_at).
+export interface WaitingTimeOverall {
+  count: number
+  avg_wait_minutes: number
+}
+
+export interface WaitingTimeDayPoint {
+  date: string
+  count: number
+  avg_wait_minutes: number
+}
+
+export interface WaitingTimeDoctorBreakdown {
+  doctor_id: number
+  doctor_name: string
+  count: number
+  avg_wait_minutes: number
+}
+
+export interface WaitingTimeAnalytics {
+  window_days: number
+  overall: WaitingTimeOverall
+  by_day: WaitingTimeDayPoint[]
+  by_doctor: WaitingTimeDoctorBreakdown[]
+}
+
 // GET /api/exceptions (OPD/HIMS master spec Phase 11, sections 46-47) --
 // live-computed operational alerts, one shape per type-specific field
 // alongside the five fields every exception carries (what/why/who/
@@ -541,6 +633,70 @@ export interface DoctorQueue {
   completed: QueueEntry[]
 }
 
+// GET /search's appointment result shape (master spec section 14's
+// global search) -- deliberately not the full AdminAppointment (this
+// is a lightweight, un-paginated cross-entity lookup, not a listing).
+export interface SearchAppointmentResult {
+  id: number
+  start_at: string
+  status: string
+  token_number: number | null
+  patient_id: number
+  patient_name: string
+  doctor_id: number
+  doctor_name: string
+}
+
+export interface SearchResults {
+  patients: Patient[]
+  appointments: SearchAppointmentResult[]
+}
+
+// GET /notifications (master spec section 15's staff notification
+// center).
+export type NotificationKind = 'PATIENT_ARRIVED' | 'LAB_RESULT_AVAILABLE' | 'PRESCRIPTION_READY'
+
+export interface StaffNotification {
+  id: number
+  hospital_id: number
+  kind: NotificationKind
+  message: string
+  appointment_id: number | null
+  read_at: string | null
+  created_at: string
+}
+
+export interface NotificationCenter {
+  items: StaffNotification[]
+  unread_count: number
+}
+
+// GET /audit-log (master spec audit "subsequent gaps" list: "no
+// frontend page to view the audit log" -- the backend endpoint
+// existed already, gated on staff.manage same as Staff Accounts).
+export interface AuditLogEntry {
+  id: number
+  staff_id: number | null
+  staff_username: string | null
+  action: string
+  resource_type: string
+  resource_id: number | null
+  details: Record<string, unknown> | null
+  created_at: string
+}
+
+// GET /appointments/{id}/completion-checklist (master spec section 43's
+// Visit Completion checklist) -- a read-only precondition summary shown
+// before "Mark completed", not a gate on it.
+export interface VisitCompletionChecklist {
+  consultation_completed: boolean
+  orders_created: boolean
+  prescription_created: boolean
+  billing_completed: boolean
+  payment_completed: boolean
+  follow_up_scheduled: boolean
+}
+
 // OPD/HIMS master spec Phase 5 (migrations/0029_vitals_and_
 // consultations.sql) -- GET /api/appointments/{id}/encounter.
 export interface EncounterSummary {
@@ -589,6 +745,8 @@ export type VitalsInput = Partial<
 
 export type ConsultationStatus = 'DRAFT' | 'COMPLETED'
 
+export type ConsultationDisposition = 'FOLLOW_UP' | 'REFER' | 'ADMIT_TO_IPD' | 'EMERGENCY'
+
 export interface Consultation {
   id: number
   encounter_id: number
@@ -601,6 +759,11 @@ export interface Consultation {
   clinical_notes: string | null
   follow_up_date: string | null
   follow_up_reason: string | null
+  // migrations/0047_consultation_disposition.sql -- master spec
+  // section 44-47's "Admit to IPD" disposition scaffold, a stub
+  // (captures the choice, no IPD/referral workflow behind it yet).
+  disposition: ConsultationDisposition | null
+  disposition_notes: string | null
   started_at: string
   completed_at: string | null
 }
@@ -626,6 +789,8 @@ export interface ConsultationAmendment {
   previous_clinical_notes: string | null
   previous_follow_up_date: string | null
   previous_follow_up_reason: string | null
+  previous_disposition: ConsultationDisposition | null
+  previous_disposition_notes: string | null
   reason: string
   amended_by: number
   amended_by_username: string
@@ -819,6 +984,7 @@ export type ChargeSourceType =
   | 'SERVICE'
   | 'PHARMACY'
   | 'PACKAGE'
+  | 'CONSUMABLES'
   | 'OTHER'
 export type BillPaymentStatus = 'UNPAID' | 'PARTIALLY_PAID' | 'PAID'
 export type BillPaymentMethod = 'CASH' | 'UPI' | 'CARD' | 'BANK_TRANSFER' | 'INSURANCE' | 'OTHER'
@@ -933,6 +1099,60 @@ export interface PaymentReceipt {
   payment_status: BillPaymentRecordStatus
   cashier: string
   recorded_at: string
+}
+
+// GET /billing/invoices, /billing/payments (master spec audit
+// "subsequent gaps" list, screens 29-30) -- cross-visit billing/
+// payment history, paginated. InvoiceHistoryEntry's totals are the
+// same shape _compute_totals returns everywhere else (BillSummary
+// above included).
+export interface InvoiceHistoryEntry {
+  id: number
+  invoice_number: string
+  status: BillStatus
+  created_at: string
+  patient_id: number
+  patient_name: string
+  patient_uhid: string
+  doctor_name: string
+  appointment_id: number
+  gross_amount: number
+  discount_amount: number
+  taxable_amount: number
+  tax_amount: number
+  net_amount: number
+  paid_amount: number
+  balance: number
+  payment_status: BillPaymentStatus
+}
+
+export interface PaymentHistoryEntry {
+  id: number
+  receipt_number: string
+  amount: number
+  method: BillPaymentMethod
+  status: BillPaymentRecordStatus
+  refunded_amount: number
+  recorded_at: string
+  patient_id: number
+  patient_name: string
+  patient_uhid: string
+  invoice_number: string
+  appointment_id: number
+}
+
+export interface PaginatedInvoices {
+  items: InvoiceHistoryEntry[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface PaginatedPayments {
+  items: PaymentHistoryEntry[]
+  total: number
+  limit: number
+  offset: number
 }
 
 // GET/POST/PUT /api/packages (OPD/HIMS master spec Phase 12, section

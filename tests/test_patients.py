@@ -30,9 +30,10 @@ def test_update_patient_changes_name_and_number(client, db_connection):
 
     assert response.status_code == 200
     body = response.json()
-    # date_of_birth/gender (migrations/0023) round-trip as null here --
-    # this test never set either, and PatientUpdate leaves them null
-    # rather than inventing a value when the caller omits them. uhid
+    # date_of_birth/gender (migrations/0023) and the migrations/0045
+    # optional detail fields all round-trip as null here -- this test
+    # never set any of them, and PatientUpdate leaves them null rather
+    # than inventing a value when the caller omits them. uhid
     # (migrations/0024) is derived from id and never changes across an
     # update, same as id itself.
     assert body == {
@@ -43,6 +44,15 @@ def test_update_patient_changes_name_and_number(client, db_connection):
         "gender": None,
         "government_id": None,
         "uhid": patient["uhid"],
+        "email": None,
+        "alternate_whatsapp_number": None,
+        "address_line": None,
+        "city": None,
+        "state": None,
+        "pincode": None,
+        "emergency_contact_name": None,
+        "emergency_contact_phone": None,
+        "blood_group": None,
     }
 
 
@@ -152,3 +162,83 @@ def test_update_patient_does_not_touch_appointments(client, db_connection):
 
     assert status == "PENDING"
     assert patient_id == patient["id"]
+
+
+def test_create_patient_accepts_optional_registration_fields(client, db_connection):
+    """migrations/0045_patient_registration_fields.sql -- email,
+    alternate mobile, address, emergency contact, and blood group are
+    all optional and round-trip through create."""
+    admin_headers = create_admin_and_get_headers(db_connection)
+    response = client.post(
+        "/api/patients",
+        json={
+            "name": "Full Details Patient",
+            "whatsapp_number": "+919700000010",
+            "email": "patient@example.com",
+            "alternate_whatsapp_number": "+919700000011",
+            "address_line": "12 MG Road",
+            "city": "Bengaluru",
+            "state": "Karnataka",
+            "pincode": "560001",
+            "emergency_contact_name": "Next of Kin",
+            "emergency_contact_phone": "+919700000012",
+            "blood_group": "O+",
+        },
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["email"] == "patient@example.com"
+    assert body["alternate_whatsapp_number"] == "+919700000011"
+    assert body["address_line"] == "12 MG Road"
+    assert body["city"] == "Bengaluru"
+    assert body["state"] == "Karnataka"
+    assert body["pincode"] == "560001"
+    assert body["emergency_contact_name"] == "Next of Kin"
+    assert body["emergency_contact_phone"] == "+919700000012"
+    assert body["blood_group"] == "O+"
+
+
+def test_create_patient_still_works_with_only_name_and_number(client, db_connection):
+    """Fast walk-in registration must never be blocked on the new
+    fields -- none of them become required."""
+    admin_headers = create_admin_and_get_headers(db_connection)
+    response = client.post(
+        "/api/patients",
+        json={"name": "Minimal Patient", "whatsapp_number": "+919700000013"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["email"] is None
+    assert body["blood_group"] is None
+
+
+def test_create_patient_rejects_invalid_blood_group(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    response = client.post(
+        "/api/patients",
+        json={"name": "Bad Blood Group Patient", "whatsapp_number": "+919700000014", "blood_group": "Z+"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 422
+
+
+def test_update_patient_sets_optional_registration_fields(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    patient = _create_patient(client, admin_headers, "Update Details Patient", "+919700000015")
+
+    response = client.patch(
+        f"/api/patients/{patient['id']}",
+        json={
+            "name": patient["name"],
+            "whatsapp_number": patient["whatsapp_number"],
+            "email": "updated@example.com",
+            "blood_group": "AB-",
+        },
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["email"] == "updated@example.com"
+    assert body["blood_group"] == "AB-"

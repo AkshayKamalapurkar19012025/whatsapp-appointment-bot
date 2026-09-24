@@ -152,6 +152,41 @@ def test_amend_updates_fields_and_archives_previous_values(client, db_connection
     assert entries[0]["amended_by_username"]
 
 
+def test_amend_archives_previous_disposition(client, db_connection):
+    """migrations/0047_consultation_disposition.sql -- disposition
+    follows the same archive-then-update amendment pattern as every
+    other consultation field."""
+    ctx = _checked_in_context(client, db_connection, "Dr. Amend Disposition")
+    appointment_id = ctx["appointment"]["id"]
+    admin_headers = ctx["admin_headers"]
+
+    client.put(
+        f"/api/appointments/{appointment_id}/consultation",
+        json={"chief_complaint": "Fever", "diagnosis": "Viral fever", "disposition": "FOLLOW_UP"},
+        headers=admin_headers,
+    )
+    client.post(f"/api/appointments/{appointment_id}/consultation/complete", headers=admin_headers)
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/consultation/amend",
+        json={
+            "reason": "Patient deteriorated, needs admission",
+            "chief_complaint": "Fever",
+            "diagnosis": "Dengue fever",
+            "disposition": "ADMIT_TO_IPD",
+            "disposition_notes": "Bed requested",
+        },
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["disposition"] == "ADMIT_TO_IPD"
+
+    history = client.get(
+        f"/api/appointments/{appointment_id}/consultation/amendments", headers=admin_headers
+    ).json()
+    assert history[0]["previous_disposition"] == "FOLLOW_UP"
+
+
 def test_amend_after_visit_closed(client, db_connection):
     """The whole point of amendment: correcting a record after the
     visit -- and the whole encounter -- has already closed. Not gated

@@ -63,6 +63,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import DoctorProfileSection from './DoctorProfileSection'
 import AppointmentDetailsModal from './AppointmentDetailsModal'
 import { AppointmentActionButtons, buildAppointmentActions, type AppointmentActionHandlers } from './AppointmentActions'
+import VisitCompletionDialog from './VisitCompletionDialog'
 import { isoDateToday } from './doctorSchedule'
 import ScheduleGrid from './ScheduleGrid'
 import TimeOffSection from './TimeOffSection'
@@ -341,7 +342,7 @@ function OverviewSection({
       listAppointmentTypesForDoctor(doctor.id),
     ])
       .then(([todaysAppointments, depts, types]) => {
-        setAppointments([...todaysAppointments].sort((a, b) => a.start_at.localeCompare(b.start_at)))
+        setAppointments([...todaysAppointments.items].sort((a, b) => a.start_at.localeCompare(b.start_at)))
         setDepartments(depts)
         setAppointmentTypes(types)
       })
@@ -526,6 +527,7 @@ function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: b
   const [loading, setLoading] = useState(true)
   const [lifecycleBusyId, setLifecycleBusyId] = useState<number | null>(null)
   const [cancelTarget, setCancelTarget] = useState<AdminAppointment | null>(null)
+  const [completionTarget, setCompletionTarget] = useState<AdminAppointment | null>(null)
   const [reschedulingId, setReschedulingId] = useState<number | null>(null)
   const [rescheduleSlot, setRescheduleSlot] = useState<Slot | null>(null)
   const [rescheduleBusy, setRescheduleBusy] = useState(false)
@@ -539,8 +541,14 @@ function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: b
       date_from: when === 'today' ? isoDateToday() : undefined,
       date_to: when === 'today' ? isoDateToday() : undefined,
       status: statusFilter || undefined,
+      // 'all' has no date bound (this doctor's entire history) -- the
+      // one caller of this endpoint that realistically can exceed the
+      // default page size, so request the max allowed page directly
+      // rather than the 1000-row default every other, date-bounded
+      // caller relies on.
+      limit: when === 'all' ? 5000 : undefined,
     })
-      .then((list) => setAppointments([...list].sort((a, b) => a.start_at.localeCompare(b.start_at))))
+      .then(({ items: list }) => setAppointments([...list].sort((a, b) => a.start_at.localeCompare(b.start_at))))
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Could not load appointments'))
       .finally(() => setLoading(false))
   }
@@ -550,7 +558,7 @@ function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: b
   useEffect(() => {
     const today = isoDateToday()
     listAdminAppointments({ doctor_id: doctor.id, date_from: today, date_to: today })
-      .then(setTodaysAppointments)
+      .then(({ items }) => setTodaysAppointments(items))
       .catch(() => undefined)
   }, [doctor.id])
 
@@ -655,7 +663,7 @@ function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: b
     onCheckIn: (a) => runLifecycleAction(a.id, visitAdminAppointment, 'Could not check in the appointment'),
     onMarkArrived: (a) => runLifecycleAction(a.id, markArrivedAdmin, 'Could not record the arrival'),
     onNoShow: (a) => runLifecycleAction(a.id, noShowAdminAppointment, 'Could not mark the appointment as a no-show'),
-    onComplete: (a) => runLifecycleAction(a.id, completeAdminAppointment, 'Could not mark the appointment completed'),
+    onComplete: (a) => setCompletionTarget(a),
     onReschedule: startReschedule,
     onCancel: (a) => {
       setDetailsTarget(null)
@@ -883,6 +891,20 @@ function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: b
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {completionTarget && (
+        <VisitCompletionDialog
+          appointmentId={completionTarget.id}
+          patientName={completionTarget.patient_name}
+          doctorName={completionTarget.doctor_name}
+          onClose={() => setCompletionTarget(null)}
+          onConfirm={() => {
+            const target = completionTarget
+            setCompletionTarget(null)
+            runLifecycleAction(target.id, completeAdminAppointment, 'Could not mark the appointment completed')
+          }}
+        />
+      )}
     </div>
   )
 }

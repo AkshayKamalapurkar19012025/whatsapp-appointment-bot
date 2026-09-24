@@ -137,7 +137,7 @@ export default function DoctorsPanel({
       .then(async ([allDoctors, departmentList, todaysAppts]) => {
         setDoctors(allDoctors)
         setDepartments(departmentList)
-        setTodaysAppointments(todaysAppts)
+        setTodaysAppointments(todaysAppts.items)
 
         const [perDepartment, perDoctorSchedule, perDoctorBlocks] = await Promise.all([
           Promise.all(departmentList.map((d) => listDoctorsInDepartment(d.id).catch(() => [] as Doctor[]))),

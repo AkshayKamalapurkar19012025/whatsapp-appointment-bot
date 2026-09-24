@@ -22,10 +22,10 @@ it.
 """
 
 import calendar as calendar_module
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.staff_auth import get_current_staff, require_permission
@@ -55,6 +55,8 @@ from app.services.appointment_services import (
     set_priority_service,
 )
 from app.services.availability_engine import list_available_dates_in_range
+from app.services.visit_completion_service import get_visit_completion_checklist_service
+from app.services.notification_center_service import create_notification
 from app.services.notifications import KIND_CHECK_IN, KIND_QUEUE_TOKEN, send_mock_notification
 from app.utils.timezone import convert_to_timezone, validate_timezone
 
@@ -164,15 +166,25 @@ def get_appointments(
     appointment_type_id: int | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    limit: int = Query(default=1000, ge=1, le=5000),
+    offset: int = Query(default=0, ge=0),
     staff: dict = Depends(get_current_staff),
 ):
     """
     The admin appointment dashboard's listing, per
     docs/WEB_EXPANSION_ARCHITECTURE.md section 4 ("existing
     appointments.py GET can likely be reused/extended with query
-    filters rather than duplicated") -- all filters optional, so the
-    unfiltered call still returns everything, matching this endpoint's
-    pre-P9 behavior exactly.
+    filters rather than duplicated") -- all filters optional.
+
+    Paginated (master spec audit gap #1, section 80: "avoid load entire
+    table"): every real caller (AppointmentsPanel, DoctorWorkspace,
+    schedule-conflict modals -- see frontend/src/api.ts's
+    listAdminAppointments) already bounds this by date and/or doctor_id,
+    so limit/offset default generously (1000/page) purely as a real,
+    enforced ceiling rather than something any current screen needs to
+    page through -- same shape as GET /patients/admin's total/limit/
+    offset. Returns {items, total, limit, offset}, not a bare array
+    (every caller was updated alongside this change).
 
     date_from/date_to filter on each row's own doctor-local calendar
     date -- the same ambiguity this docstring used to flag ("which
@@ -182,7 +194,16 @@ def get_appointments(
     notion of "date" at the SQL level. Applied in Python after that
     conversion, not as a WHERE clause, for exactly that reason: the SQL
     layer only knows start_at's UTC instant, not which doctor-local day
-    it falls on.
+    it falls on. limit/offset are applied in Python too, after that
+    same precise trim, for the same reason -- pushing them into the SQL
+    query would paginate the widened (imprecise) pre-filtered set, not
+    the actual doctor-local-day-correct one. The one exception is the
+    hardcoded LIMIT 5000 in the SQL query below: a fixed outer safety
+    net (not the caller-controlled `limit` above) so a truly unfiltered
+    call -- no date range, no doctor_id -- can never pull an unbounded
+    number of rows into app memory before the Python-side trim/page
+    runs, at the cost of a theoretical undercount in `total` only in
+    that same pathological, currently-nonexistent-in-practice case.
 
     start_at/end_at are now converted to each row's own doctor's local
     timezone before being returned -- a real, pre-existing display bug
@@ -208,6 +229,23 @@ def get_appointments(
     if appointment_type_id is not None:
         where_clauses.append("a.appointment_type_id = %s")
         params.append(appointment_type_id)
+
+    # A widened, UTC-instant SQL pre-filter -- NOT the precise
+    # doctor-local-day bound itself (that stays the exact Python-side
+    # trim below, unchanged, including its invalid-timezone fallback,
+    # which a SQL-side AT TIME ZONE can't replicate). +/-1 day either
+    # side of the requested range covers every real-world UTC offset
+    # (max +/-14:00), so this can never exclude a row the precise trim
+    # would have kept -- it only turns "always scan the whole table"
+    # into "scan roughly the requested date range" at the database
+    # layer (master spec section 80: "avoid load entire table where
+    # datasets can grow"), with identical results either way.
+    if date_from is not None:
+        where_clauses.append("a.start_at >= %s")
+        params.append(datetime.combine(date_from, datetime.min.time()) - timedelta(days=1))
+    if date_to is not None:
+        where_clauses.append("a.start_at < %s")
+        params.append(datetime.combine(date_to, datetime.min.time()) + timedelta(days=2))
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
@@ -254,6 +292,7 @@ def get_appointments(
                    AND dat.appointment_type_id = a.appointment_type_id
                 {where_sql}
                 ORDER BY a.start_at
+                LIMIT 5000
                 """,
                 params,
             )
@@ -314,7 +353,13 @@ def get_appointments(
             }
         )
 
-    return results
+    total = len(results)
+    return {
+        "items": results[offset : offset + limit],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.get("/calendar")
@@ -624,6 +669,13 @@ def visit_appointment(
                 f"Hi {patient_name}, you're checked in with {doctor_name}. "
                 f"Please complete registration and payment at the front desk.",
             )
+            create_notification(
+                cur,
+                hospital_id=staff["hospital_id"],
+                kind="PATIENT_ARRIVED",
+                message=f"{patient_name} has arrived for {doctor_name}",
+                appointment_id=appointment_id,
+            )
 
     return {
         "id": result["id"],
@@ -685,6 +737,28 @@ def confirm_and_check_in_appointment(
                     status_code=409,
                     detail="Only a Pending or Confirmed appointment can be confirmed and checked in",
                 )
+            except svc_exc.AppointmentSlotPassed:
+                # Found during a Production Hardening pass (master spec
+                # section 77/Phase 12, docs/OPD_HIMS_MASTER_SPEC_AUDIT.md
+                # gap #7): this composed action calls confirm_appointment_
+                # service internally when starting from PENDING, which
+                # itself still enforces "the requested slot's start_at
+                # hasn't already gone by" -- unlike plain POST /confirm
+                # above (which has caught this since it was added), this
+                # endpoint had no handler for it at all, so a walk-in
+                # booked with start_at="now" (BookAppointmentPanel's own
+                # immediate-slot booking) would crash with an unhandled
+                # 500 the moment even a few seconds passed between
+                # booking and clicking Confirm & Check In. This function's
+                # own docstring promises "always reaches CHECKED_IN...
+                # instead of dead-ending the front desk" -- that promise
+                # already doesn't hold for a genuinely stale request (the
+                # slot really has passed), so this is a clean error, not
+                # a silent swallow of the underlying business rule.
+                raise HTTPException(
+                    status_code=409,
+                    detail="This appointment's scheduled time has already passed and can no longer be confirmed",
+                )
 
             if result["arrival_kind"] == "checked_in":
                 cur.execute(
@@ -702,6 +776,13 @@ def confirm_and_check_in_appointment(
                     KIND_CHECK_IN,
                     f"Hi {patient_name}, you're checked in with {doctor_name}. "
                     f"Please complete registration and payment at the front desk.",
+                )
+                create_notification(
+                    cur,
+                    hospital_id=staff["hospital_id"],
+                    kind="PATIENT_ARRIVED",
+                    message=f"{patient_name} has arrived for {doctor_name}",
+                    appointment_id=appointment_id,
                 )
 
     return result
@@ -982,6 +1063,25 @@ def refund_appointment_payment(
                 )
 
     return result
+
+
+@router.get("/{appointment_id}/completion-checklist")
+def get_completion_checklist(
+    appointment_id: int,
+    staff: dict = Depends(get_current_staff),
+):
+    """Master spec section 43's Visit Completion checklist -- a
+    read-only precondition summary for the "Mark completed" action
+    below, not a gate on it (see get_visit_completion_checklist_service's
+    own docstring for why)."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                return get_visit_completion_checklist_service(cur, appointment_id)
+            except svc_exc.AppointmentNotFound:
+                raise HTTPException(status_code=404, detail="Appointment not found")
+            except svc_exc.EncounterNotFound:
+                raise HTTPException(status_code=404, detail="No visit has been started for this appointment")
 
 
 @router.post("/{appointment_id}/complete")

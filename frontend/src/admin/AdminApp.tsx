@@ -3,14 +3,18 @@ import {
   Buildings,
   CalendarCheck,
   ChartLineUp,
+  ClockCounterClockwise,
+  CreditCard,
   CurrencyInr,
   Gauge,
   GearSix,
   Gift,
   Pill,
+  Receipt,
   ShieldCheck,
   Stethoscope,
   Tag,
+  UsersFour,
   UsersThree,
 } from '@phosphor-icons/react'
 import { clearStaffToken, getStaffMe, getStaffToken, staffLogout } from '../api'
@@ -29,6 +33,11 @@ import QueuePanel from './QueuePanel'
 import ConsultationWorkspace from './ConsultationWorkspace'
 import PharmacyPanel from './PharmacyPanel'
 import PackagesPanel from './PackagesPanel'
+import AuditLogPanel from './AuditLogPanel'
+import DepartmentQueuePanel from './DepartmentQueuePanel'
+import BillingHistoryPanel from './BillingHistoryPanel'
+import PaymentHistoryPanel from './PaymentHistoryPanel'
+import WaitingTimeAnalyticsPanel from './WaitingTimeAnalyticsPanel'
 import AdminSidebar, { type AdminSidebarItem } from './AdminSidebar'
 import AdminTopBar from './AdminTopBar'
 
@@ -39,11 +48,16 @@ type Section =
   | 'queue'
   | 'consultation'
   | 'doctors'
+  | 'department-queue'
   | 'departments'
   | 'appointment-types'
   | 'patients'
   | 'staff-accounts'
+  | 'audit-log'
   | 'billing'
+  | 'billing-history'
+  | 'payment-history'
+  | 'waiting-time-analytics'
   | 'pharmacy'
   | 'packages'
 
@@ -146,6 +160,20 @@ export default function AdminApp() {
     goTo('consultation')
   }
 
+  // GlobalSearchBar's appointment-result click (master spec section
+  // 14): jump straight into the visit in progress when there is one,
+  // otherwise land on the Appointments list, which can find/filter to
+  // it from there -- there's no deep-link-by-id view for a PENDING/
+  // CONFIRMED/COMPLETED appointment to jump into directly the way
+  // ConsultationWorkspace is for a CHECKED_IN one.
+  function goToSearchResult(appointmentId: number, status: string) {
+    if (status === 'CHECKED_IN') {
+      goToConsultation(appointmentId)
+    } else {
+      goTo('appointments')
+    }
+  }
+
   if (checkingSession) {
     return (
       <div className="page">
@@ -219,6 +247,14 @@ export default function AdminApp() {
       group: 'Manage',
     },
     {
+      key: 'department-queue',
+      label: 'Department Queue',
+      icon: <UsersFour size={20} weight="regular" />,
+      active: section === 'department-queue',
+      onSelect: () => goTo('department-queue'),
+      group: 'Manage',
+    },
+    {
       key: 'patients',
       label: 'Patients',
       icon: <UsersThree size={20} weight="regular" />,
@@ -268,6 +304,14 @@ export default function AdminApp() {
             onSelect: () => goTo('staff-accounts'),
             group: 'Admin',
           } satisfies AdminSidebarItem,
+          {
+            key: 'audit-log',
+            label: 'Audit Log',
+            icon: <ClockCounterClockwise size={20} weight="regular" />,
+            active: section === 'audit-log',
+            onSelect: () => goTo('audit-log'),
+            group: 'Admin',
+          } satisfies AdminSidebarItem,
         ]
       : []),
     {
@@ -279,10 +323,27 @@ export default function AdminApp() {
       group: 'Reports',
     },
     {
-      key: 'analytics',
-      label: 'Analytics',
+      key: 'billing-history',
+      label: 'Billing History',
+      icon: <Receipt size={20} weight="regular" />,
+      active: section === 'billing-history',
+      onSelect: () => goTo('billing-history'),
+      group: 'Reports',
+    },
+    {
+      key: 'payment-history',
+      label: 'Payment History',
+      icon: <CreditCard size={20} weight="regular" />,
+      active: section === 'payment-history',
+      onSelect: () => goTo('payment-history'),
+      group: 'Reports',
+    },
+    {
+      key: 'waiting-time-analytics',
+      label: 'Waiting-Time Analytics',
       icon: <ChartLineUp size={20} weight="regular" />,
-      disabled: true,
+      active: section === 'waiting-time-analytics',
+      onSelect: () => goTo('waiting-time-analytics'),
       group: 'Reports',
     },
     {
@@ -300,7 +361,12 @@ export default function AdminApp() {
         <AdminSidebar items={menuItems} />
 
         <main className="admin-content">
-          <AdminTopBar username={staff.username} role={staff.role} onLogout={handleLogout} />
+          <AdminTopBar
+            username={staff.username}
+            role={staff.role}
+            onLogout={handleLogout}
+            onOpenAppointment={goToSearchResult}
+          />
 
           {section === 'dashboard' && (
             <DashboardPanel
@@ -342,11 +408,18 @@ export default function AdminApp() {
             />
           )}
           {section === 'doctors' && <DoctorsPanel key={navResetKey} isAdmin={isAdmin} onGoToQueue={goToQueueForDoctor} />}
+          {section === 'department-queue' && (
+            <DepartmentQueuePanel key={navResetKey} onOpenConsultation={goToConsultation} />
+          )}
           {section === 'departments' && <DepartmentsPanel key={navResetKey} isAdmin={isAdmin} />}
           {section === 'appointment-types' && <AppointmentTypesPanel key={navResetKey} isAdmin={isAdmin} />}
           {section === 'patients' && <PatientsPanel key={navResetKey} />}
           {section === 'staff-accounts' && isAdmin && <StaffAccountsPanel key={navResetKey} />}
+          {section === 'audit-log' && isAdmin && <AuditLogPanel key={navResetKey} />}
           {section === 'billing' && <BillingPanel key={navResetKey} />}
+          {section === 'billing-history' && <BillingHistoryPanel key={navResetKey} />}
+          {section === 'payment-history' && <PaymentHistoryPanel key={navResetKey} />}
+          {section === 'waiting-time-analytics' && <WaitingTimeAnalyticsPanel key={navResetKey} />}
           {section === 'pharmacy' && <PharmacyPanel key={navResetKey} isAdmin={isAdmin} />}
           {section === 'packages' && <PackagesPanel key={navResetKey} isAdmin={isAdmin} />}
         </main>

@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react'
 import { ApiError, createStaffAccount, listStaffAccounts, setStaffAccountActive } from '../api'
-import type { StaffAccount } from '../types'
+import type { StaffAccount, StaffRole } from '../types'
+
+// Every role migrations/0031_rbac_decomposition.sql seeded, now
+// actually assignable (master spec audit gap #3) -- see
+// migrations/0043_role_based_access.sql for what each one beyond
+// ADMIN/STAFF actually grants.
+const STAFF_ROLES: StaffRole[] = ['STAFF', 'ADMIN', 'DOCTOR', 'NURSE', 'RECEPTIONIST', 'LAB_TECH', 'PHARMACIST', 'BILLING']
 import {
   AlertDialog,
   AlertDialogAction,
@@ -16,7 +22,7 @@ export default function StaffAccountsPanel() {
   const [accounts, setAccounts] = useState<StaffAccount[]>([])
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [role, setRole] = useState<'ADMIN' | 'STAFF'>('STAFF')
+  const [role, setRole] = useState<StaffRole>('STAFF')
   const [toggleTarget, setToggleTarget] = useState<StaffAccount | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -88,9 +94,12 @@ export default function StaffAccountsPanel() {
           minLength={8}
           required
         />
-        <select value={role} onChange={(e) => setRole(e.target.value as 'ADMIN' | 'STAFF')}>
-          <option value="STAFF">STAFF</option>
-          <option value="ADMIN">ADMIN</option>
+        <select value={role} onChange={(e) => setRole(e.target.value as StaffRole)}>
+          {STAFF_ROLES.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
         </select>
         <button type="submit" className="btn-sm" disabled={busy}>
           {busy ? 'Saving…' : 'Save'}

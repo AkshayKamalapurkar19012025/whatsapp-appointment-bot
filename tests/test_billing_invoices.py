@@ -471,3 +471,18 @@ def test_billing_independent_of_existing_consultation_payment_flow(client, db_co
     _add_charge(client, appointment_id, admin_headers, amount=300)
     invoice_after = client.get(f"/api/appointments/{appointment_id}/bill", headers=admin_headers).json()
     assert invoice_after["balance"] == 300
+
+
+def test_charge_accepts_consumables_source_type(client, db_connection):
+    """migrations/0046_charges_consumables_source_type.sql -- master
+    spec audit gap: "Consumables specifically has no distinct source
+    type (falls under OTHER)"."""
+    ctx = _checked_in_context(client, db_connection, "Dr. Consumables Charge")
+    invoice = _add_charge(
+        client,
+        ctx["appointment"]["id"],
+        ctx["admin_headers"],
+        description="Gloves and syringes",
+        source_type="CONSUMABLES",
+    )
+    assert invoice["charges"][0]["source_type"] == "CONSUMABLES"

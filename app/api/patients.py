@@ -1,7 +1,7 @@
 from datetime import date
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.staff_auth import get_current_staff
@@ -11,12 +11,24 @@ from app.services.patient_duplicate_detection import decide_duplicate_review, fi
 from app.services.patient_identifiers import resolve_patient_by_identifier, write_phone_identifier
 from app.services.patient_merge import merge_patients, unmerge_patients
 from app.services.patient_timeline_service import get_patient_timeline_service
+from app.services.patient_allergies import (
+    list_patient_allergies_service,
+    add_patient_allergy_service,
+    resolve_patient_allergy_service,
+)
 from app.services.uhid import resolve_patient_by_uhid
 from app.utils.phone import normalize_whatsapp_number
 
 router = APIRouter(
     prefix="/patients",
     tags=["Patients"],
+)
+
+
+_PATIENT_OPTIONAL_DETAIL_COLUMNS = (
+    "email", "alternate_whatsapp_number", "address_line", "city",
+    "state", "pincode", "emergency_contact_name", "emergency_contact_phone",
+    "blood_group",
 )
 
 
@@ -27,6 +39,15 @@ def insert_patient(
     date_of_birth: date | None = None,
     gender: str | None = None,
     government_id: str | None = None,
+    email: str | None = None,
+    alternate_whatsapp_number: str | None = None,
+    address_line: str | None = None,
+    city: str | None = None,
+    state: str | None = None,
+    pincode: str | None = None,
+    emergency_contact_name: str | None = None,
+    emergency_contact_phone: str | None = None,
+    blood_group: str | None = None,
 ):
     """date_of_birth/gender are optional everywhere this is called from
     (admin create_patient below, and app/api/scheduling.py's WhatsApp
@@ -53,16 +74,18 @@ def insert_patient(
     """
     try:
         cur.execute(
-            """
+            f"""
             INSERT INTO patients (
                 name,
                 whatsapp_number,
                 date_of_birth,
                 gender,
-                government_id
+                government_id,
+                {', '.join(_PATIENT_OPTIONAL_DETAIL_COLUMNS)}
             )
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id, government_id, uhid
+            VALUES (%s, %s, %s, %s, %s, {', '.join(['%s'] * len(_PATIENT_OPTIONAL_DETAIL_COLUMNS))})
+            RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id, government_id, uhid,
+                      {', '.join(_PATIENT_OPTIONAL_DETAIL_COLUMNS)}
             """,
             (
                 name,
@@ -70,6 +93,15 @@ def insert_patient(
                 date_of_birth,
                 gender,
                 government_id,
+                email,
+                alternate_whatsapp_number,
+                address_line,
+                city,
+                state,
+                pincode,
+                emergency_contact_name,
+                emergency_contact_phone,
+                blood_group,
             ),
         )
     except psycopg.errors.UniqueViolation:
@@ -91,6 +123,7 @@ def insert_patient(
         "gender": row[4],
         "government_id": row[6],
         "uhid": row[7],
+        **dict(zip(_PATIENT_OPTIONAL_DETAIL_COLUMNS, row[8:])),
     }
 
 
@@ -132,8 +165,33 @@ class _PatientFieldValidators:
             raise ValueError("gender must be one of MALE, FEMALE, OTHER")
         return value
 
+    @field_validator("blood_group")
+    @classmethod
+    def validate_blood_group(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value not in ("A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"):
+            raise ValueError("blood_group must be one of A+, A-, B+, B-, AB+, AB-, O+, O-")
+        return value
 
-class PatientCreate(_PatientFieldValidators, BaseModel):
+
+# migrations/0045_patient_registration_fields.sql: the spec's mock
+# registration layout (section 17) beyond name/mobile/DOB/gender --
+# every one of these is optional everywhere, same as date_of_birth/
+# gender already were, never blocking fast walk-in registration.
+class _PatientOptionalDetails(BaseModel):
+    email: str | None = None
+    alternate_whatsapp_number: str | None = None
+    address_line: str | None = None
+    city: str | None = None
+    state: str | None = None
+    pincode: str | None = None
+    emergency_contact_name: str | None = None
+    emergency_contact_phone: str | None = None
+    blood_group: str | None = None
+
+
+class PatientCreate(_PatientFieldValidators, _PatientOptionalDetails, BaseModel):
     name: str = Field(min_length=1, max_length=150)
     whatsapp_number: str = Field(min_length=1, max_length=30)
     # Optional -- fast registration (especially for a walk-in) must
@@ -147,7 +205,7 @@ class PatientCreate(_PatientFieldValidators, BaseModel):
     government_id: str | None = None
 
 
-class PatientUpdate(_PatientFieldValidators, BaseModel):
+class PatientUpdate(_PatientFieldValidators, _PatientOptionalDetails, BaseModel):
     """For PATCH /patients/{id} -- staff correcting a patient's name or
     WhatsApp number discovered wrong during front-desk verification.
     Same two required fields, same validation as PatientCreate, plus
@@ -165,43 +223,35 @@ class PatientUpdate(_PatientFieldValidators, BaseModel):
     government_id: str | None = None
 
 
-@router.get("")
-def get_patients(staff: dict = Depends(get_current_staff)):
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT
-                    p.id,
-                    p.name,
-                    p.whatsapp_number,
-                    -- a.status::text: see availability_engine.py's
-                    -- get_available_slots for why (enum-typed
-                    -- appointments.status on some databases).
-                    COUNT(a.id) FILTER (WHERE NOT (a.status::text = ANY(ARRAY['CANCELLED', 'REJECTED']))),
-                    p.date_of_birth,
-                    p.gender,
-                    -- Most recent real appointment (same exclusion as
-                    -- appointment_count above), an audit-log-style "when
-                    -- did this happen" fact -- see the OPD Patients-page
-                    -- redesign report for why this is deliberately NOT
-                    -- converted to any one doctor's local time the way an
-                    -- appointment slot time is (a patient's history can
-                    -- span doctors in different timezones; format.ts's
-                    -- formatDateTime renders this in the viewer's own
-                    -- local time instead, the same convention already
-                    -- used for created_at elsewhere in this app).
-                    MAX(a.start_at) FILTER (WHERE NOT (a.status::text = ANY(ARRAY['CANCELLED', 'REJECTED']))),
-                    p.uhid
-                FROM patients p
-                LEFT JOIN appointments a ON a.patient_id = p.id
-                GROUP BY p.id, p.name, p.whatsapp_number, p.date_of_birth, p.gender, p.uhid
-                ORDER BY p.name
-                """
-            )
+_PATIENT_LIST_SELECT = """
+    SELECT
+        p.id,
+        p.name,
+        p.whatsapp_number,
+        -- a.status::text: see availability_engine.py's
+        -- get_available_slots for why (enum-typed
+        -- appointments.status on some databases).
+        COUNT(a.id) FILTER (WHERE NOT (a.status::text = ANY(ARRAY['CANCELLED', 'REJECTED']))),
+        p.date_of_birth,
+        p.gender,
+        -- Most recent real appointment (same exclusion as
+        -- appointment_count above), an audit-log-style "when
+        -- did this happen" fact -- see the OPD Patients-page
+        -- redesign report for why this is deliberately NOT
+        -- converted to any one doctor's local time the way an
+        -- appointment slot time is (a patient's history can
+        -- span doctors in different timezones; format.ts's
+        -- formatDateTime renders this in the viewer's own
+        -- local time instead, the same convention already
+        -- used for created_at elsewhere in this app).
+        MAX(a.start_at) FILTER (WHERE NOT (a.status::text = ANY(ARRAY['CANCELLED', 'REJECTED']))),
+        p.uhid
+    FROM patients p
+    LEFT JOIN appointments a ON a.patient_id = p.id
+"""
 
-            rows = cur.fetchall()
 
+def _patient_list_row_to_dict(row) -> dict:
     # "Recurring" here means the patient has more than one appointment
     # on record that was never cancelled or rejected (2+ real requests
     # that were, or still could be, actual visits); 0 or 1 reads as
@@ -212,20 +262,74 @@ def get_patients(staff: dict = Depends(get_current_staff)):
     # caller, but the OPD Patients page no longer treats this as the
     # patient's primary/permanent attribute -- see last_visit_at/
     # appointment_count instead, which the redesigned page actually shows.
-    return [
-        {
-            "id": row[0],
-            "name": row[1],
-            "whatsapp_number": row[2],
-            "appointment_count": row[3],
-            "patient_type": "recurring" if row[3] > 1 else "first-time",
-            "date_of_birth": row[4].isoformat() if row[4] else None,
-            "gender": row[5],
-            "last_visit_at": row[6].isoformat() if row[6] else None,
-            "uhid": row[7],
-        }
-        for row in rows
-    ]
+    return {
+        "id": row[0],
+        "name": row[1],
+        "whatsapp_number": row[2],
+        "appointment_count": row[3],
+        "patient_type": "recurring" if row[3] > 1 else "first-time",
+        "date_of_birth": row[4].isoformat() if row[4] else None,
+        "gender": row[5],
+        "last_visit_at": row[6].isoformat() if row[6] else None,
+        "uhid": row[7],
+    }
+
+
+@router.get("")
+def get_patients(staff: dict = Depends(get_current_staff)):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"{_PATIENT_LIST_SELECT} GROUP BY p.id, p.name, p.whatsapp_number, p.date_of_birth, p.gender, p.uhid ORDER BY p.name")
+            rows = cur.fetchall()
+
+    return [_patient_list_row_to_dict(row) for row in rows]
+
+
+@router.get("/admin")
+def get_patients_admin(
+    search: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    staff: dict = Depends(get_current_staff),
+):
+    """Paginated, server-searched patient registry (OPD/HIMS master
+    spec section 62/80: "do not load thousands of rows into the
+    browser") -- the admin Patients page's own listing. GET "" above is
+    unchanged and still returns everything unpaginated: it has its own
+    caller (AppointmentsPanel's per-row patient lookup map) that needs
+    the full set, not a page of it, so it's left exactly as it was
+    rather than risk breaking that with a shape change.
+    """
+    where = ""
+    params: list = []
+    if search and search.strip():
+        needle = f"%{search.strip()}%"
+        where = "WHERE (p.name ILIKE %s OR p.whatsapp_number ILIKE %s OR p.uhid ILIKE %s)"
+        params = [needle, needle, needle]
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) FROM patients p {where}", params)
+            (total,) = cur.fetchone()
+
+            cur.execute(
+                f"""
+                {_PATIENT_LIST_SELECT}
+                {where}
+                GROUP BY p.id, p.name, p.whatsapp_number, p.date_of_birth, p.gender, p.uhid
+                ORDER BY p.name
+                LIMIT %s OFFSET %s
+                """,
+                params + [limit, offset],
+            )
+            rows = cur.fetchall()
+
+    return {
+        "items": [_patient_list_row_to_dict(row) for row in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.get("/search")
@@ -335,6 +439,7 @@ def create_patient(
                 patient.date_of_birth,
                 patient.gender,
                 patient.government_id,
+                **patient.model_dump(include=set(_PATIENT_OPTIONAL_DETAIL_COLUMNS)),
             )
 
             if created_patient is None:
@@ -392,16 +497,18 @@ def update_patient(
                 )
 
             cur.execute(
-                """
+                f"""
                 UPDATE patients
                 SET name = %s,
                     whatsapp_number = %s,
                     date_of_birth = %s,
                     gender = %s,
                     government_id = %s,
+                    {', '.join(f'{col} = %s' for col in _PATIENT_OPTIONAL_DETAIL_COLUMNS)},
                     updated_at = NOW()
                 WHERE id = %s
-                RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id, government_id, uhid
+                RETURNING id, name, whatsapp_number, date_of_birth, gender, hospital_id, government_id, uhid,
+                          {', '.join(_PATIENT_OPTIONAL_DETAIL_COLUMNS)}
                 """,
                 (
                     patient.name,
@@ -409,6 +516,7 @@ def update_patient(
                     patient.date_of_birth,
                     patient.gender,
                     patient.government_id,
+                    *(getattr(patient, col) for col in _PATIENT_OPTIONAL_DETAIL_COLUMNS),
                     patient_id,
                 ),
             )
@@ -428,6 +536,7 @@ def update_patient(
         "gender": row[4],
         "government_id": row[6],
         "uhid": row[7],
+        **dict(zip(_PATIENT_OPTIONAL_DETAIL_COLUMNS, row[8:])),
     }
 
 
@@ -555,3 +664,74 @@ def decide_duplicate_review_endpoint(
                 )
 
     return {"review_id": review_id, "decision": body.decision}
+
+
+# ---------------------------------------------------------------------
+# Allergies (master spec section 91's clinical-safety UX requirement)
+# -- bare-staff for both read and write, same tier as vitals: recording
+# a known allergy is routine clinical documentation, not an admin
+# action.
+# ---------------------------------------------------------------------
+
+
+class AllergyCreate(BaseModel):
+    allergen: str = Field(min_length=1)
+    reaction: str | None = None
+    severity: str | None = None
+
+    @field_validator("severity")
+    @classmethod
+    def validate_severity(cls, value: str | None) -> str | None:
+        if value is not None and value not in ("MILD", "MODERATE", "SEVERE"):
+            raise ValueError("severity must be one of MILD, MODERATE, SEVERE")
+        return value
+
+
+class AllergyResolve(BaseModel):
+    reason: str = Field(min_length=1)
+
+
+@router.get("/{patient_id}/allergies")
+def get_patient_allergies(patient_id: int, staff: dict = Depends(get_current_staff)):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                return list_patient_allergies_service(cur, patient_id, hospital_id=staff["hospital_id"])
+            except svc_exc.PatientNotFound:
+                raise HTTPException(status_code=404, detail="Patient not found")
+
+
+@router.post("/{patient_id}/allergies")
+def add_patient_allergy(
+    patient_id: int,
+    body: AllergyCreate,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                return add_patient_allergy_service(
+                    cur, patient_id, staff_id=staff["id"], hospital_id=staff["hospital_id"],
+                    allergen=body.allergen, reaction=body.reaction, severity=body.severity,
+                )
+            except svc_exc.PatientNotFound:
+                raise HTTPException(status_code=404, detail="Patient not found")
+
+
+@router.post("/{patient_id}/allergies/{allergy_id}/resolve")
+def resolve_patient_allergy(
+    patient_id: int,
+    allergy_id: int,
+    body: AllergyResolve,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                return resolve_patient_allergy_service(
+                    cur, patient_id, allergy_id, staff_id=staff["id"], hospital_id=staff["hospital_id"], reason=body.reason,
+                )
+            except svc_exc.PatientNotFound:
+                raise HTTPException(status_code=404, detail="Patient not found")
+            except svc_exc.AllergyNotFound:
+                raise HTTPException(status_code=404, detail="Allergy not found")
