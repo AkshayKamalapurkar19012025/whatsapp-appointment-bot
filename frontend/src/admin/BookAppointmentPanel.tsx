@@ -35,6 +35,33 @@ function addDays(dateStr: string, days: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+// The patient search box below accepts free text (name, mobile number,
+// or UHID all go through the same field) -- there's no PhoneInput-style
+// "+91" prefix/10-digit cap to stop someone from fat-fingering a phone
+// number here the way there is on the registration form. A malformed
+// attempt (a stray leading sign, too many/too few digits) will never
+// substring-match a real patients.whatsapp_number (always exactly
+// "+91" + 10 digits, per app/utils/phone.py's normalization), so it
+// silently falls through to the generic "No existing patient found" --
+// indistinguishable, from the receptionist's side, from the patient
+// genuinely not being on file. That's the failure mode this exists to
+// catch: a query that's clearly an attempted phone number (mostly/only
+// digits, with an optional leading +/-) but isn't shaped like a valid
+// one, so the empty-results state can say so instead of quietly
+// inviting a duplicate registration.
+function looksLikeMistypedPhoneNumber(query: string): boolean {
+  const stripped = query.replace(/[\s\-()]/g, '')
+  const match = stripped.match(/^[+-]?(\d+)$/)
+  if (!match) return false
+  const digits = match[1]
+  // Too short to plausibly be a finished phone number yet (still
+  // mid-typed) -- not flagged, so every few-digit keystroke on the way
+  // to a real number doesn't flash an error.
+  if (digits.length < 7) return false
+  const isValidShape = digits.length === 10 || (digits.length === 12 && digits.startsWith('91'))
+  return !isValidShape
+}
+
 // A dedicated page for the one thing it does: put a new appointment on
 // the calendar for a patient who isn't booking it themselves (phone
 // call, walk-in, etc.) -- kept separate from the Appointments section
@@ -672,6 +699,14 @@ export default function BookAppointmentPanel({
                         })}
                       </ul>
                     </>
+                  ) : looksLikeMistypedPhoneNumber(searchNeedle) ? (
+                    <div className="book-patient-no-results">
+                      <p>That doesn't look like a valid mobile number</p>
+                      <p className="muted">
+                        Expected a 10-digit Indian mobile number, optionally with a +91 country
+                        code. Double-check what was typed before registering a new patient.
+                      </p>
+                    </div>
                   ) : (
                     <div className="book-patient-no-results">
                       <p>No existing patient found</p>
