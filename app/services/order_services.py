@@ -158,6 +158,75 @@ def list_orders_service(cur, appointment_id: int):
     return orders
 
 
+_WORKLIST_COLUMNS = (
+    "id", "encounter_id", "appointment_id", "order_type", "description",
+    "clinical_indication", "priority", "status", "external_destination",
+    "ordering_doctor_id", "doctor_name", "ordered_at",
+    "patient_id", "patient_name", "uhid",
+)
+
+
+def list_worklist_orders_service(cur, hospital_id: int, *, order_type: str | None = None, status: str | None = None):
+    """
+    Cross-patient worklist for lab/radiology techs (OPD/HIMS master
+    spec Phase 6/7's originally-anticipated "future worklist" --
+    orders_open_by_type_idx, migrations/0030_orders.sql, was added for
+    exactly this and unused until now). Unlike list_orders_service
+    (one appointment's own encounter), this spans every patient in the
+    hospital -- the whole point of a shared worklist a tech works down,
+    rather than hunting through each patient's own consultation.
+
+    Defaults to open work (ORDERED/IN_PROGRESS) when status isn't
+    given; pass a specific status to review completed/cancelled orders
+    instead. order_type narrows to one type (LAB or RADIOLOGY from the
+    worklist screen, though any of the 5 order types works here).
+
+    Relies on one appointment existing per encounter (true for every
+    encounter this app creates via the check-in flow) to resolve each
+    order back to the appointment_id the existing per-appointment
+    result-entry endpoint needs -- nothing enforces that as a DB-level
+    uniqueness constraint, so a JOIN here (rather than a scalar
+    subquery) would silently duplicate a row if that ever stopped
+    holding; worth revisiting if encounters ever gain multiple
+    appointments.
+    """
+    where = ["e.hospital_id = %s"]
+    params: list = [hospital_id]
+
+    if status:
+        where.append("o.status = %s")
+        params.append(status)
+    else:
+        where.append("o.status IN ('ORDERED', 'IN_PROGRESS')")
+
+    if order_type:
+        where.append("o.order_type = %s")
+        params.append(order_type)
+
+    cur.execute(
+        f"""
+        SELECT o.id, o.encounter_id, a.id, o.order_type, o.description,
+               o.clinical_indication, o.priority, o.status, o.external_destination,
+               o.ordering_doctor_id, d.name, o.ordered_at,
+               p.id, p.name, p.uhid
+        FROM orders o
+        JOIN encounters e ON e.id = o.encounter_id
+        JOIN appointments a ON a.encounter_id = e.id
+        JOIN patients p ON p.id = e.patient_id
+        JOIN doctors d ON d.id = o.ordering_doctor_id
+        WHERE {" AND ".join(where)}
+        ORDER BY
+            CASE o.priority WHEN 'STAT' THEN 0 WHEN 'URGENT' THEN 1 ELSE 2 END,
+            o.ordered_at
+        """,
+        params,
+    )
+    rows = [dict(zip(_WORKLIST_COLUMNS, row)) for row in cur.fetchall()]
+    for row in rows:
+        row["ordered_at"] = row["ordered_at"].isoformat()
+    return rows
+
+
 def cancel_order_service(cur, appointment_id: int, order_id: int, *, staff_id: int, reason: str):
     """Cancels one order -- requires a reason (master spec section 90:
     a dangerous/destructive action needs a stated reason, not a silent

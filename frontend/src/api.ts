@@ -32,6 +32,8 @@ import type {
   ExceptionsResponse,
   OrderInput,
   OrderResultItemInput,
+  OrderStatus,
+  WorklistOrder,
   Package,
   PackageInput,
   PaymentReceipt,
@@ -790,6 +792,19 @@ export function recordOrderResult(
     auth: 'staff',
     body: { items },
   })
+}
+
+// -- Lab/Radiology Worklist (cross-patient, GET /orders/worklist) ---------
+
+export function listWorklistOrders(params?: {
+  orderType?: 'LAB' | 'RADIOLOGY'
+  status?: OrderStatus
+}): Promise<WorklistOrder[]> {
+  const query = new URLSearchParams()
+  if (params?.orderType) query.set('order_type', params.orderType)
+  if (params?.status) query.set('status', params.status)
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  return request(`/orders/worklist${suffix}`, { auth: 'staff' })
 }
 
 export function assignDoctorToDepartment(

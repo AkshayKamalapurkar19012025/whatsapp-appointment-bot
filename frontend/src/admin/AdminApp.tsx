@@ -6,6 +6,7 @@ import {
   ClockCounterClockwise,
   CreditCard,
   CurrencyInr,
+  Flask,
   Gauge,
   GearSix,
   Gift,
@@ -38,6 +39,7 @@ import DepartmentQueuePanel from './DepartmentQueuePanel'
 import BillingHistoryPanel from './BillingHistoryPanel'
 import PaymentHistoryPanel from './PaymentHistoryPanel'
 import WaitingTimeAnalyticsPanel from './WaitingTimeAnalyticsPanel'
+import LabRadiologyWorklistPanel from './LabRadiologyWorklistPanel'
 import AdminSidebar, { type AdminSidebarItem } from './AdminSidebar'
 import AdminTopBar from './AdminTopBar'
 
@@ -60,6 +62,7 @@ type Section =
   | 'waiting-time-analytics'
   | 'pharmacy'
   | 'packages'
+  | 'lab-worklist'
 
 // Master spec audit Principle 5 ("Reception/Nurse/Doctor/Lab/
 // Radiology/Pharmacist/Cashier/Admin see different workflows"):
@@ -91,13 +94,13 @@ const ROLE_VISIBLE_SECTIONS: Partial<Record<StaffRole, Set<Section>>> = {
   DOCTOR: new Set<Section>([
     'dashboard', 'appointments', 'book-appointment', 'queue', 'consultation', 'department-queue', 'patients',
   ]),
-  // No dedicated lab worklist screen exists yet (orders/results are
-  // reached through ConsultationWorkspace, part of the doctor's own
-  // flow) -- LAB_TECH gets the same narrow set RECEPTIONIST/DOCTOR do
-  // minus Department Queue, not a meaningfully differentiated
-  // workflow. Flagged here rather than pretended away; building a real
-  // one is separate, larger, explicitly out-of-scope work.
-  LAB_TECH: new Set<Section>(['dashboard', 'appointments', 'patients']),
+  // Lab Worklist (LabRadiologyWorklistPanel.tsx) closes the gap the
+  // comment here used to flag: a cross-patient view of every open LAB/
+  // RADIOLOGY order, filterable by type, with the same result-entry
+  // form ConsultationWorkspace's Orders tab uses -- LAB_TECH's first
+  // real, differentiated workflow rather than the doctor's own screens
+  // reused minus a section.
+  LAB_TECH: new Set<Section>(['dashboard', 'lab-worklist', 'appointments', 'patients']),
   PHARMACIST: new Set<Section>(['dashboard', 'pharmacy', 'patients']),
   BILLING: new Set<Section>([
     'dashboard', 'appointments', 'patients', 'billing', 'billing-history', 'payment-history',
@@ -114,6 +117,7 @@ const ROLE_LANDING_SECTION: Partial<Record<StaffRole, Section>> = {
   DOCTOR: 'department-queue',
   PHARMACIST: 'pharmacy',
   BILLING: 'billing-history',
+  LAB_TECH: 'lab-worklist',
 }
 
 // Nothing in this component clears staff/getStaffToken() when `section`
@@ -274,6 +278,10 @@ export default function AdminApp() {
   const canWriteConsultation = isAdmin || staff.role === 'STAFF' || staff.role === 'DOCTOR'
   const canCreateOrders = canWriteConsultation
   const canCreatePrescriptions = canWriteConsultation
+  // order.result (migrations/0051) -- ADMIN/STAFF/DOCTOR keep the same
+  // access as every other clinical-documentation gate; LAB_TECH is the
+  // new addition, the Lab Worklist's whole reason to exist.
+  const canRecordOrderResults = isAdmin || staff.role === 'STAFF' || staff.role === 'DOCTOR' || staff.role === 'LAB_TECH'
   const visibleSections = ROLE_VISIBLE_SECTIONS[staff.role]
 
   // Recurring schedule management is ADMIN-only per the RBAC design
@@ -373,6 +381,14 @@ export default function AdminApp() {
       icon: <Gift size={20} weight="regular" />,
       active: section === 'packages',
       onSelect: () => goTo('packages'),
+      group: 'Manage',
+    },
+    {
+      key: 'lab-worklist',
+      label: 'Lab Worklist',
+      icon: <Flask size={20} weight="regular" />,
+      active: section === 'lab-worklist',
+      onSelect: () => goTo('lab-worklist'),
       group: 'Manage',
     },
     ...(isAdmin
@@ -515,6 +531,9 @@ export default function AdminApp() {
           {section === 'waiting-time-analytics' && <WaitingTimeAnalyticsPanel key={navResetKey} />}
           {section === 'pharmacy' && <PharmacyPanel key={navResetKey} canManageStock={canManageStock} />}
           {section === 'packages' && <PackagesPanel key={navResetKey} isAdmin={isAdmin} />}
+          {section === 'lab-worklist' && (
+            <LabRadiologyWorklistPanel key={navResetKey} canRecordResults={canRecordOrderResults} />
+          )}
         </main>
       </div>
     </div>

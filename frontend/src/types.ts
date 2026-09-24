@@ -859,6 +859,30 @@ export interface ClinicalOrder {
   results: OrderResultItem[]
 }
 
+// One row of GET /orders/worklist -- the cross-patient Lab/Radiology
+// Worklist screen's shape, distinct from ClinicalOrder (one
+// appointment's own encounter): carries patient/doctor identity and
+// the appointment_id needed to call the existing per-appointment
+// result-entry endpoint, and has no `results` (a worklist row is
+// always still-open work, never one already carrying a result).
+export interface WorklistOrder {
+  id: number
+  encounter_id: number
+  appointment_id: number
+  order_type: OrderType
+  description: string
+  clinical_indication: string | null
+  priority: OrderPriority
+  status: OrderStatus
+  external_destination: string | null
+  ordering_doctor_id: number
+  doctor_name: string
+  ordered_at: string
+  patient_id: number
+  patient_name: string
+  uhid: string
+}
+
 export interface OrderInput {
   order_type: OrderType
   description: string

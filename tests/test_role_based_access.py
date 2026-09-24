@@ -193,6 +193,37 @@ def test_doctor_can_create_orders_pharmacist_cannot(client, db_connection):
     assert allowed.status_code == 200
 
 
+def test_lab_tech_can_record_order_result_receptionist_cannot(client, db_connection):
+    # migrations/0051 -- the Lab/Radiology Worklist screen's whole
+    # reason to exist: LAB_TECH held zero permission rows across every
+    # prior RBAC migration (0031/0043/0048) until this one.
+    ctx = _checked_in_context(client, db_connection, "Dr. RBAC OrderResult")
+    admin_headers = ctx["admin_headers"]
+    order = client.post(
+        f"/api/appointments/{ctx['appointment_id']}/orders",
+        json={"order_type": "LAB", "description": "CBC"},
+        headers=admin_headers,
+    ).json()
+    result_body = {"items": [{"parameter": "Hemoglobin", "result_value": "13.5", "unit": "g/dL"}]}
+
+    receptionist_headers = create_staff_and_get_headers(db_connection, role="RECEPTIONIST")
+    denied = client.post(
+        f"/api/appointments/{ctx['appointment_id']}/orders/{order['id']}/result",
+        json=result_body,
+        headers=receptionist_headers,
+    )
+    assert denied.status_code == 403
+
+    lab_tech_headers = create_staff_and_get_headers(db_connection, role="LAB_TECH")
+    allowed = client.post(
+        f"/api/appointments/{ctx['appointment_id']}/orders/{order['id']}/result",
+        json=result_body,
+        headers=lab_tech_headers,
+    )
+    assert allowed.status_code == 200
+    assert allowed.json()["status"] == "COMPLETED"
+
+
 def test_doctor_can_create_and_prescribe_prescription_billing_cannot(client, db_connection):
     ctx = _checked_in_context(client, db_connection, "Dr. RBAC Prescription")
     body = {"medicine_name": "Paracetamol", "dosage": "500mg", "frequency": "TID", "duration": "3 days", "quantity": 9}
@@ -248,3 +279,10 @@ def test_staff_keeps_full_clinical_documentation_access(client, db_connection):
         headers=staff_headers,
     )
     assert prescription.status_code == 200
+
+    result = client.post(
+        f"/api/appointments/{ctx['appointment_id']}/orders/{order.json()['id']}/result",
+        json={"items": [{"parameter": "Finding", "result_value": "Normal"}]},
+        headers=staff_headers,
+    )
+    assert result.status_code == 200

@@ -281,3 +281,160 @@ def test_cancel_order_requires_staff_auth(client, db_connection):
         json={"reason": "No auth"},
     )
     assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------
+# Worklist (GET /api/orders/worklist) -- the cross-patient view the Lab/
+# Radiology Worklist screen is built on, unlike every other endpoint
+# above which is scoped to one appointment's own encounter.
+# ---------------------------------------------------------------------
+
+
+def test_worklist_defaults_to_open_orders_across_patients(client, db_connection):
+    ctx_a = _checked_in_context(client, db_connection, "Dr. Worklist A")
+    ctx_b = _checked_in_context(client, db_connection, "Dr. Worklist B")
+
+    order_a = client.post(
+        f"/api/appointments/{ctx_a['appointment']['id']}/orders",
+        json={"order_type": "LAB", "description": "CBC"},
+        headers=ctx_a["admin_headers"],
+    ).json()
+    order_b = client.post(
+        f"/api/appointments/{ctx_b['appointment']['id']}/orders",
+        json={"order_type": "RADIOLOGY", "description": "Chest X-ray"},
+        headers=ctx_b["admin_headers"],
+    ).json()
+
+    response = client.get("/api/orders/worklist", headers=ctx_a["admin_headers"])
+    assert response.status_code == 200
+    ids = {row["id"] for row in response.json()}
+    assert {order_a["id"], order_b["id"]} <= ids
+    for row in response.json():
+        if row["id"] == order_a["id"]:
+            assert row["status"] == "ORDERED"
+            assert row["appointment_id"] == ctx_a["appointment"]["id"]
+            assert row["patient_name"] == ctx_a["patient"]["name"]
+            assert row["order_type"] == "LAB"
+
+
+def test_worklist_excludes_completed_and_cancelled_by_default(client, db_connection):
+    ctx = _checked_in_context(client, db_connection, "Dr. Worklist Excl")
+    appointment_id = ctx["appointment"]["id"]
+    admin_headers = ctx["admin_headers"]
+
+    completed = client.post(
+        f"/api/appointments/{appointment_id}/orders",
+        json={"order_type": "LAB", "description": "Will be completed"},
+        headers=admin_headers,
+    ).json()
+    client.post(
+        f"/api/appointments/{appointment_id}/orders/{completed['id']}/result",
+        json={"items": [{"parameter": "Result", "result_value": "Normal"}]},
+        headers=admin_headers,
+    )
+
+    cancelled = client.post(
+        f"/api/appointments/{appointment_id}/orders",
+        json={"order_type": "LAB", "description": "Will be cancelled"},
+        headers=admin_headers,
+    ).json()
+    client.post(
+        f"/api/appointments/{appointment_id}/orders/{cancelled['id']}/cancel",
+        json={"reason": "Not needed"},
+        headers=admin_headers,
+    )
+
+    still_open = client.post(
+        f"/api/appointments/{appointment_id}/orders",
+        json={"order_type": "LAB", "description": "Still open"},
+        headers=admin_headers,
+    ).json()
+
+    response = client.get("/api/orders/worklist", headers=admin_headers)
+    ids = {row["id"] for row in response.json()}
+    assert completed["id"] not in ids
+    assert cancelled["id"] not in ids
+    assert still_open["id"] in ids
+
+    completed_only = client.get(
+        "/api/orders/worklist", params={"status": "COMPLETED"}, headers=admin_headers
+    )
+    assert completed["id"] in {row["id"] for row in completed_only.json()}
+
+
+def test_worklist_filters_by_order_type(client, db_connection):
+    ctx = _checked_in_context(client, db_connection, "Dr. Worklist Type")
+    appointment_id = ctx["appointment"]["id"]
+    admin_headers = ctx["admin_headers"]
+
+    lab_order = client.post(
+        f"/api/appointments/{appointment_id}/orders",
+        json={"order_type": "LAB", "description": "CBC"},
+        headers=admin_headers,
+    ).json()
+    radiology_order = client.post(
+        f"/api/appointments/{appointment_id}/orders",
+        json={"order_type": "RADIOLOGY", "description": "MRI"},
+        headers=admin_headers,
+    ).json()
+
+    lab_only = client.get("/api/orders/worklist", params={"order_type": "LAB"}, headers=admin_headers)
+    lab_ids = {row["id"] for row in lab_only.json()}
+    assert lab_order["id"] in lab_ids
+    assert radiology_order["id"] not in lab_ids
+
+
+def test_worklist_orders_stat_before_routine(client, db_connection):
+    ctx = _checked_in_context(client, db_connection, "Dr. Worklist Priority")
+    appointment_id = ctx["appointment"]["id"]
+    admin_headers = ctx["admin_headers"]
+
+    routine = client.post(
+        f"/api/appointments/{appointment_id}/orders",
+        json={"order_type": "LAB", "description": "Routine CBC", "priority": "ROUTINE"},
+        headers=admin_headers,
+    ).json()
+    stat = client.post(
+        f"/api/appointments/{appointment_id}/orders",
+        json={"order_type": "LAB", "description": "STAT Troponin", "priority": "STAT"},
+        headers=admin_headers,
+    ).json()
+
+    response = client.get("/api/orders/worklist", headers=admin_headers)
+    ids_in_order = [row["id"] for row in response.json()]
+    assert ids_in_order.index(stat["id"]) < ids_in_order.index(routine["id"])
+
+
+def test_worklist_requires_staff_auth(client, db_connection):
+    response = client.get("/api/orders/worklist")
+    assert response.status_code == 401
+
+
+def test_worklist_is_isolated_by_hospital(client, db_connection):
+    # Same "invisible against the single seeded hospital" risk this
+    # session's earlier appointments.hospital_id fix (test_admin_
+    # appointments.py) guarded against -- a fresh cross-patient query
+    # is exactly where a hospital_id mistake would first show up.
+    # Exercised against the service directly (no API to create a
+    # second hospital/staff account yet, same rationale as that
+    # earlier test).
+    from app.services.order_services import list_worklist_orders_service
+
+    ctx = _checked_in_context(client, db_connection, "Dr. Worklist Hospital")
+    order = client.post(
+        f"/api/appointments/{ctx['appointment']['id']}/orders",
+        json={"order_type": "LAB", "description": "CBC"},
+        headers=ctx["admin_headers"],
+    ).json()
+
+    with db_connection.cursor() as cur:
+        cur.execute(
+            "SELECT hospital_id FROM encounters WHERE id = %s", (order["encounter_id"],)
+        )
+        (real_hospital_id,) = cur.fetchone()
+
+        own_hospital = list_worklist_orders_service(cur, real_hospital_id)
+        assert order["id"] in {row["id"] for row in own_hospital}
+
+        other_hospital = list_worklist_orders_service(cur, real_hospital_id + 1000000)
+        assert order["id"] not in {row["id"] for row in other_hospital}
