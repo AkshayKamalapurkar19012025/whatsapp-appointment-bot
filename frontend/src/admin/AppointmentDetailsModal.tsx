@@ -12,6 +12,7 @@ import {
 } from '../api'
 import { describeArrival, formatDate, formatDateTime, formatTime } from '../format'
 import { AppointmentActionButtons, buildAppointmentActions, type AppointmentActionHandlers } from './AppointmentActions'
+import AppointmentSlipModal from './AppointmentSlipModal'
 
 const PAYMENT_METHODS = ['CASH', 'UPI', 'CARD', 'OTHER'] as const
 
@@ -421,6 +422,8 @@ export default function AppointmentDetailsModal({
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [onClose])
 
+  const [showSlip, setShowSlip] = useState(false)
+
   // "View details" is meaningless from inside the details view it
   // opens; "Collect Payment"/"Waive Charge" are redundant with
   // PaymentSection's own real form above -- all three filtered out
@@ -487,12 +490,18 @@ export default function AppointmentDetailsModal({
 
         <p className="muted appointment-details-booked-on">Booked on {formatDateTime(appointment.created_at)}</p>
 
+        <button type="button" className="btn-secondary btn btn-sm" onClick={() => setShowSlip(true)}>
+          Print Appointment Slip
+        </button>
+
         <PaymentSection appointment={appointment} isAdmin={isAdmin} onUpdated={onPaymentUpdated} />
 
         <div className="appointment-details-actions">
           <AppointmentActionButtons actions={actions} busy={busy} />
         </div>
       </div>
+
+      {showSlip && <AppointmentSlipModal appointmentId={appointment.id} onClose={() => setShowSlip(false)} />}
     </div>,
     document.body,
   )

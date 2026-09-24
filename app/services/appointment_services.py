@@ -1480,6 +1480,84 @@ def get_invoice_service(cur, appointment_id: int):
     }
 
 
+def get_appointment_slip_service(cur, appointment_id: int):
+    """The printable OPD Appointment Slip (Printing phase section 3):
+    everything a patient carries away from booking, before check-in --
+    callable any time an appointment exists, independent of its status,
+    the same "independent of status" contract get_invoice_service/get_
+    consultation_charge_service already follow.
+
+    department_name is the doctor's own department (doctor_departments,
+    LEFT JOIN'd the same "pick whichever one row comes first" way
+    app/api/appointment_types.py's get_appointment_type already does for
+    a doctor who's assigned to more than one) -- an appointment has no
+    department of its own, only its doctor does.
+    """
+    cur.execute(
+        """
+        SELECT
+            h.name,
+            a.appointment_number,
+            p.name,
+            p.uhid,
+            p.whatsapp_number,
+            d.name,
+            dep.name,
+            at.name,
+            a.start_at,
+            a.end_at,
+            a.status,
+            a.created_at
+        FROM appointments a
+        JOIN hospitals h ON h.id = a.hospital_id
+        JOIN patients p ON p.id = a.patient_id
+        JOIN doctors d ON d.id = a.doctor_id
+        JOIN appointment_types at ON at.id = a.appointment_type_id
+        LEFT JOIN doctor_departments dd ON dd.doctor_id = d.id
+        LEFT JOIN departments dep ON dep.id = dd.department_id
+        WHERE a.id = %s
+        ORDER BY dep.name NULLS LAST
+        LIMIT 1
+        """,
+        (appointment_id,),
+    )
+    row = cur.fetchone()
+
+    if row is None:
+        raise AppointmentNotFound()
+
+    (
+        hospital_name,
+        appointment_number,
+        patient_name,
+        patient_uhid,
+        patient_contact,
+        doctor_name,
+        department_name,
+        visit_type,
+        start_at,
+        end_at,
+        status,
+        created_at,
+    ) = row
+
+    return {
+        "appointment_id": appointment_id,
+        "hospital_name": hospital_name,
+        "appointment_number": appointment_number,
+        "patient_name": patient_name,
+        "patient_uhid": patient_uhid,
+        "patient_contact": patient_contact,
+        "doctor_name": doctor_name,
+        "department_name": department_name,
+        "visit_type": visit_type,
+        "start_at": start_at.isoformat(),
+        "end_at": end_at.isoformat(),
+        "status": status,
+        "booked_at": created_at.isoformat(),
+    }
+
+
 def add_invoice_line_item_service(cur, appointment_id: int, *, description: str, amount, staff_id: int):
     """
     ADMIN adds an ad-hoc charge to an appointment's bill, on top of its

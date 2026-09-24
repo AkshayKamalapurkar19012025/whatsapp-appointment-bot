@@ -6,6 +6,7 @@ import type {
   AppointmentTypeAdminRow,
   AppointmentTypeDetail,
   AppointmentTypeSummary,
+  AppointmentSlip,
   ScheduledAppointment,
   BillChargeInput,
   BillingReport,
@@ -1002,6 +1003,14 @@ export function listPatientsAdmin(params: { search?: string; limit?: number; off
   return request(`/patients/admin?${query.toString()}`, { auth: 'staff' })
 }
 
+// GET /patients/{id} -- a single patient's full record, including the
+// optional detail columns (address/emergency contact/blood group) that
+// listPatientsAdmin's rows leave out. Currently only used to render the
+// printable Patient Registration Summary.
+export function getPatient(patientId: number): Promise<Patient> {
+  return request(`/patients/${patientId}`, { auth: 'staff' })
+}
+
 // Patient allergy list (master spec section 91's clinical-safety
 // warning) -- GET/POST /patients/{id}/allergies, POST
 // .../allergies/{id}/resolve. Active-only by default, matching
@@ -1282,6 +1291,13 @@ export function refundAppointmentPayment(
 // getAppointmentCharge above.
 export function getAppointmentInvoice(appointmentId: number): Promise<Invoice> {
   return request(`/appointments/${appointmentId}/invoice`, { auth: 'staff' })
+}
+
+// GET /appointments/{id}/slip -- the printable OPD Appointment Slip
+// (Printing phase section 3). Callable any time an appointment exists,
+// independent of status, same as getAppointmentInvoice above.
+export function getAppointmentSlip(appointmentId: number): Promise<AppointmentSlip> {
+  return request(`/appointments/${appointmentId}/slip`, { auth: 'staff' })
 }
 
 // ADMIN-only: add an ad-hoc charge to this appointment's bill. Only
