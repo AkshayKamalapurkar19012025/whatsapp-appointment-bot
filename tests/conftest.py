@@ -29,6 +29,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app.config import DATABASE_URL  # noqa: E402
 from app.main import app  # noqa: E402
+from app.utils import reference_cache  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -118,6 +119,12 @@ def _clean_tables():
             cur.execute(
                 "TRUNCATE TABLE " + ", ".join(APP_TABLES) + " RESTART IDENTITY CASCADE"
             )
+    # This TRUNCATE bypasses the app's own API entirely, so none of
+    # app/utils/reference_cache.py's invalidate() calls fire -- without
+    # this, a department/appointment-type list cached by one test would
+    # leak into the next one, which expects to start from an empty
+    # table (see app/utils/reference_cache.py's clear_all() docstring).
+    reference_cache.clear_all()
     yield
 
 
