@@ -325,6 +325,71 @@ def test_duplicate_transaction_id_is_rejected(client, db_connection):
     assert response.status_code == 409
 
 
+def test_declined_payment_is_recorded_but_not_counted_toward_balance(client, db_connection):
+    # Phase 13 end-to-end validation gap: unlike the older appointment-
+    # level consultation-fee flow, this invoice/payment model had no way
+    # to record a declined card/UPI attempt at all -- a failure simply
+    # left no row, no audit trail. status="DECLINED" fixes that.
+    ctx = _checked_in_context(client, db_connection, "Dr. Bill Declined")
+    appointment_id = ctx["appointment"]["id"]
+    admin_headers = ctx["admin_headers"]
+    _add_charge(client, appointment_id, admin_headers, amount=500)
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/bill/payments",
+        json={"amount": 500, "method": "CARD", "status": "DECLINED"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["balance"] == 500
+    assert body["payment_status"] == "UNPAID"
+    assert len(body["payments"]) == 1
+    assert body["payments"][0]["status"] == "DECLINED"
+
+
+def test_declined_payment_can_be_retried_and_then_succeed(client, db_connection):
+    ctx = _checked_in_context(client, db_connection, "Dr. Bill DeclinedRetry")
+    appointment_id = ctx["appointment"]["id"]
+    admin_headers = ctx["admin_headers"]
+    _add_charge(client, appointment_id, admin_headers, amount=500)
+
+    client.post(
+        f"/api/appointments/{appointment_id}/bill/payments",
+        json={"amount": 500, "method": "CARD", "status": "DECLINED"},
+        headers=admin_headers,
+    )
+    retry = client.post(
+        f"/api/appointments/{appointment_id}/bill/payments",
+        json={"amount": 500, "method": "CASH"},
+        headers=admin_headers,
+    )
+    assert retry.status_code == 200
+    body = retry.json()
+    assert body["balance"] == 0
+    assert body["payment_status"] == "PAID"
+    assert len(body["payments"]) == 2
+    assert {p["status"] for p in body["payments"]} == {"DECLINED", "COMPLETED"}
+
+
+def test_declined_payment_is_not_blocked_by_balance_check(client, db_connection):
+    # A declined attempt for more than the balance should still be
+    # recordable as an audit trail -- the balance-exceeded guard only
+    # protects against a *successful* overpayment.
+    ctx = _checked_in_context(client, db_connection, "Dr. Bill DeclinedOverpay")
+    appointment_id = ctx["appointment"]["id"]
+    admin_headers = ctx["admin_headers"]
+    _add_charge(client, appointment_id, admin_headers, amount=500)
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/bill/payments",
+        json={"amount": 5000, "method": "CARD", "status": "DECLINED"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["balance"] == 500
+
+
 def test_record_payment_allowed_for_plain_staff(client, db_connection):
     ctx = _checked_in_context(client, db_connection, "Dr. Bill StaffCanPay")
     appointment_id = ctx["appointment"]["id"]

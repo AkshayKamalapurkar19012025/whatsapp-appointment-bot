@@ -407,24 +407,36 @@ def record_invoice_payment_service(
     amount,
     method: str,
     transaction_id: str | None = None,
+    status: str = "COMPLETED",
 ):
+    """
+    status is COMPLETED or DECLINED (a DECLINED attempt, e.g. a
+    declined card, records the amount that was *attempted* -- useful
+    as an audit trail and for the front desk to see what to retry --
+    without it counting toward the invoice's paid total; retry by
+    calling this again, no separate endpoint needed). The
+    balance-exceeded check only applies to COMPLETED: it exists to
+    stop a real payment from ever taking the balance negative, which
+    isn't a concern for an attempt that didn't succeed.
+    """
     invoice = _get_invoice_for_appointment(cur, appointment_id, lock=True)
 
     if invoice["status"] == "VOID":
         raise InvoiceVoided()
 
-    summary = get_invoice_summary_service(cur, appointment_id, staff_id=staff_id)
-    if amount > summary["balance"]:
-        raise PaymentExceedsBalance()
+    if status == "COMPLETED":
+        summary = get_invoice_summary_service(cur, appointment_id, staff_id=staff_id)
+        if amount > summary["balance"]:
+            raise PaymentExceedsBalance()
 
     try:
         cur.execute(
             f"""
-            INSERT INTO payments (invoice_id, amount, method, transaction_id, recorded_by)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO payments (invoice_id, amount, method, transaction_id, status, recorded_by)
+            VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING {", ".join(_PAYMENT_COLUMNS)}
             """,
-            (invoice["id"], amount, method, transaction_id, staff_id),
+            (invoice["id"], amount, method, transaction_id, status, staff_id),
         )
     except psycopg.errors.UniqueViolation:
         raise DuplicateTransactionId()
