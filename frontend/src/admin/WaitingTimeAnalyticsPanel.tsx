@@ -59,14 +59,18 @@ export default function WaitingTimeAnalyticsPanel() {
       </div>
 
       <form className="inline-form wrap" onSubmit={(e) => e.preventDefault()}>
-        <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
+        <select aria-label="Date range" value={days} onChange={(e) => setDays(Number(e.target.value))}>
           {DAYS_OPTIONS.map((d) => (
             <option key={d} value={d}>
               Last {d} days
             </option>
           ))}
         </select>
-        <select value={doctorId} onChange={(e) => setDoctorId(e.target.value === '' ? '' : Number(e.target.value))}>
+        <select
+          aria-label="Filter by doctor"
+          value={doctorId}
+          onChange={(e) => setDoctorId(e.target.value === '' ? '' : Number(e.target.value))}
+        >
           <option value="">All doctors</option>
           {doctors.map((d) => (
             <option key={d.id} value={d.id}>
@@ -111,7 +115,7 @@ export default function WaitingTimeAnalyticsPanel() {
           </div>
 
           <div className="chart-card">
-            <h4>Average Wait Time By Day</h4>
+            <h3>Average Wait Time By Day</h3>
             <p className="muted">Minutes from check-in to consultation start, last {data.window_days} days.</p>
             {data.overall.count === 0 ? (
               <div className="state-block empty">No completed waits in this window yet.</div>
@@ -137,7 +141,7 @@ export default function WaitingTimeAnalyticsPanel() {
           </div>
 
           <div className="chart-card">
-            <h4>By Doctor</h4>
+            <h3>By Doctor</h3>
             {data.by_doctor.length === 0 ? (
               <div className="state-block empty">No completed waits in this window yet.</div>
             ) : (

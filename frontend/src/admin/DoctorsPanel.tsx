@@ -349,7 +349,9 @@ export default function DoctorsPanel({
                   <th>Today&apos;s schedule</th>
                   <th>Today</th>
                   <th>Status</th>
-                  <th />
+                  <th>
+                    <span className="visually-hidden">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>

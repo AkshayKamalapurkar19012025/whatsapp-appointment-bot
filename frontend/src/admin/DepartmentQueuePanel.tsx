@@ -107,7 +107,7 @@ export default function DepartmentQueuePanel({
           {!loadingDoctors &&
             doctors.map((d) => (
               <div key={d.id} className="department-queue-doctor-section">
-                <h4>{d.name}</h4>
+                <h3>{d.name}</h3>
                 <QueueSection doctorId={d.id} onOpenConsultation={onOpenConsultation} />
               </div>
             ))}

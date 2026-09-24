@@ -28,7 +28,7 @@ export default function AdminSidebar({ items }: { items: AdminSidebarItem[] }) {
     <nav className="admin-sidebar" aria-label="Admin navigation">
       <div className="admin-sidebar-brand">
         <span className="brand-mark">A</span>
-        <strong>Appointment Admin</strong>
+        <h1>Appointment Admin</h1>
       </div>
 
       <ul className="admin-sidebar-list">

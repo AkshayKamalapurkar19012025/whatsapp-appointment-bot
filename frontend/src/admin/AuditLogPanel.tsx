@@ -72,7 +72,7 @@ export default function AuditLogPanel() {
       </div>
 
       <form className="inline-form wrap" onSubmit={handleFilter}>
-        <select value={staffId} onChange={(e) => setStaffId(e.target.value)}>
+        <select aria-label="Filter by staff member" value={staffId} onChange={(e) => setStaffId(e.target.value)}>
           <option value="">All staff</option>
           {staffAccounts.map((s) => (
             <option key={s.id} value={s.id}>
