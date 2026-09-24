@@ -96,7 +96,7 @@ def get_prescription(appointment_id: int, staff: dict = Depends(get_current_staf
 def add_prescription_item(
     appointment_id: int,
     body: PrescriptionItemCreate,
-    staff: dict = Depends(get_current_staff),
+    staff: dict = Depends(require_permission("prescription.create")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -143,7 +143,7 @@ def remove_prescription_item(
 
 
 @prescription_router.post("/{appointment_id}/prescription/prescribe")
-def prescribe(appointment_id: int, staff: dict = Depends(get_current_staff)):
+def prescribe(appointment_id: int, staff: dict = Depends(require_permission("prescription.create"))):
     with get_connection() as conn:
         with conn.cursor() as cur:
             try:

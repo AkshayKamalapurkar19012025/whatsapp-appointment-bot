@@ -33,12 +33,20 @@ const BLANK_ITEM: PrescriptionItemInput = {
 export default function PrescriptionPanel({
   appointmentId,
   appointmentCheckedIn,
+  canCreatePrescriptions,
   patientName,
   patientUhid,
   doctorName,
 }: {
   appointmentId: number
   appointmentCheckedIn: boolean
+  // prescription.create (migrations/0048_clinical_rbac_permissions.sql,
+  // DOCTOR/STAFF/ADMIN) -- a role without it (RECEPTIONIST/NURSE/
+  // LAB_TECH/PHARMACIST/BILLING) can still view an existing
+  // prescription read-only, same as any other GET, but the add-item/
+  // prescribe actions below would 403 server-side, so they're hidden
+  // rather than left to fail.
+  canCreatePrescriptions: boolean
   patientName: string
   patientUhid: string
   doctorName: string
@@ -169,7 +177,7 @@ export default function PrescriptionPanel({
     )
   }
 
-  const editable = prescription.status === 'DRAFT' && appointmentCheckedIn
+  const editable = prescription.status === 'DRAFT' && appointmentCheckedIn && canCreatePrescriptions
   const canPrescribe = editable && prescription.items.length > 0
   const canCancel = prescription.status === 'PRESCRIBED' && !prescription.items.some((i) => i.quantity_dispensed > 0)
 

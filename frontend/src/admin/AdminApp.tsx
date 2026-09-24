@@ -259,14 +259,21 @@ export default function AdminApp() {
   }
 
   const isAdmin = staff.role === 'ADMIN'
-  // The three actions that are real RBAC today (migrations/0043_
-  // role_based_access.sql): each granted to ADMIN plus exactly one
-  // other role, server-enforced regardless of what these booleans
-  // gate client-side -- see PharmacyPanel.tsx/AppointmentBillingPanel.
-  // tsx/ConsultationWorkspace.tsx for where each is actually used.
+  // Real RBAC, server-enforced regardless of what these booleans gate
+  // client-side -- see PharmacyPanel.tsx/AppointmentBillingPanel.tsx/
+  // ConsultationWorkspace.tsx/PrescriptionPanel.tsx for where each is
+  // actually used. STAFF holds vitals.record/consultation.write/
+  // order.create/prescription.create (migrations/0048_clinical_rbac_
+  // permissions.sql) alongside NURSE/DOCTOR -- unlike pharmacy.
+  // manage_stock/bill.*/consultation.amend above, which STAFF does
+  // NOT hold (migrations/0043_role_based_access.sql's own pattern).
   const canManageStock = isAdmin || staff.role === 'PHARMACIST'
   const canManageBilling = isAdmin || staff.role === 'BILLING'
   const canAmendConsultation = isAdmin || staff.role === 'DOCTOR'
+  const canRecordVitals = isAdmin || staff.role === 'STAFF' || staff.role === 'NURSE' || staff.role === 'DOCTOR'
+  const canWriteConsultation = isAdmin || staff.role === 'STAFF' || staff.role === 'DOCTOR'
+  const canCreateOrders = canWriteConsultation
+  const canCreatePrescriptions = canWriteConsultation
   const visibleSections = ROLE_VISIBLE_SECTIONS[staff.role]
 
   // Recurring schedule management is ADMIN-only per the RBAC design
@@ -486,6 +493,10 @@ export default function AdminApp() {
               appointmentId={consultationAppointmentId}
               canAmendConsultation={canAmendConsultation}
               canManageBilling={canManageBilling}
+              canRecordVitals={canRecordVitals}
+              canWriteConsultation={canWriteConsultation}
+              canCreateOrders={canCreateOrders}
+              canCreatePrescriptions={canCreatePrescriptions}
               onBack={() => goTo('queue')}
             />
           )}

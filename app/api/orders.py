@@ -2,9 +2,10 @@
 Order spine endpoints (OPD/HIMS master spec Phase 6). Thin wrappers
 around app/services/order_services.py, nested under
 /appointments/{appointment_id}/orders -- same convention as
-app/api/clinical.py. Every endpoint requires an authenticated staff
-session (see app/api/clinical.py's module docstring for why there's no
-separate DOCTOR role gating this differently yet).
+app/api/clinical.py. Creating an order is gated by order.create
+(migrations/0048_clinical_rbac_permissions.sql, DOCTOR/STAFF/ADMIN) --
+every other endpoint here (list/cancel/record a result) stays on bare
+get_current_staff, out of scope for that migration.
 """
 
 from typing import Literal
@@ -12,7 +13,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.api.staff_auth import get_current_staff
+from app.api.staff_auth import get_current_staff, require_permission
 from app.db.connection import get_connection
 from app.services import exceptions as svc_exc
 from app.services.order_services import (
@@ -68,7 +69,7 @@ def get_orders(appointment_id: int, staff: dict = Depends(get_current_staff)):
 def create_order(
     appointment_id: int,
     body: OrderCreate,
-    staff: dict = Depends(get_current_staff),
+    staff: dict = Depends(require_permission("order.create")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:

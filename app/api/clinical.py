@@ -5,11 +5,17 @@ Thin wrappers around app/services/clinical_services.py, nested under
 appointment-scoped action in this app already uses (confirm/reject/
 visit/complete/reschedule, the billing endpoints), rather than a new
 /encounters/{id}/... surface the frontend would need a second lookup to
-reach. Every endpoint requires an authenticated staff session (ADMIN or
-STAFF) -- there is no separate NURSE/DOCTOR login role yet (flagged as a
-known gap in this phase's report, not fixed here), so staff record
-vitals and write consultations the same way they already record
-payments and manage the queue today.
+reach.
+
+Recording vitals and writing/completing a consultation are gated by
+vitals.record/consultation.write respectively (migrations/0048_
+clinical_rbac_permissions.sql: NURSE/DOCTOR/STAFF/ADMIN for vitals,
+DOCTOR/STAFF/ADMIN for consultation) -- amending an already-completed
+one stays on the separate, narrower consultation.amend
+(migrations/0043_role_based_access.sql, DOCTOR/ADMIN only, no STAFF).
+Every read endpoint here (get_encounter, get_latest_vitals,
+get_consultation, get_consultation_amendments) stays on bare
+get_current_staff, unchanged.
 """
 
 from datetime import date
@@ -93,7 +99,7 @@ def get_encounter(appointment_id: int, staff: dict = Depends(get_current_staff))
 def create_vitals(
     appointment_id: int,
     body: VitalsCreate,
-    staff: dict = Depends(get_current_staff),
+    staff: dict = Depends(require_permission("vitals.record")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -147,7 +153,7 @@ def get_consultation(appointment_id: int, staff: dict = Depends(get_current_staf
 def save_consultation(
     appointment_id: int,
     body: ConsultationSave,
-    staff: dict = Depends(get_current_staff),
+    staff: dict = Depends(require_permission("consultation.write")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -176,7 +182,7 @@ def save_consultation(
 
 
 @router.post("/{appointment_id}/consultation/complete")
-def complete_consultation(appointment_id: int, staff: dict = Depends(get_current_staff)):
+def complete_consultation(appointment_id: int, staff: dict = Depends(require_permission("consultation.write"))):
     with get_connection() as conn:
         with conn.cursor() as cur:
             try:
