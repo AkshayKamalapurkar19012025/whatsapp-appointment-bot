@@ -64,6 +64,7 @@ import DoctorProfileSection from './DoctorProfileSection'
 import AppointmentDetailsModal from './AppointmentDetailsModal'
 import { AppointmentActionButtons, buildAppointmentActions, type AppointmentActionHandlers } from './AppointmentActions'
 import VisitCompletionDialog from './VisitCompletionDialog'
+import type { ConsultationTab } from './ConsultationWorkspace'
 import { isoDateToday } from './doctorSchedule'
 import ScheduleGrid from './ScheduleGrid'
 import TimeOffSection from './TimeOffSection'
@@ -107,11 +108,15 @@ export default function DoctorWorkspace({
   isAdmin,
   onBack,
   onGoToQueue,
+  onOpenConsultation,
 }: {
   doctor: Doctor
   isAdmin: boolean
   onBack: () => void
   onGoToQueue?: (doctorId: number) => void
+  // Passed through to the Appointments tab's VisitCompletionDialog --
+  // see DoctorsPanel.tsx's own comment on this prop.
+  onOpenConsultation?: (appointmentId: number, tab?: ConsultationTab) => void
 }) {
   const [tab, setTab] = useState<WorkspaceTab>('overview')
   const [deactivateOpen, setDeactivateOpen] = useState(false)
@@ -275,7 +280,9 @@ export default function DoctorWorkspace({
           onGoToQueue={onGoToQueue ? () => onGoToQueue(doctor.id) : undefined}
         />
       )}
-      {tab === 'appointments' && <DoctorAppointmentsTab doctor={doctor} isAdmin={isAdmin} />}
+      {tab === 'appointments' && (
+        <DoctorAppointmentsTab doctor={doctor} isAdmin={isAdmin} onOpenConsultation={onOpenConsultation} />
+      )}
       {tab === 'schedule' &&
         (hasAppointmentTypes === false ? (
           <ScheduleNeedsAppointmentType onGoToTypes={() => guardedSetTab('types')} />
@@ -513,7 +520,15 @@ function OverviewSection({
 // AppointmentDetailsModal are shared, not reimplemented, so a status's
 // available actions are always computed the same one way.
 
-function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: boolean }) {
+function DoctorAppointmentsTab({
+  doctor,
+  isAdmin,
+  onOpenConsultation,
+}: {
+  doctor: Doctor
+  isAdmin: boolean
+  onOpenConsultation?: (appointmentId: number, tab?: ConsultationTab) => void
+}) {
   const [appointments, setAppointments] = useState<AdminAppointment[]>([])
   // Today's snapshot for the stat row, independent of the table's own
   // when/status filters below -- so "8 total / 3 checked-in / ..." keeps
@@ -903,6 +918,7 @@ function DoctorAppointmentsTab({ doctor, isAdmin }: { doctor: Doctor; isAdmin: b
             setCompletionTarget(null)
             runLifecycleAction(target.id, completeAdminAppointment, 'Could not mark the appointment completed')
           }}
+          onGoToPending={onOpenConsultation ? (tabKey) => onOpenConsultation(completionTarget.id, tabKey) : undefined}
         />
       )}
     </div>

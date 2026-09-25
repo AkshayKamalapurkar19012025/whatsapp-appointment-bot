@@ -3,6 +3,7 @@ import { listDepartments, listDoctorsInDepartment } from '../api'
 import type { Department, Doctor } from '../types'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import QueueSection from './QueueSection'
+import type { ConsultationTab } from './ConsultationWorkspace'
 
 // master spec audit "subsequent gaps" list (screen 23, "Department
 // Queue... Not found as its own view"): a department-wide view of
@@ -16,7 +17,7 @@ import QueueSection from './QueueSection'
 export default function DepartmentQueuePanel({
   onOpenConsultation,
 }: {
-  onOpenConsultation?: (appointmentId: number) => void
+  onOpenConsultation?: (appointmentId: number, tab?: ConsultationTab) => void
 }) {
   const [departments, setDepartments] = useState<Department[]>([])
   const [departmentId, setDepartmentId] = useState('')

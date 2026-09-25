@@ -95,15 +95,18 @@ function AlertDialogAction({
   className,
   variant = 'default',
   ...props
-}: React.ComponentProps<typeof AlertDialogPrimitive.Action> & { variant?: 'default' | 'danger' }) {
+}: React.ComponentProps<typeof AlertDialogPrimitive.Action> & { variant?: 'default' | 'danger' | 'secondary' }) {
   return (
     <AlertDialogPrimitive.Action
       className={cn(
-        'inline-flex cursor-pointer items-center justify-center rounded-[var(--radius-sm)] border border-transparent',
-        'px-4 py-2.5 text-[0.95rem] font-semibold text-[var(--color-on-primary)] transition-colors',
-        variant === 'danger'
-          ? 'bg-[var(--color-danger)] hover:bg-[var(--color-danger-hover)]'
-          : 'bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)]',
+        'inline-flex cursor-pointer items-center justify-center rounded-[var(--radius-sm)]',
+        'px-4 py-2.5 text-[0.95rem] font-semibold transition-colors',
+        variant === 'danger' &&
+          'border border-transparent bg-[var(--color-danger)] text-[var(--color-on-primary)] hover:bg-[var(--color-danger-hover)]',
+        variant === 'secondary' &&
+          'border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-[var(--color-primary-hover)] hover:bg-[var(--color-primary-soft)] hover:border-[var(--color-primary)]',
+        variant === 'default' &&
+          'border border-transparent bg-[var(--color-primary)] text-[var(--color-on-primary)] hover:bg-[var(--color-primary-hover)]',
         className,
       )}
       {...props}

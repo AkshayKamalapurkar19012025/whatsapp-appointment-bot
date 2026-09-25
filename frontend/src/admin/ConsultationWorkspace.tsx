@@ -36,7 +36,8 @@ import { formatAgeGender, formatDateTime } from '../format'
 import PrescriptionPanel from './PrescriptionPanel'
 import AppointmentBillingPanel from './AppointmentBillingPanel'
 
-type Tab = 'triage' | 'consultation' | 'orders' | 'prescription' | 'billing'
+export type ConsultationTab = 'triage' | 'consultation' | 'orders' | 'prescription' | 'billing'
+type Tab = ConsultationTab
 
 const ORDER_TYPE_LABELS: Record<OrderType, string> = {
   LAB: 'Laboratory',
@@ -168,6 +169,7 @@ export default function ConsultationWorkspace({
   canCreateOrders,
   canCreatePrescriptions,
   onBack,
+  initialTab,
 }: {
   appointmentId: number
   // Six distinct capabilities, not one -- each server-enforced by its
@@ -184,8 +186,12 @@ export default function ConsultationWorkspace({
   canCreateOrders: boolean
   canCreatePrescriptions: boolean
   onBack: () => void
+  // Lets a caller jump straight to a specific tab (e.g. VisitCompletionDialog's
+  // "Review pending items" sending a doctor to Orders) instead of always
+  // landing on Triage. Optional so every other caller keeps today's behavior.
+  initialTab?: ConsultationTab
 }) {
-  const [tab, setTab] = useState<Tab>('triage')
+  const [tab, setTab] = useState<Tab>(initialTab ?? 'triage')
   const [encounter, setEncounter] = useState<EncounterSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)

@@ -20,6 +20,7 @@ import { currentDayOfWeek, formatWorkingHours, isAvailableNow, isoDateToday, tod
 import AddDoctorModal from './AddDoctorModal'
 import DoctorWorkspace from './DoctorWorkspace'
 import { usePreviewPopover } from '../usePreviewPopover'
+import type { ConsultationTab } from './ConsultationWorkspace'
 
 const ALL_FILTER_VALUE = '__all__'
 
@@ -107,12 +108,17 @@ function DoctorPreviewTrigger({ row, onView }: { row: DoctorRow; onView: () => v
 export default function DoctorsPanel({
   isAdmin,
   onGoToQueue,
+  onOpenConsultation,
 }: {
   isAdmin: boolean
   // Overview's "View queue" quick action, and the directory's own Queue
   // shortcut, both hand off to the existing standalone Queue page
   // (QueuePanel.tsx) rather than duplicating QueueSection a third time.
   onGoToQueue?: (doctorId: number) => void
+  // Lets DoctorWorkspace's own Appointments tab (VisitCompletionDialog's
+  // "Review pending items") jump into ConsultationWorkspace, same handoff
+  // QueuePanel/DepartmentQueuePanel/AppointmentsPanel already have.
+  onOpenConsultation?: (appointmentId: number, tab?: ConsultationTab) => void
 }) {
   const [doctors, setDoctors] = useState<Doctor[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
@@ -179,6 +185,7 @@ export default function DoctorsPanel({
         isAdmin={isAdmin}
         onBack={backToDirectory}
         onGoToQueue={onGoToQueue}
+        onOpenConsultation={onOpenConsultation}
       />
     )
   }

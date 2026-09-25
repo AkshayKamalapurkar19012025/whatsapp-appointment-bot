@@ -55,6 +55,7 @@ import AdminSlotPicker from './AdminSlotPicker'
 import AppointmentDetailsModal from './AppointmentDetailsModal'
 import { AppointmentActionButtons, buildAppointmentActions, type AppointmentActionHandlers, type QueuePosition } from './AppointmentActions'
 import VisitCompletionDialog from './VisitCompletionDialog'
+import type { ConsultationTab } from './ConsultationWorkspace'
 
 // Radix Select.Item disallows an empty-string value (reserved internally
 // for "no selection") -- the "All" filter option, which maps to '' for
@@ -317,6 +318,7 @@ export default function AppointmentsPanel({
   onRegisterNewPatient,
   onGoToQueue,
   onViewQueue,
+  onOpenConsultation,
   isAdmin,
 }: {
   // Routes to the dedicated Book Appointment section (see AdminApp.tsx)
@@ -344,6 +346,10 @@ export default function AppointmentsPanel({
   // Queue's own former sidebar entry (AdminApp.tsx), now reached only
   // from inside this OPD workspace, same as Book Appointment.
   onViewQueue: () => void
+  // Lets VisitCompletionDialog's "Review pending items" jump straight
+  // into ConsultationWorkspace at the tab for the first unfinished item,
+  // same handoff QueuePanel/DepartmentQueuePanel already have.
+  onOpenConsultation?: (appointmentId: number, tab?: ConsultationTab) => void
   // Gates "Waive Charge" (patient arrival workflow Phase 3) -- same
   // prop DoctorsPanel/DepartmentsPanel/AppointmentTypesPanel already
   // take from AdminApp.tsx.
@@ -1171,6 +1177,7 @@ export default function AppointmentsPanel({
             setCompletionTarget(null)
             runLifecycleAction(target.id, completeAdminAppointment, 'Could not mark the appointment completed')
           }}
+          onGoToPending={onOpenConsultation ? (tab) => onOpenConsultation(completionTarget.id, tab) : undefined}
         />
       )}
 

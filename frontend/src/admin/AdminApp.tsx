@@ -32,7 +32,7 @@ import AppointmentsPanel from './AppointmentsPanel'
 import BillingPanel from './BillingPanel'
 import BookAppointmentPanel from './BookAppointmentPanel'
 import QueuePanel from './QueuePanel'
-import ConsultationWorkspace from './ConsultationWorkspace'
+import ConsultationWorkspace, { type ConsultationTab } from './ConsultationWorkspace'
 import PharmacyPanel from './PharmacyPanel'
 import PackagesPanel from './PackagesPanel'
 import AuditLogPanel from './AuditLogPanel'
@@ -164,6 +164,10 @@ export default function AdminApp() {
   // section from somewhere else" case to survive a remount for, unlike
   // the queue's last-viewed-doctor convenience).
   const [consultationAppointmentId, setConsultationAppointmentId] = useState<number | null>(null)
+  // Same handoff, for the tab ConsultationWorkspace should open on --
+  // VisitCompletionDialog's "Review pending items" sends a doctor to a
+  // specific tab (e.g. Orders) instead of always landing on Triage.
+  const [consultationInitialTab, setConsultationInitialTab] = useState<ConsultationTab | undefined>(undefined)
 
   // Shared by both places a fresh `staff` arrives (session restore on
   // load, and a just-completed login) -- lands the session on its
@@ -227,8 +231,9 @@ export default function AdminApp() {
     goTo('queue')
   }
 
-  function goToConsultation(appointmentId: number) {
+  function goToConsultation(appointmentId: number, tab?: ConsultationTab) {
     setConsultationAppointmentId(appointmentId)
+    setConsultationInitialTab(tab)
     goTo('consultation')
   }
 
@@ -499,6 +504,7 @@ export default function AdminApp() {
               onRegisterNewPatient={goToRegisterNewPatient}
               onGoToQueue={goToQueueForDoctor}
               onViewQueue={() => goTo('queue')}
+              onOpenConsultation={goToConsultation}
               isAdmin={isAdmin}
             />
           )}
@@ -525,9 +531,12 @@ export default function AdminApp() {
               canCreateOrders={canCreateOrders}
               canCreatePrescriptions={canCreatePrescriptions}
               onBack={() => goTo('queue')}
+              initialTab={consultationInitialTab}
             />
           )}
-          {section === 'doctors' && <DoctorsPanel key={navResetKey} isAdmin={isAdmin} onGoToQueue={goToQueueForDoctor} />}
+          {section === 'doctors' && (
+            <DoctorsPanel key={navResetKey} isAdmin={isAdmin} onGoToQueue={goToQueueForDoctor} onOpenConsultation={goToConsultation} />
+          )}
           {section === 'department-queue' && (
             <DepartmentQueuePanel key={navResetKey} onOpenConsultation={goToConsultation} />
           )}

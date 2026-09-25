@@ -4,6 +4,7 @@ import { listAllDoctors } from '../api'
 import type { Doctor } from '../types'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import QueueSection from './QueueSection'
+import type { ConsultationTab } from './ConsultationWorkspace'
 
 // Remembers the last doctor viewed here, per browser -- a pure
 // per-viewer convenience (not shared/authoritative state, so
@@ -29,7 +30,7 @@ export default function QueuePanel({
   onOpenConsultation,
 }: {
   onBack: () => void
-  onOpenConsultation?: (appointmentId: number) => void
+  onOpenConsultation?: (appointmentId: number, tab?: ConsultationTab) => void
 }) {
   const [doctors, setDoctors] = useState<Doctor[]>([])
   const [doctorId, setDoctorId] = useState('')

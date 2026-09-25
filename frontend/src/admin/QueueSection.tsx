@@ -10,6 +10,7 @@ import {
 import type { DoctorQueue, QueueEntry } from '../types'
 import { formatTime } from '../format'
 import VisitCompletionDialog from './VisitCompletionDialog'
+import type { ConsultationTab } from './ConsultationWorkspace'
 
 // Today's walk-in queue (ADMIN or STAFF) -- migrations/0012_appointment_
 // queue_tokens.sql, moved to fire on payment/waiver rather than
@@ -42,7 +43,7 @@ export default function QueueSection({
   // today, but this component is reused across DoctorWorkspace's
   // Overview tab and the standalone QueuePanel -- see this phase's
   // report).
-  onOpenConsultation?: (appointmentId: number) => void
+  onOpenConsultation?: (appointmentId: number, tab?: ConsultationTab) => void
 }) {
   const [queue, setQueue] = useState<DoctorQueue | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -361,6 +362,9 @@ export default function QueueSection({
             setCompletionTarget(null)
             handleComplete(target.appointment_id)
           }}
+          onGoToPending={
+            onOpenConsultation ? (tab) => onOpenConsultation(completionTarget.appointment_id, tab) : undefined
+          }
         />
       )}
     </div>

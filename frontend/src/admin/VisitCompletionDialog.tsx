@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { CheckCircle, Circle } from '@phosphor-icons/react'
 import { ApiError, getVisitCompletionChecklist } from '../api'
 import type { VisitCompletionChecklist } from '../types'
+import type { ConsultationTab } from './ConsultationWorkspace'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,6 +23,19 @@ const CHECKLIST_ITEMS: { key: keyof VisitCompletionChecklist; label: string }[] 
   { key: 'follow_up_scheduled', label: 'Follow-up scheduled' },
 ]
 
+// Where "Review pending items" sends the doctor for each unfinished
+// checklist item -- payment and billing both land on the Billing tab
+// (there's no separate payment-collection screen), and follow-up is
+// set as part of the consultation note itself.
+const PENDING_ITEM_TAB: Record<keyof VisitCompletionChecklist, ConsultationTab> = {
+  consultation_completed: 'consultation',
+  orders_created: 'orders',
+  prescription_created: 'prescription',
+  billing_completed: 'billing',
+  payment_completed: 'billing',
+  follow_up_scheduled: 'consultation',
+}
+
 // The Visit Completion checklist (master spec section 43): a
 // precondition SUMMARY shown right before the one action that closes
 // out a visit, not a gate on it -- every item can be unchecked and the
@@ -41,6 +55,7 @@ export default function VisitCompletionDialog({
   doctorName,
   onClose,
   onConfirm,
+  onGoToPending,
 }: {
   appointmentId: number
   patientName: string
@@ -51,6 +66,13 @@ export default function VisitCompletionDialog({
   // *when* that fires, not how it's called or how its own busy/error
   // state is shown.
   onConfirm: () => void
+  // Lets the caller open ConsultationWorkspace at the tab for the first
+  // pending item (e.g. jump to Orders instead of just naming it). Optional
+  // and additive: when a caller can't navigate there (or hasn't been wired
+  // up yet), the dialog falls back to its original single completion
+  // button -- the checklist stays a non-gating summary either way (master
+  // spec section 43), this only changes how a pending item gets *fixed*.
+  onGoToPending?: (tab: ConsultationTab) => void
 }) {
   const [checklist, setChecklist] = useState<VisitCompletionChecklist | null>(null)
   const [loading, setLoading] = useState(true)
@@ -73,7 +95,9 @@ export default function VisitCompletionDialog({
     }
   }, [appointmentId])
 
-  const pendingCount = checklist ? CHECKLIST_ITEMS.filter((item) => !checklist[item.key]).length : 0
+  const pendingItems = checklist ? CHECKLIST_ITEMS.filter((item) => !checklist[item.key]) : []
+  const pendingCount = pendingItems.length
+  const firstPendingTab = pendingItems.length > 0 ? PENDING_ITEM_TAB[pendingItems[0].key] : null
 
   return (
     <AlertDialog open onOpenChange={(open) => !open && onClose()}>
@@ -115,7 +139,18 @@ export default function VisitCompletionDialog({
 
         <AlertDialogFooter>
           <AlertDialogCancel>Not yet</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm}>Complete Visit</AlertDialogAction>
+          {pendingCount > 0 && onGoToPending && firstPendingTab ? (
+            <>
+              <AlertDialogAction variant="secondary" onClick={onConfirm}>
+                Complete anyway
+              </AlertDialogAction>
+              <AlertDialogAction onClick={() => onGoToPending(firstPendingTab)}>
+                Review pending items
+              </AlertDialogAction>
+            </>
+          ) : (
+            <AlertDialogAction onClick={onConfirm}>Complete Visit</AlertDialogAction>
+          )}
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
