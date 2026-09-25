@@ -39,6 +39,7 @@ from app.services.exceptions import (
     DuplicateStockBatch,
 )
 from app.services.module_services import is_module_available
+from app.services.allergy_check_service import check_allergy_conflicts
 
 import psycopg
 
@@ -192,6 +193,16 @@ def add_prescription_item_service(
     duration: str | None = None,
     food_instructions: str | None = None,
     special_instructions: str | None = None,
+    # P0 clinical safety (see app/services/allergy_check_service.py):
+    # None on the clinician's first attempt to add this line. If that
+    # attempt finds a conflict, the item is deliberately NOT inserted --
+    # the caller (app/api/pharmacy.py) surfaces the conflict as a
+    # warning instead, and the clinician resubmits this same call with
+    # "continue" (insert anyway) or "cancel" (don't insert) once they've
+    # decided. A resubmission with no remaining conflict (e.g. the
+    # allergy was resolved in between) inserts normally either way --
+    # there's nothing left to override.
+    allergy_decision: str | None = None,
 ):
     if not is_module_available(cur, hospital_id, "PHARMACY"):
         raise ModuleUnavailable("PHARMACY")
@@ -203,6 +214,33 @@ def add_prescription_item_service(
 
     if ensured["appointment_status"] != "CHECKED_IN":
         raise EncounterClosed()
+
+    cur.execute("SELECT patient_id FROM appointments WHERE id = %s", (appointment_id,))
+    (patient_id,) = cur.fetchone()
+
+    # Re-run on every attempt, including a "continue"/"cancel"
+    # resubmission -- allergy data could change between the warning and
+    # this call, and the authoritative check belongs as close to the
+    # actual INSERT as possible, not cached from the first attempt.
+    conflicts = check_allergy_conflicts(cur, patient_id, medicine_name, generic_name)
+
+    # "cancel" always means "don't add this medicine" -- honored
+    # unconditionally, even if a recheck no longer finds a conflict
+    # (e.g. the allergy was resolved in between), since it's an explicit
+    # decision the clinician already made.
+    if allergy_decision == "cancel":
+        return {
+            "prescription": _full_prescription_dict(cur, ensured["id"]),
+            "allergy_warning": None,
+            "outcome": "cancelled",
+        }
+
+    if conflicts and allergy_decision is None:
+        return {
+            "prescription": _full_prescription_dict(cur, ensured["id"]),
+            "allergy_warning": {"conflicts": conflicts},
+            "outcome": "warning_shown",
+        }
 
     cur.execute(
         """
@@ -218,7 +256,12 @@ def add_prescription_item_service(
         ),
     )
 
-    return _full_prescription_dict(cur, ensured["id"])
+    return {
+        "prescription": _full_prescription_dict(cur, ensured["id"]),
+        "allergy_warning": None,
+        "outcome": "overridden" if conflicts else "added",
+        "overridden_conflicts": conflicts if conflicts else None,
+    }
 
 
 def remove_prescription_item_service(cur, appointment_id: int, item_id: int, *, staff_id: int):

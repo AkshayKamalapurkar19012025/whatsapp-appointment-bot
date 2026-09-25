@@ -8,8 +8,18 @@ import {
   prescribePrescription,
   removePrescriptionItem,
 } from '../api'
-import type { Prescription, PrescriptionItemInput } from '../types'
+import type { AllergyConflict, Prescription, PrescriptionItemInput } from '../types'
 import { formatDateTime } from '../format'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog'
 
 const BLANK_ITEM: PrescriptionItemInput = {
   medicine_name: '',
@@ -64,6 +74,14 @@ export default function PrescriptionPanel({
   const [cancelling, setCancelling] = useState(false)
   const [showCancelForm, setShowCancelForm] = useState(false)
   const [cancelReason, setCancelReason] = useState('')
+  // P0 clinical safety -- set when the backend finds a text match
+  // between this medicine and one of the patient's recorded allergies
+  // (app/services/allergy_check_service.py). The pending item's own
+  // payload is kept in `form` (not cleared) so the dialog's Continue/
+  // Cancel actions can resubmit the exact same add-item call with the
+  // clinician's decision -- see handleAllergyDecision.
+  const [allergyConflicts, setAllergyConflicts] = useState<AllergyConflict[] | null>(null)
+  const [decidingAllergy, setDecidingAllergy] = useState(false)
 
   useEffect(() => {
     let cancelledEffect = false
@@ -92,26 +110,51 @@ export default function PrescriptionPanel({
     }
   }, [appointmentId])
 
+  function trimmedFormPayload(): PrescriptionItemInput {
+    return {
+      ...form,
+      generic_name: form.generic_name?.trim() || undefined,
+      dosage: form.dosage?.trim() || undefined,
+      route: form.route?.trim() || undefined,
+      frequency: form.frequency?.trim() || undefined,
+      duration: form.duration?.trim() || undefined,
+      food_instructions: form.food_instructions?.trim() || undefined,
+      special_instructions: form.special_instructions?.trim() || undefined,
+    }
+  }
+
   async function handleAddItem() {
     setAdding(true)
     setActionError(null)
     try {
-      const updated = await addPrescriptionItem(appointmentId, {
-        ...form,
-        generic_name: form.generic_name?.trim() || undefined,
-        dosage: form.dosage?.trim() || undefined,
-        route: form.route?.trim() || undefined,
-        frequency: form.frequency?.trim() || undefined,
-        duration: form.duration?.trim() || undefined,
-        food_instructions: form.food_instructions?.trim() || undefined,
-        special_instructions: form.special_instructions?.trim() || undefined,
-      })
-      setPrescription(updated)
-      setForm(BLANK_ITEM)
+      const result = await addPrescriptionItem(appointmentId, trimmedFormPayload())
+      setPrescription(result.prescription)
+      if (result.allergy_warning) {
+        // Not added yet -- keep `form` as-is so the dialog can resubmit
+        // it with the clinician's decision.
+        setAllergyConflicts(result.allergy_warning.conflicts)
+      } else {
+        setForm(BLANK_ITEM)
+      }
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : 'Could not add this medicine')
     } finally {
       setAdding(false)
+    }
+  }
+
+  async function handleAllergyDecision(decision: 'continue' | 'cancel') {
+    setDecidingAllergy(true)
+    setActionError(null)
+    try {
+      const result = await addPrescriptionItem(appointmentId, trimmedFormPayload(), decision)
+      setPrescription(result.prescription)
+      setAllergyConflicts(null)
+      setForm(BLANK_ITEM)
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : 'Could not record this decision')
+    } finally {
+      setDecidingAllergy(false)
     }
   }
 
@@ -429,6 +472,52 @@ export default function PrescriptionPanel({
           </table>
         </div>
       )}
+
+      {/* P0 clinical safety -- a text match against one of the patient's
+          recorded allergies (app/services/allergy_check_service.py).
+          Deliberately non-blocking (master spec Visit Completion
+          precedent, same "warn, let the human decide" pattern as
+          patient-duplicate detection): the clinician can still add the
+          medicine, but never without seeing this and making an explicit
+          choice, which is then audited either way. */}
+      <AlertDialog open={allergyConflicts !== null} onOpenChange={(open) => !open && setAllergyConflicts(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              <Warning size={18} weight="fill" style={{ color: 'var(--color-danger)', marginRight: '0.4rem' }} />
+              Allergy Warning
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {patientName} has a recorded allergy that may conflict with{' '}
+              <strong>{form.medicine_name}</strong>. This is a same-text match against the recorded allergen, not a
+              clinical assessment -- review before continuing.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <ul className="visit-completion-checklist">
+            {(allergyConflicts ?? []).map((c) => (
+              <li key={c.allergy_id} className="pending">
+                <Warning size={16} />
+                Allergy: {c.allergen}
+                {c.severity && ` (${c.severity})`} — matched against &quot;{c.matched_against}&quot;
+                {c.reaction && ` · Reaction: ${c.reaction}`}
+              </li>
+            ))}
+          </ul>
+
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={decidingAllergy}
+              onClick={() => handleAllergyDecision('cancel')}
+            >
+              {decidingAllergy ? 'Please wait…' : 'Cancel Prescription'}
+            </AlertDialogCancel>
+            <AlertDialogAction variant="danger" disabled={decidingAllergy} onClick={() => handleAllergyDecision('continue')}>
+              {decidingAllergy ? 'Please wait…' : 'Continue Anyway'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

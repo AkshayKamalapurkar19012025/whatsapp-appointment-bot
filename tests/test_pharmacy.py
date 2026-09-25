@@ -66,9 +66,13 @@ def _checked_in_context(client, db_connection, doctor_name: str) -> dict:
 def _add_item(client, appointment_id, admin_headers, **overrides):
     payload = {"medicine_name": "Paracetamol", "quantity": 10, "dosage": "500mg", "frequency": "1-0-1"}
     payload.update(overrides)
+    # ["prescription"] -- the add-item endpoint's response also carries a
+    # P0 allergy_warning field (None for every existing test here, none
+    # of which prescribe against a patient with a recorded allergy) --
+    # see test_allergy_check.py for that behavior specifically.
     return client.post(
         f"/api/appointments/{appointment_id}/prescription/items", json=payload, headers=admin_headers
-    ).json()
+    ).json()["prescription"]
 
 
 # ---------------------------------------------------------------------

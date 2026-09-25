@@ -105,9 +105,10 @@ def test_prescription_ready_fires_once_all_items_dispensed(client, db_connection
     headers = ctx["admin_headers"]
     client.post(f"/api/appointments/{appointment_id}/confirm-and-checkin", headers=headers)
 
-    # add_prescription_item_service returns the whole prescription (with
-    # its full items list), not the single item just added -- the newly
-    # added item is always last.
+    # The add-item endpoint returns {"prescription": ..., "allergy_warning":
+    # ...} (P0 allergy check) -- ["prescription"] is the whole prescription
+    # with its full items list, not the single item just added, so the
+    # newly added item is always last.
     client.post(
         f"/api/appointments/{appointment_id}/prescription/items",
         json={"medicine_name": "Paracetamol", "quantity": 10},
@@ -117,7 +118,7 @@ def test_prescription_ready_fires_once_all_items_dispensed(client, db_connection
         f"/api/appointments/{appointment_id}/prescription/items",
         json={"medicine_name": "Ibuprofen", "quantity": 5},
         headers=headers,
-    ).json()
+    ).json()["prescription"]
     item1, item2 = prescription["items"]
     prescribe = client.post(f"/api/appointments/{appointment_id}/prescription/prescribe", headers=headers)
     assert prescribe.status_code == 200

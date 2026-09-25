@@ -140,7 +140,7 @@ def test_concurrent_dispense_against_the_same_stock_batch_only_one_wins(client, 
             f"/api/appointments/{ctx['appointment_id']}/prescription/items",
             json={"medicine_name": "Concurrency Test Medicine", "quantity": 10, "dosage": "1 tab", "frequency": "OD"},
             headers=ctx["admin_headers"],
-        ).json()
+        ).json()["prescription"]
         item_ids[key] = prescription["items"][0]["id"]
         client.post(f"/api/appointments/{ctx['appointment_id']}/prescription/prescribe", headers=ctx["admin_headers"])
 

@@ -13,6 +13,7 @@ in this app already uses.
 """
 
 from datetime import date
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -20,6 +21,7 @@ from pydantic import BaseModel, Field
 from app.api.staff_auth import get_current_staff, require_permission
 from app.db.connection import get_connection
 from app.services import exceptions as svc_exc
+from app.services.audit_log import record_audit_log
 from app.services.pharmacy_services import (
     get_or_create_prescription_service,
     add_prescription_item_service,
@@ -36,6 +38,15 @@ from app.services.notification_center_service import create_notification
 prescription_router = APIRouter(prefix="/appointments", tags=["Prescription"])
 pharmacy_router = APIRouter(prefix="/pharmacy", tags=["Pharmacy"])
 
+# P0 clinical safety audit actions (app/services/allergy_check_service.py),
+# named consistently with every other action this app writes to audit_log
+# (e.g. "appointment.waive_payment") rather than a one-off format.
+_ALLERGY_AUDIT_ACTION_BY_OUTCOME = {
+    "warning_shown": "prescription.allergy_warning_shown",
+    "cancelled": "prescription.allergy_warning_cancelled",
+    "overridden": "prescription.allergy_warning_overridden",
+}
+
 
 class PrescriptionItemCreate(BaseModel):
     medicine_name: str = Field(min_length=1)
@@ -47,6 +58,11 @@ class PrescriptionItemCreate(BaseModel):
     quantity: int = Field(gt=0)
     food_instructions: str | None = None
     special_instructions: str | None = None
+    # P0 clinical safety: None on the clinician's first attempt. Set to
+    # "continue"/"cancel" only when resubmitting after seeing an allergy
+    # warning -- see app/services/pharmacy_services.py's
+    # add_prescription_item_service docstring.
+    allergy_decision: Literal["continue", "cancel"] | None = None
 
 
 class PrescriptionCancel(BaseModel):
@@ -124,7 +140,26 @@ def add_prescription_item(
                     status_code=409,
                     detail="This prescription has already been sent to pharmacy and can no longer be edited",
                 )
-    return result
+
+            action = _ALLERGY_AUDIT_ACTION_BY_OUTCOME.get(result["outcome"])
+            if action is not None:
+                details = {"medicine_name": body.medicine_name}
+                conflicts = (result.get("allergy_warning") or {}).get("conflicts") or result.get(
+                    "overridden_conflicts"
+                )
+                if conflicts:
+                    details["conflicts"] = conflicts
+                record_audit_log(
+                    cur,
+                    hospital_id=staff["hospital_id"],
+                    staff_id=staff["id"],
+                    action=action,
+                    resource_type="prescription",
+                    resource_id=result["prescription"]["id"],
+                    details=details,
+                )
+
+    return {"prescription": result["prescription"], "allergy_warning": result["allergy_warning"]}
 
 
 @prescription_router.delete("/{appointment_id}/prescription/items/{item_id}")

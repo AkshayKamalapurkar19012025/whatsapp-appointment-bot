@@ -990,6 +990,24 @@ export interface Prescription {
   items: PrescriptionItem[]
 }
 
+// P0 clinical safety (OPD/HIMS interoperability master prompt Phase 4) --
+// a text match between one of the patient's active patient_allergies rows
+// and the medicine just submitted. See app/services/allergy_check_
+// service.py for the matching rule and its documented limitations: this
+// is a same-text match, not real drug-allergy decision support.
+export interface AllergyConflict {
+  allergy_id: number
+  allergen: string
+  severity: AllergySeverity | null
+  reaction: string | null
+  matched_against: string
+}
+
+export interface AddPrescriptionItemResult {
+  prescription: Prescription
+  allergy_warning: { conflicts: AllergyConflict[] } | null
+}
+
 export interface PharmacyQueueEntry {
   prescription_id: number
   prescribed_at: string

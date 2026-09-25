@@ -130,7 +130,7 @@ def test_timeline_includes_full_visit_detail(client, db_connection):
         headers=admin_headers,
     )
     assert item_resp.status_code == 200
-    item_id = item_resp.json()["items"][0]["id"]
+    item_id = item_resp.json()["prescription"]["items"][0]["id"]
     prescribe_resp = client.post(
         f"/api/appointments/{appointment_id}/prescription/prescribe", headers=admin_headers
     )

@@ -43,6 +43,7 @@ import type {
   PharmacyQueueEntry,
   PharmacyStockBatch,
   PharmacyStockInput,
+  AddPrescriptionItemResult,
   Prescription,
   PrescriptionItem,
   PrescriptionItemInput,
@@ -1397,14 +1398,20 @@ export function getPrescription(appointmentId: number): Promise<Prescription> {
   return request(`/appointments/${appointmentId}/prescription`, { auth: 'staff' })
 }
 
+// allergyDecision is omitted on the clinician's first attempt. If the
+// backend finds a conflict with the patient's recorded allergies, it
+// returns { prescription (unchanged), allergy_warning } instead of
+// adding the item -- resubmit with 'continue' or 'cancel' once the
+// clinician has decided. See PrescriptionPanel.tsx's handleAddItem.
 export function addPrescriptionItem(
   appointmentId: number,
   payload: PrescriptionItemInput,
-): Promise<Prescription> {
+  allergyDecision?: 'continue' | 'cancel',
+): Promise<AddPrescriptionItemResult> {
   return request(`/appointments/${appointmentId}/prescription/items`, {
     method: 'POST',
     auth: 'staff',
-    body: payload,
+    body: { ...payload, allergy_decision: allergyDecision ?? null },
   })
 }
 

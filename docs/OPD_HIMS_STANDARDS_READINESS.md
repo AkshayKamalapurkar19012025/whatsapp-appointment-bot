@@ -644,6 +644,13 @@ specific evidence that would have justified it:
 
 ## 17. Clinical safety gap — design only, not implemented
 
+> **Update (Phase 4 of the interoperability master prompt): implemented.**
+> See `docs/workflows/PHARMACY.md`'s "Allergy Safety Check" section for the
+> actual, verified behavior, `app/services/allergy_check_service.py` for
+> the matching logic, and `tests/test_allergy_check.py` for the test
+> coverage. The design below is kept as the historical record of what was
+> approved before implementation — it matches what was built.
+
 > Patient allergies are stored but are not currently checked against
 > prescriptions. **Classified P0 — Clinical Safety.**
 
