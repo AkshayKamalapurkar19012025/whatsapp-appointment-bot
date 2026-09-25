@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import ALLOWED_ORIGINS, MEDIA_ROOT
 from app.db.connection import open_pool, close_pool
+from app.error_handling import register_exception_handlers
 from app.logging_config import configure_logging, new_request_id, request_id_var
 from app.api.health import router as health_router
 from app.api.app_config import router as app_config_router
@@ -62,6 +63,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+# OPD/HIMS master spec section 61: wraps every error response (existing
+# HTTPExceptions, Pydantic validation failures, and any unhandled
+# exception) in the spec's {success, errorCode, message, details}
+# envelope -- see app/error_handling.py's own docstring for why this is
+# one centralized registration rather than 100+ individual call-site
+# changes, and why the pre-existing `detail` field stays in the body too.
+register_exception_handlers(app)
 
 # WEB P10 (security pass): only lets a browser-based frontend on an
 # explicitly allowlisted origin (app.config.ALLOWED_ORIGINS) call this
