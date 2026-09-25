@@ -237,6 +237,30 @@ implement it now.
 
 ## 6. Diagnosis strategy
 
+> **Update (Phase 6 of the interoperability master prompt): Stage 1
+> implemented.** See `docs/workflows/CONSULTATION.md`'s "Diagnosis
+> coding" section for the actual, verified behavior,
+> `migrations/0056_consultation_diagnosis_coding.sql` for the schema,
+> and `tests/test_clinical.py`/`tests/test_consultation_amendments.py`
+> for the test coverage. The design below is kept as the historical
+> record of what was approved before implementation — it matches what
+> was built, with one naming note: the shipped columns are
+> `diagnosis_code_system`/`diagnosis_code`/`diagnosis_code_display`
+> (system before code, so the API's cross-field validator can read
+> `diagnosis_code_system` from already-validated field data when
+> checking `diagnosis_code` — a Pydantic v2 field-declaration-order
+> mechanic, not a design change) rather than the `diagnosis_code`/
+> `diagnosis_code_system`/`diagnosis_code_display` order sketched below.
+> Re-verified against the repository in Phase 6: still exactly one
+> `consultations` row per encounter, still exactly one diagnosis field,
+> still no existing UI/workflow/report anywhere assumes more than one —
+> **Stage 2 (the `conditions` table below) remains not built, and this
+> phase found no new evidence that it should be.** The coding fields are
+> deliberately backend-only this phase — not exposed in
+> `ConsultationWorkspace.tsx` — since no terminology catalog exists for
+> a clinician to actually pick from (see `docs/workflows/CONSULTATION.md`
+> for the full reasoning).
+
 ### Current
 
 `consultations.diagnosis` — one `TEXT` field per consultation, no
@@ -634,8 +658,9 @@ specific evidence that would have justified it:
 
 - Medication master data (`medications` table + nullable FKs, §5;
   **implemented in Phase 5**).
-- Diagnosis structure, Stage 1 only (`diagnosis_code`/`.system`/`.display`
-  on `consultations`, §6).
+- Diagnosis structure, Stage 1 only (`diagnosis_code_system`/`.diagnosis_code`/
+  `.diagnosis_code_display` on `consultations`, §6; **implemented in
+  Phase 6**).
 - Patient-identifier source-of-truth decision (§4.B — a decision to make,
   not a schema change to build yet; classified P1 because the *ambiguity*
   itself is a domain-integrity concern even before any migration happens).
@@ -769,7 +794,7 @@ not yet built.
 |---|---|---|---|---|---|---|
 | P0 | Allergy-vs-prescription check (design §17) | Real, unaddressed clinical-safety gap, confirmed absent in 3 consecutive audits | `app/services/pharmacy_services.py` (zero allergy references, re-confirmed 3×) | new `app/services/allergy_check_service.py`; `ConsultationWorkspace.tsx` Prescription tab (new UI warning); `audit_log` (new action values, no schema change) | Low (additive, non-blocking warning) | None — can ship independent of every other item in this backlog |
 | P1 | Medication master table + nullable FKs — **implemented, Phase 5** | Two independent free-text medicine representations, no shared identity (Phase 2) | `app/services/pharmacy_services.py`'s `ILIKE` fuzzy-match confirmed | `medications` table (`migrations/0054`); `prescription_items`/`pharmacy_stock` gain nullable `medication_id` | Low (additive; existing free-text columns untouched) | None |
-| P1 | Diagnosis code slot (Stage 1 only) | Free-text diagnosis has no terminology-binding point; codebase's own migration comment already flagged this as deferred work | Migration `0029`'s own comment | `consultations` gains 3 nullable columns | Low (additive) | None |
+| P1 | Diagnosis code slot (Stage 1 only) — **implemented, Phase 6** | Free-text diagnosis has no terminology-binding point; codebase's own migration comment already flagged this as deferred work | Migration `0029`'s own comment | `consultations` gains 3 nullable columns (`migrations/0056`); `consultation_amendments` gains matching `previous_*` archive columns | Low (additive) | None |
 | P1 | Patient-identifier source-of-truth decision | Two representations of the phone identifier, one not authoritative (Phase 1/2) | `patient_identifiers`' own migration comment: "not yet the source of truth for anything" | Decision only in this phase; if acted on later: `app/api/scheduling.py`, `app/api/patient_auth.py`, `app/api/patients.py`, `patients.whatsapp_number` | Medium-high (hot-path lookup rewrite, 3 subsystems) if/when actually migrated; the decision itself is zero-risk | Backfill-status question (§4.B) must be answered first |
 | P2 | Allergy code slot | Closes the terminology gap on an already-correct table | Phase 2 §5 | `patient_allergies` gains 3 nullable columns | Low (additive) | None |
 | P2 | `order_results` unit code slots | Unit field exists but uncoded/unvalidated (Phase 2 §7) | Migration `0031`'s `unit TEXT` | `order_results` gains 2 nullable columns | Low (additive) | None |

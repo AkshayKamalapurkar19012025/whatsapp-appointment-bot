@@ -187,6 +187,48 @@ def test_amend_archives_previous_disposition(client, db_connection):
     assert history[0]["previous_disposition"] == "FOLLOW_UP"
 
 
+def test_amend_archives_previous_diagnosis_code(client, db_connection):
+    """OPD/HIMS interoperability master prompt Phase 6 -- diagnosis_code*
+    follows the same archive-then-update amendment pattern as every
+    other consultation field (see test_amend_archives_previous_
+    disposition for the identical pattern on disposition)."""
+    ctx = _checked_in_context(client, db_connection, "Dr. Amend Dx Code")
+    appointment_id = ctx["appointment"]["id"]
+    admin_headers = ctx["admin_headers"]
+
+    client.put(
+        f"/api/appointments/{appointment_id}/consultation",
+        json={
+            "chief_complaint": "Fever",
+            "diagnosis": "Viral fever",
+            "diagnosis_code_system": "ICD-10",
+            "diagnosis_code": "R50.9",
+        },
+        headers=admin_headers,
+    )
+    client.post(f"/api/appointments/{appointment_id}/consultation/complete", headers=admin_headers)
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/consultation/amend",
+        json={
+            "reason": "Lab-confirmed dengue, not viral fever",
+            "chief_complaint": "Fever",
+            "diagnosis": "Dengue fever",
+            "diagnosis_code_system": "ICD-10",
+            "diagnosis_code": "A90",
+        },
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["diagnosis_code"] == "A90"
+
+    history = client.get(
+        f"/api/appointments/{appointment_id}/consultation/amendments", headers=admin_headers
+    ).json()
+    assert history[0]["previous_diagnosis_code_system"] == "ICD-10"
+    assert history[0]["previous_diagnosis_code"] == "R50.9"
+
+
 def test_amend_after_visit_closed(client, db_connection):
     """The whole point of amendment: correcting a record after the
     visit -- and the whole encounter -- has already closed. Not gated

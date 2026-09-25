@@ -788,6 +788,16 @@ export interface Consultation {
   history_notes: string | null
   examination_notes: string | null
   diagnosis: string | null
+  // OPD/HIMS interoperability master prompt Phase 6 (migrations/0056_
+  // consultation_diagnosis_coding.sql) -- optional, alongside the
+  // required free-text diagnosis above, never replacing it. Never
+  // populated automatically; null on every consultation until a human
+  // enters real values through a future terminology-aware UI, which
+  // doesn't exist yet -- this phase is backend-only (see docs/workflows/
+  // CONSULTATION.md's "Diagnosis coding" section for why).
+  diagnosis_code_system: string | null
+  diagnosis_code: string | null
+  diagnosis_code_display: string | null
   clinical_notes: string | null
   follow_up_date: string | null
   follow_up_reason: string | null
@@ -818,6 +828,9 @@ export interface ConsultationAmendment {
   previous_history_notes: string | null
   previous_examination_notes: string | null
   previous_diagnosis: string | null
+  previous_diagnosis_code_system: string | null
+  previous_diagnosis_code: string | null
+  previous_diagnosis_code_display: string | null
   previous_clinical_notes: string | null
   previous_follow_up_date: string | null
   previous_follow_up_reason: string | null

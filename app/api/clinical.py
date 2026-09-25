@@ -22,7 +22,7 @@ from datetime import date
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.api.staff_auth import get_current_staff, require_permission
 from app.db.connection import get_connection
@@ -68,6 +68,16 @@ class ConsultationSave(BaseModel):
     history_notes: str | None = None
     examination_notes: str | None = None
     diagnosis: str | None = None
+    # OPD/HIMS interoperability master prompt Phase 6 (diagnosis domain
+    # hardening, migrations/0056_consultation_diagnosis_coding.sql):
+    # optional structured-coding slots alongside the free-text diagnosis
+    # above, which stays the required, unchanged primary field. Never
+    # populated automatically by this API or any service it calls --
+    # there is no terminology service in this phase, so a caller must
+    # supply real values or leave all three NULL.
+    diagnosis_code_system: str | None = None
+    diagnosis_code: str | None = None
+    diagnosis_code_display: str | None = None
     clinical_notes: str | None = None
     follow_up_date: date | None = None
     follow_up_reason: str | None = None
@@ -77,6 +87,18 @@ class ConsultationSave(BaseModel):
     # doesn't itself trigger any IPD/referral workflow.
     disposition: Literal["FOLLOW_UP", "REFER", "ADMIT_TO_IPD", "EMERGENCY"] | None = None
     disposition_notes: str | None = None
+
+    @field_validator("diagnosis_code")
+    @classmethod
+    def validate_diagnosis_code_requires_system(cls, value: str | None, info):
+        # Structural only (docs/OPD_HIMS_STANDARDS_READINESS.md S6): a
+        # code is meaningless without knowing which terminology it's
+        # from. Mirrored at the DB layer too (consultations_diagnosis_
+        # code_requires_system) -- this just turns the same rule into a
+        # clean 422 instead of a raw constraint-violation error.
+        if value is not None and value.strip() and not info.data.get("diagnosis_code_system"):
+            raise ValueError("diagnosis_code requires diagnosis_code_system to also be set")
+        return value
 
 
 class ConsultationAmend(ConsultationSave):
