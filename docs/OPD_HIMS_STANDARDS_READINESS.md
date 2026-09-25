@@ -505,6 +505,21 @@ document.
 
 ## 10. Clinical statuses — mapping strategy, not replacement
 
+> **Update (Phase 8): the `orders.status` → `ServiceRequest.status`
+> table below is implemented exactly as sketched** —
+> `app/services/fhir_mappers.py`'s `_SERVICE_REQUEST_STATUS_MAP` is a
+> verbatim match. The sibling tables for `appointments.status` →
+> `Appointment.status` and `encounters.status` → `Encounter.status` are
+> implemented too (`_APPOINTMENT_STATUS_MAP`/`_ENCOUNTER_STATUS_MAP`,
+> same file); `consultations.status`/`prescriptions.status`/
+> `invoices.status`/`payments.status` were not needed as their own
+> translation tables — `prescriptions.status` folds into
+> `MedicationRequest.status` alongside a dispensed-quantity check rather
+> than a bare 1:1 table (see FHIR_FOUNDATION.md), and `consultations.
+> status`/`invoices.status`/`payments.status` have no FHIR resource
+> mapped to them yet in this phase (`Condition`, this phase's diagnosis
+> mapping, reads other `consultations` fields, not `.status` itself).
+
 Per instruction, **no existing enum is proposed to change.** The Phase 2
 finding stands: `consultations.status`, `orders.status`, `prescriptions.
 status`, `appointments.status`, `invoices.status`, `payments.status` are
@@ -571,6 +586,27 @@ Patient                                    [EXISTING]
 ---
 
 ## 12. FHIR mapping readiness (per-resource, informed by §4-10's proposals)
+
+> **Update (Phase 8 of the interoperability master prompt): implemented,
+> read-only.** See `docs/architecture/FHIR_FOUNDATION.md` for the full
+> architecture, the actual mapping notes per resource, tenant isolation,
+> authentication, and everything deliberately not built;
+> `app/services/fhir_mappers.py`/`app/api/fhir.py` for the code; and
+> `tests/test_fhir.py` for the coverage. `GET /fhir/r4/{Resource}/{id}`
+> now exists for Patient, Practitioner, Organization, Appointment,
+> Encounter, Condition, AllergyIntolerance, Medication,
+> MedicationRequest, Observation, and ServiceRequest — the table below
+> is kept as the historical record of what this document proposed
+> before implementation. Two real deviations from the sketch, both with
+> concrete reasoning in FHIR_FOUNDATION.md: `orders` maps to
+> **`ServiceRequest`**, not the `DiagnosticReport` grouping sketched
+> below (Phase 8's own instruction scoped this to `ServiceRequest`
+> specifically, and this schema has no persisted report-level
+> status/conclusion to justify a `DiagnosticReport` grouping on top of
+> it); and `vitals` → `Observation` (×N fan-out) remains **not
+> implemented** — real, non-trivial design work (synthetic composite
+> identifiers for a 1-row-to-9-resources fan-out) this foundation phase
+> deferred rather than rushed, not a gap that was missed.
 
 | Current Domain | Canonical Concept | Future FHIR Resource | Fields already available | Fields missing | Fields needing transformation | Fields that stay internal-only |
 |---|---|---|---|---|---|---|
@@ -717,8 +753,8 @@ specific evidence that would have justified it:
 - Vitals UCUM metadata mapping (application-code-only, §9;
   **explicitly not implemented in Phase 7** — see that section's own
   update note for why).
-- Clinical-status → FHIR-status translation tables (§10 — belongs inside
-  the eventual FHIR mapping layer, not built now).
+- Clinical-status → FHIR-status translation tables (§10;
+  **implemented in Phase 8** inside `app/services/fhir_mappers.py`).
 - Diagnosis structure, Stage 2 (multi-diagnosis, §6 — conditional on a
   real future requirement).
 
@@ -846,7 +882,7 @@ not yet built.
 | P2 | Allergy code slot | Closes the terminology gap on an already-correct table | Phase 2 §5 | `patient_allergies` gains 3 nullable columns | Low (additive) | None |
 | P2 | `order_results` unit code slots — **implemented, Phase 7** | Unit field exists but uncoded/unvalidated (Phase 2 §7) | Migration `0031`'s `unit TEXT` | `order_results` gains 2 nullable columns (`migrations/0057`) | Low (additive) | None |
 | P2 | Vitals UCUM metadata mapping — **not implemented, Phase 7** (superseded by that phase's own "no pseudo-UCUM dictionary" instruction) | Units implicit in column names only, no coded form available to a future mapping layer | Phase 2 §7 (zero `unit` columns found on `vitals`) | None — no change made | Zero (code-only, additive) | None |
-| P2 | Clinical-status → FHIR-status translation tables | Needed by any future FHIR mapping layer; internal enums correctly stay unchanged | Phase 2 §3 domain #18 | New mapping module, when the FHIR-foundation phase actually starts | Zero (doesn't exist yet, no current code affected) | The eventual FHIR Foundation phase itself |
+| P2 | Clinical-status → FHIR-status translation tables — **implemented, Phase 8** | Needed by any future FHIR mapping layer; internal enums correctly stay unchanged | Phase 2 §3 domain #18 | `app/services/fhir_mappers.py`'s per-status `_..._MAP` dicts | Zero (code-only, additive) | Phase 8 (FHIR Foundation) |
 | P2 (conditional) | Diagnosis Stage 2 (multi-diagnosis `conditions` table) | No current evidence of a real requirement | §6 | New `conditions` table, `ConsultationWorkspace.tsx` UI | Medium (real new UI/workflow, not just a schema slot) | A concrete product requirement — not evidenced yet, do not build speculatively |
 | P3 | ABDM / SMART / DICOM / HL7 / IHE / NHCX | Unchanged from Phase 0 | `docs/OPD_HIMS_INTEROPERABILITY_AUDIT.md` | — | — | P1 items ideally land first so there's a real code/terminology slot to map from |
 
