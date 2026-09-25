@@ -245,7 +245,7 @@ export default function DashboardPanel({
           <h3 className="dashboard-section-heading">Analytics</h3>
 
           <div className="chart-card">
-            <h4>Appointment Requests</h4>
+            <h3>Appointment Requests</h3>
             <p className="muted">New appointment requests over the last {trends?.appointments.length ?? 0} days</p>
             <ResponsiveContainer width="100%" height={220}>
               <LineChart data={trends?.appointments ?? []} margin={{ top: 8, right: 12, left: -12, bottom: 0 }}>
@@ -266,7 +266,7 @@ export default function DashboardPanel({
           </div>
 
           <div className="chart-card">
-            <h4>Patient Registrations</h4>
+            <h3>Patient Registrations</h3>
             <p className="muted">New patients registered over the last {trends?.patients.length ?? 0} days</p>
             <ResponsiveContainer width="100%" height={220}>
               <LineChart data={trends?.patients ?? []} margin={{ top: 8, right: 12, left: -12, bottom: 0 }}>

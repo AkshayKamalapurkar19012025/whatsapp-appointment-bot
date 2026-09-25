@@ -5,8 +5,11 @@ import psycopg
 from app.api.staff_auth import require_permission
 from app.db.connection import get_connection
 from app.services.audit_log import record_audit_log
+from app.utils.reference_cache import get_or_set, invalidate
 
 router = APIRouter(prefix="/departments", tags=["Departments"])
+
+_CACHE_KEY = "departments:active"
 
 
 class DepartmentCreate(BaseModel):
@@ -25,26 +28,29 @@ class DepartmentCreate(BaseModel):
 
 @router.get("")
 def get_departments():
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, name, active
-                FROM departments
-                WHERE active = TRUE
-                ORDER BY name
-                """
-            )
-            rows = cur.fetchall()
+    def _load():
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, name, active
+                    FROM departments
+                    WHERE active = TRUE
+                    ORDER BY name
+                    """
+                )
+                rows = cur.fetchall()
 
-    return [
-        {
-            "id": row[0],
-            "name": row[1],
-            "active": row[2],
-        }
-        for row in rows
-    ]
+        return [
+            {
+                "id": row[0],
+                "name": row[1],
+                "active": row[2],
+            }
+            for row in rows
+        ]
+
+    return get_or_set(_CACHE_KEY, _load)
 
 
 @router.post("")
@@ -75,6 +81,7 @@ def create_department(
                     details={"name": row[1]},
                 )
 
+        invalidate(_CACHE_KEY)
         return {
             "id": row[0],
             "name": row[1],
@@ -123,6 +130,7 @@ def update_department(
                     details={"name": row[1]},
                 )
 
+        invalidate(_CACHE_KEY)
         return {
             "id": row[0],
             "name": row[1],
@@ -171,6 +179,7 @@ def delete_department(
                 resource_id=department_id,
             )
 
+    invalidate(_CACHE_KEY)
     return {
         "id": department_id,
         "message": "Department removed",

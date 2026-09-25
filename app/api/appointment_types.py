@@ -5,11 +5,20 @@ import psycopg
 from app.api.staff_auth import get_current_staff, require_permission
 from app.db.connection import get_connection
 from app.services.audit_log import record_audit_log
+from app.utils.reference_cache import get_or_set, invalidate
 
 router = APIRouter(
     prefix="/appointment-types",
     tags=["Appointment Types"],
 )
+
+# Only the bare, active-only list below is cached -- it's the one hit
+# by every appointment-type dropdown across the app. GET /admin and
+# GET /{id} are staff-only management views, read far less often, and
+# GET /admin in particular wants to stay maximally fresh right after
+# an edit on that same page -- not worth the added invalidation
+# surface for a much colder path.
+_CACHE_KEY = "appointment_types:active"
 
 
 class AppointmentTypeCreate(BaseModel):
@@ -28,26 +37,29 @@ class AppointmentTypeCreate(BaseModel):
 
 @router.get("")
 def get_appointment_types():
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, name, active
-                FROM appointment_types
-                WHERE active = TRUE
-                ORDER BY name
-                """
-            )
-            rows = cur.fetchall()
+    def _load():
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, name, active
+                    FROM appointment_types
+                    WHERE active = TRUE
+                    ORDER BY name
+                    """
+                )
+                rows = cur.fetchall()
 
-    return [
-        {
-            "id": row[0],
-            "name": row[1],
-            "active": row[2],
-        }
-        for row in rows
-    ]
+        return [
+            {
+                "id": row[0],
+                "name": row[1],
+                "active": row[2],
+            }
+            for row in rows
+        ]
+
+    return get_or_set(_CACHE_KEY, _load)
 
 
 @router.get("/admin")
@@ -206,6 +218,7 @@ def create_appointment_type(
                     details={"name": row[1]},
                 )
 
+        invalidate(_CACHE_KEY)
         return {
             "id": row[0],
             "name": row[1],
@@ -254,6 +267,7 @@ def update_appointment_type(
                     details={"name": row[1]},
                 )
 
+        invalidate(_CACHE_KEY)
         return {
             "id": row[0],
             "name": row[1],
@@ -314,6 +328,7 @@ def update_appointment_type_active(
                 details={"active": row[1]},
             )
 
+    invalidate(_CACHE_KEY)
     return {"id": row[0], "active": row[1]}
 
 
@@ -352,6 +367,7 @@ def delete_appointment_type(
                 resource_id=appointment_type_id,
             )
 
+    invalidate(_CACHE_KEY)
     return {
         "id": appointment_type_id,
         "message": "Appointment type removed",

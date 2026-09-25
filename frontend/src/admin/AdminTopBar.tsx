@@ -35,7 +35,7 @@ export default function AdminTopBar({
       <div className="admin-topbar-actions">
         <NotificationBell />
         <DropdownMenu>
-          <DropdownMenuTrigger className="admin-account-trigger">
+          <DropdownMenuTrigger className="admin-account-trigger" aria-label={`Account menu for ${username}, role ${role}`}>
             <span className="brand-mark" aria-hidden="true">
               {username.charAt(0).toUpperCase()}
             </span>

@@ -518,3 +518,32 @@ class AllergyNotFound(ServiceError):
 
 class DuplicatePackageName(ServiceError):
     pass
+
+
+class ModuleNotFound(ServiceError):
+    """Raised for an unknown module_key -- not one of the fixed set
+    app/services/module_services.py's MODULES defines."""
+    pass
+
+
+class ModuleNotLicensed(ServiceError):
+    """Raised when a hospital admin tries to enable a module their
+    hospital isn't licensed for (master spec section 67: "Hospital
+    admin must NOT be able to self-grant paid modules") -- also
+    enforced at the DB layer (hospital_modules' own CHECK constraint),
+    this is the same rule surfaced as a real error instead of a raw
+    constraint violation."""
+    pass
+
+
+class ModuleUnavailable(ServiceError):
+    """Raised when someone tries to use a module (order a LAB/RADIOLOGY
+    test, prescribe, dispense, bill via a package) that isn't currently
+    available (licensed AND enabled) for the encounter's hospital --
+    master spec section 68's degradation gate. Carries module_key so
+    the API layer can give a module-specific message (e.g. pointing a
+    blocked LAB/RADIOLOGY order toward External Referral instead)."""
+
+    def __init__(self, module_key: str):
+        self.module_key = module_key
+        super().__init__(module_key)

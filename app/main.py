@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import ALLOWED_ORIGINS, MEDIA_ROOT
 from app.db.connection import open_pool, close_pool
+from app.error_handling import register_exception_handlers
 from app.logging_config import configure_logging, new_request_id, request_id_var
 from app.api.health import router as health_router
 from app.api.app_config import router as app_config_router
@@ -35,7 +36,7 @@ from app.api.doctor_appointment_types import (
 from app.api.audit_log import router as audit_log_router
 from app.api.queue_display import router as queue_display_router
 from app.api.clinical import router as clinical_router
-from app.api.orders import router as orders_router
+from app.api.orders import router as orders_router, worklist_router as orders_worklist_router
 from app.api.pharmacy import prescription_router, pharmacy_router
 from app.api.billing import router as billing_router
 from app.api.exceptions import router as exceptions_router
@@ -44,6 +45,7 @@ from app.api.search import router as search_router
 from app.api.notifications import router as notifications_router
 from app.api.billing_history import router as billing_history_router
 from app.api.waiting_time_analytics import router as waiting_time_analytics_router
+from app.api.module_licensing import router as module_licensing_router
 
 configure_logging()
 access_logger = logging.getLogger("app.access")
@@ -62,6 +64,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+# OPD/HIMS master spec section 61: wraps every error response (existing
+# HTTPExceptions, Pydantic validation failures, and any unhandled
+# exception) in the spec's {success, errorCode, message, details}
+# envelope -- see app/error_handling.py's own docstring for why this is
+# one centralized registration rather than 100+ individual call-site
+# changes, and why the pre-existing `detail` field stays in the body too.
+register_exception_handlers(app)
 
 # WEB P10 (security pass): only lets a browser-based frontend on an
 # explicitly allowlisted origin (app.config.ALLOWED_ORIGINS) call this
@@ -232,6 +242,11 @@ app.include_router(
 )
 
 app.include_router(
+    orders_worklist_router,
+    prefix="/api",
+)
+
+app.include_router(
     prescription_router,
     prefix="/api",
 )
@@ -273,6 +288,11 @@ app.include_router(
 
 app.include_router(
     waiting_time_analytics_router,
+    prefix="/api",
+)
+
+app.include_router(
+    module_licensing_router,
     prefix="/api",
 )
 

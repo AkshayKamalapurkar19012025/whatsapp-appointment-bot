@@ -270,7 +270,14 @@ export interface MyAppointmentsResponse {
 export interface Staff {
   id: number
   username: string
-  role: 'ADMIN' | 'STAFF'
+  // Was 'ADMIN' | 'STAFF' only -- stale since migrations/0043_role_
+  // based_access.sql widened staff.role's own FK to every StaffRole
+  // below (GET /auth/staff/me has returned any of them ever since;
+  // this type just hadn't caught up, which meant AdminApp.tsx's own
+  // per-role sidebar/landing-screen logic couldn't compare staff.role
+  // against anything but ADMIN/STAFF without a type error).
+  role: StaffRole
+  hospital_id: number
 }
 
 // Every role migrations/0031_rbac_decomposition.sql seeded, now
@@ -878,6 +885,30 @@ export interface ClinicalOrder {
   results: OrderResultItem[]
 }
 
+// One row of GET /orders/worklist -- the cross-patient Lab/Radiology
+// Worklist screen's shape, distinct from ClinicalOrder (one
+// appointment's own encounter): carries patient/doctor identity and
+// the appointment_id needed to call the existing per-appointment
+// result-entry endpoint, and has no `results` (a worklist row is
+// always still-open work, never one already carrying a result).
+export interface WorklistOrder {
+  id: number
+  encounter_id: number
+  appointment_id: number
+  order_type: OrderType
+  description: string
+  clinical_indication: string | null
+  priority: OrderPriority
+  status: OrderStatus
+  external_destination: string | null
+  ordering_doctor_id: number
+  doctor_name: string
+  ordered_at: string
+  patient_id: number
+  patient_name: string
+  uhid: string
+}
+
 export interface OrderInput {
   order_type: OrderType
   description: string
@@ -1190,6 +1221,23 @@ export interface Package {
   description: string | null
   price: number
   active: boolean
+}
+
+// GET/PATCH /api/hospitals/{id}/modules[/...] (OPD/HIMS master spec
+// sections 67-68) -- Licensed/Enabled are the two independently-set
+// booleans; Available is derived (licensed && enabled), never set
+// directly.
+export type ModuleKey = 'LAB_RADIOLOGY' | 'PHARMACY' | 'PACKAGES'
+export type ModuleDegradation = 'EXTERNAL' | 'BLOCKED' | 'HIDDEN'
+
+export interface HospitalModule {
+  module_key: ModuleKey
+  name: string
+  description: string
+  degradation: ModuleDegradation
+  licensed: boolean
+  enabled: boolean
+  available: boolean
 }
 
 export interface PackageInput {

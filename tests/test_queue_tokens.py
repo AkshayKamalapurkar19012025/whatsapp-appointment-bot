@@ -13,7 +13,12 @@ notifications.
 
 from datetime import date, datetime, timedelta, timezone as dt_timezone
 
-from tests.helpers import create_admin_and_get_headers, create_staff_and_get_headers, seed_basic_doctor
+from tests.helpers import (
+    add_doctor_to_department,
+    create_admin_and_get_headers,
+    create_staff_and_get_headers,
+    seed_basic_doctor,
+)
 
 
 def _next_weekday(from_date: date | None = None) -> date:
@@ -148,6 +153,51 @@ def test_token_numbers_are_independent_per_doctor(client, db_connection):
     # other doctor's own payments.
     assert pay_a.json()["token_number"] == 1
     assert pay_b.json()["token_number"] == 1
+
+
+def test_token_numbers_independent_for_two_doctors_in_the_same_department(client, db_connection):
+    # Phase 13 end-to-end validation gap: test_token_numbers_are_
+    # independent_per_doctor above proves independence across two
+    # *different* departments, but never two doctors sharing one
+    # department -- the actually-interesting case, since a shared
+    # department is exactly where a token counter keyed on the wrong
+    # column (department instead of doctor) would first collide. There
+    # is no department-level queue in this system (queues are strictly
+    # per-doctor; department is only a scoping/grouping attribute) --
+    # this test is what "multi-doctor queue interaction" actually means
+    # here.
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded_a = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Token SharedDept A",
+        department_name="Token Shared Dept", appointment_type_name="Token Shared Type",
+    )
+    doctor_b_id = add_doctor_to_department(
+        client, db_connection,
+        department_id=seeded_a["department_id"],
+        appointment_type_id=seeded_a["appointment_type_id"],
+        doctor_name="Dr. Token SharedDept B",
+    )
+    seeded_b = {"doctor_id": doctor_b_id, "appointment_type_id": seeded_a["appointment_type_id"]}
+
+    # Book two patients for doctor A first (so its counter is already
+    # past 1) before doctor B's first patient of the day -- a token
+    # counter accidentally shared by department would give B's first
+    # patient token 3, not 1.
+    first_for_a = _schedule_and_confirm(client, db_connection, admin_headers, seeded_a, "Shared Dept Patient A1", 30000010, hour=9)
+    second_for_a = _schedule_and_confirm(client, db_connection, admin_headers, seeded_a, "Shared Dept Patient A2", 30000011, hour=10)
+    first_for_b = _schedule_and_confirm(client, db_connection, admin_headers, seeded_b, "Shared Dept Patient B1", 30000012, hour=9)
+
+    client.post(f"/api/appointments/{first_for_a['appointment_id']}/visit", headers=admin_headers)
+    client.post(f"/api/appointments/{second_for_a['appointment_id']}/visit", headers=admin_headers)
+    client.post(f"/api/appointments/{first_for_b['appointment_id']}/visit", headers=admin_headers)
+
+    pay_a1 = _pay(client, admin_headers, first_for_a["appointment_id"])
+    pay_a2 = _pay(client, admin_headers, second_for_a["appointment_id"])
+    pay_b1 = _pay(client, admin_headers, first_for_b["appointment_id"])
+
+    assert pay_a1.json()["token_number"] == 1
+    assert pay_a2.json()["token_number"] == 2
+    assert pay_b1.json()["token_number"] == 1
 
 
 def test_visit_sends_check_in_notification_without_token_number(client, db_connection):

@@ -6,10 +6,12 @@ import {
   ClockCounterClockwise,
   CreditCard,
   CurrencyInr,
+  Flask,
   Gauge,
   GearSix,
   Gift,
   Pill,
+  PuzzlePiece,
   Receipt,
   ShieldCheck,
   Stethoscope,
@@ -18,7 +20,7 @@ import {
   UsersThree,
 } from '@phosphor-icons/react'
 import { clearStaffToken, getStaffMe, getStaffToken, staffLogout } from '../api'
-import type { Staff } from '../types'
+import type { Staff, StaffRole } from '../types'
 import StaffLoginFlow from './StaffLoginFlow'
 import DashboardPanel from './DashboardPanel'
 import DepartmentsPanel from './DepartmentsPanel'
@@ -38,6 +40,8 @@ import DepartmentQueuePanel from './DepartmentQueuePanel'
 import BillingHistoryPanel from './BillingHistoryPanel'
 import PaymentHistoryPanel from './PaymentHistoryPanel'
 import WaitingTimeAnalyticsPanel from './WaitingTimeAnalyticsPanel'
+import LabRadiologyWorklistPanel from './LabRadiologyWorklistPanel'
+import ModuleLicensingPanel from './ModuleLicensingPanel'
 import AdminSidebar, { type AdminSidebarItem } from './AdminSidebar'
 import AdminTopBar from './AdminTopBar'
 
@@ -60,6 +64,64 @@ type Section =
   | 'waiting-time-analytics'
   | 'pharmacy'
   | 'packages'
+  | 'lab-worklist'
+  | 'module-licensing'
+
+// Master spec audit Principle 5 ("Reception/Nurse/Doctor/Lab/
+// Radiology/Pharmacist/Cashier/Admin see different workflows"):
+// role-differentiated sidebar visibility + landing screen, now that
+// migrations/0043_role_based_access.sql makes these 8 roles real,
+// loggable-in accounts rather than schema-only labels. ADMIN and
+// STAFF are deliberately absent from ROLE_VISIBLE_SECTIONS below --
+// both keep today's unrestricted "see everything but Staff Accounts/
+// Audit Log" behavior (STAFF remains the generalist fallback for any
+// account not yet assigned one of the six specific roles), so the
+// lookup below simply falls through to "show everything" for them.
+//
+// This is sidebar/routing UX, not a new access-control boundary: every
+// bare-STAFF-auth endpoint (vitals, orders, prescriptions, routine
+// payment collection) stays reachable by any authenticated session
+// regardless of what's in this table, exactly as migrations/0043's own
+// docstring says it should. The three actions that ARE real RBAC today
+// (pharmacy.manage_stock, the bill.*/appointment.*_payment set,
+// consultation.amend) are separately gated below by the matching role,
+// not by this table -- see canManageStock/canManageBilling/
+// canAmendConsultation.
+const ROLE_VISIBLE_SECTIONS: Partial<Record<StaffRole, Set<Section>>> = {
+  RECEPTIONIST: new Set<Section>([
+    'dashboard', 'appointments', 'book-appointment', 'queue', 'consultation', 'department-queue', 'patients',
+  ]),
+  NURSE: new Set<Section>([
+    'dashboard', 'department-queue', 'appointments', 'book-appointment', 'queue', 'consultation', 'patients',
+  ]),
+  DOCTOR: new Set<Section>([
+    'dashboard', 'appointments', 'book-appointment', 'queue', 'consultation', 'department-queue', 'patients',
+  ]),
+  // Lab Worklist (LabRadiologyWorklistPanel.tsx) closes the gap the
+  // comment here used to flag: a cross-patient view of every open LAB/
+  // RADIOLOGY order, filterable by type, with the same result-entry
+  // form ConsultationWorkspace's Orders tab uses -- LAB_TECH's first
+  // real, differentiated workflow rather than the doctor's own screens
+  // reused minus a section.
+  LAB_TECH: new Set<Section>(['dashboard', 'lab-worklist', 'appointments', 'patients']),
+  PHARMACIST: new Set<Section>(['dashboard', 'pharmacy', 'patients']),
+  BILLING: new Set<Section>([
+    'dashboard', 'appointments', 'patients', 'billing', 'billing-history', 'payment-history',
+  ]),
+}
+
+// Where each role lands right after login, instead of the generic
+// Dashboard -- the cheapest, most visible part of "different
+// workflows": a receptionist opens the app already on Appointments, a
+// pharmacist on Pharmacy, not one more click away from their own job.
+const ROLE_LANDING_SECTION: Partial<Record<StaffRole, Section>> = {
+  RECEPTIONIST: 'appointments',
+  NURSE: 'department-queue',
+  DOCTOR: 'department-queue',
+  PHARMACIST: 'pharmacy',
+  BILLING: 'billing-history',
+  LAB_TECH: 'lab-worklist',
+}
 
 // Nothing in this component clears staff/getStaffToken() when `section`
 // changes -- switching sections is a plain in-memory state update, same
@@ -103,20 +165,30 @@ export default function AdminApp() {
   // the queue's last-viewed-doctor convenience).
   const [consultationAppointmentId, setConsultationAppointmentId] = useState<number | null>(null)
 
+  // Shared by both places a fresh `staff` arrives (session restore on
+  // load, and a just-completed login) -- lands the session on its
+  // role's own default screen (ROLE_LANDING_SECTION) rather than
+  // always Dashboard. A role with no entry there (ADMIN/STAFF) keeps
+  // today's Dashboard-first behavior unchanged.
+  function applyStaff(result: Staff) {
+    setStaff(result)
+    setSection(ROLE_LANDING_SECTION[result.role] ?? 'dashboard')
+  }
+
   useEffect(() => {
     if (!getStaffToken()) {
       setCheckingSession(false)
       return
     }
     getStaffMe()
-      .then(setStaff)
+      .then(applyStaff)
       .catch(() => clearStaffToken())
       .finally(() => setCheckingSession(false))
   }, [])
 
   function handleLoggedIn() {
     getStaffMe()
-      .then(setStaff)
+      .then(applyStaff)
       .catch(() => clearStaffToken())
   }
 
@@ -194,6 +266,26 @@ export default function AdminApp() {
   }
 
   const isAdmin = staff.role === 'ADMIN'
+  // Real RBAC, server-enforced regardless of what these booleans gate
+  // client-side -- see PharmacyPanel.tsx/AppointmentBillingPanel.tsx/
+  // ConsultationWorkspace.tsx/PrescriptionPanel.tsx for where each is
+  // actually used. STAFF holds vitals.record/consultation.write/
+  // order.create/prescription.create (migrations/0048_clinical_rbac_
+  // permissions.sql) alongside NURSE/DOCTOR -- unlike pharmacy.
+  // manage_stock/bill.*/consultation.amend above, which STAFF does
+  // NOT hold (migrations/0043_role_based_access.sql's own pattern).
+  const canManageStock = isAdmin || staff.role === 'PHARMACIST'
+  const canManageBilling = isAdmin || staff.role === 'BILLING'
+  const canAmendConsultation = isAdmin || staff.role === 'DOCTOR'
+  const canRecordVitals = isAdmin || staff.role === 'STAFF' || staff.role === 'NURSE' || staff.role === 'DOCTOR'
+  const canWriteConsultation = isAdmin || staff.role === 'STAFF' || staff.role === 'DOCTOR'
+  const canCreateOrders = canWriteConsultation
+  const canCreatePrescriptions = canWriteConsultation
+  // order.result (migrations/0051) -- ADMIN/STAFF/DOCTOR keep the same
+  // access as every other clinical-documentation gate; LAB_TECH is the
+  // new addition, the Lab Worklist's whole reason to exist.
+  const canRecordOrderResults = isAdmin || staff.role === 'STAFF' || staff.role === 'DOCTOR' || staff.role === 'LAB_TECH'
+  const visibleSections = ROLE_VISIBLE_SECTIONS[staff.role]
 
   // Recurring schedule management is ADMIN-only per the RBAC design
   // (docs/WEB_EXPANSION_ARCHITECTURE.md section 8/section 10 item 3) --
@@ -294,6 +386,14 @@ export default function AdminApp() {
       onSelect: () => goTo('packages'),
       group: 'Manage',
     },
+    {
+      key: 'lab-worklist',
+      label: 'Lab Worklist',
+      icon: <Flask size={20} weight="regular" />,
+      active: section === 'lab-worklist',
+      onSelect: () => goTo('lab-worklist'),
+      group: 'Manage',
+    },
     ...(isAdmin
       ? [
           {
@@ -310,6 +410,14 @@ export default function AdminApp() {
             icon: <ClockCounterClockwise size={20} weight="regular" />,
             active: section === 'audit-log',
             onSelect: () => goTo('audit-log'),
+            group: 'Admin',
+          } satisfies AdminSidebarItem,
+          {
+            key: 'module-licensing',
+            label: 'Module Licensing',
+            icon: <PuzzlePiece size={20} weight="regular" />,
+            active: section === 'module-licensing',
+            onSelect: () => goTo('module-licensing'),
             group: 'Admin',
           } satisfies AdminSidebarItem,
         ]
@@ -355,10 +463,17 @@ export default function AdminApp() {
     },
   ]
 
+  // 'settings' is a disabled, "Coming soon" placeholder with no real
+  // content behind it -- not a Section worth restricting, so every
+  // role keeps seeing it regardless of what's in ROLE_VISIBLE_SECTIONS.
+  const visibleMenuItems = visibleSections
+    ? menuItems.filter((item) => item.key === 'settings' || visibleSections.has(item.key as Section))
+    : menuItems
+
   return (
     <div className="page">
       <div className="admin-shell">
-        <AdminSidebar items={menuItems} />
+        <AdminSidebar items={visibleMenuItems} />
 
         <main className="admin-content">
           <AdminTopBar
@@ -403,7 +518,12 @@ export default function AdminApp() {
             <ConsultationWorkspace
               key={navResetKey}
               appointmentId={consultationAppointmentId}
-              isAdmin={isAdmin}
+              canAmendConsultation={canAmendConsultation}
+              canManageBilling={canManageBilling}
+              canRecordVitals={canRecordVitals}
+              canWriteConsultation={canWriteConsultation}
+              canCreateOrders={canCreateOrders}
+              canCreatePrescriptions={canCreatePrescriptions}
               onBack={() => goTo('queue')}
             />
           )}
@@ -416,12 +536,18 @@ export default function AdminApp() {
           {section === 'patients' && <PatientsPanel key={navResetKey} />}
           {section === 'staff-accounts' && isAdmin && <StaffAccountsPanel key={navResetKey} />}
           {section === 'audit-log' && isAdmin && <AuditLogPanel key={navResetKey} />}
+          {section === 'module-licensing' && isAdmin && (
+            <ModuleLicensingPanel key={navResetKey} hospitalId={staff.hospital_id} />
+          )}
           {section === 'billing' && <BillingPanel key={navResetKey} />}
           {section === 'billing-history' && <BillingHistoryPanel key={navResetKey} />}
           {section === 'payment-history' && <PaymentHistoryPanel key={navResetKey} />}
           {section === 'waiting-time-analytics' && <WaitingTimeAnalyticsPanel key={navResetKey} />}
-          {section === 'pharmacy' && <PharmacyPanel key={navResetKey} isAdmin={isAdmin} />}
+          {section === 'pharmacy' && <PharmacyPanel key={navResetKey} canManageStock={canManageStock} />}
           {section === 'packages' && <PackagesPanel key={navResetKey} isAdmin={isAdmin} />}
+          {section === 'lab-worklist' && (
+            <LabRadiologyWorklistPanel key={navResetKey} canRecordResults={canRecordOrderResults} />
+          )}
         </main>
       </div>
     </div>

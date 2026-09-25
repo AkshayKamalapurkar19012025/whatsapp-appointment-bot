@@ -31,6 +31,7 @@ from app.services.exceptions import (
     ChargeAlreadyVoided,
     DuplicateCharge,
     InvalidChargeSource,
+    ModuleUnavailable,
     PackageNotFound,
     PaymentNotFound,
     PaymentAlreadyVoided,
@@ -38,6 +39,7 @@ from app.services.exceptions import (
     PaymentRefundExceedsAmount,
     DuplicateTransactionId,
 )
+from app.services.module_services import is_module_available
 
 import psycopg
 
@@ -334,18 +336,28 @@ def add_charge_service(
         # staff's -- add_charge_service has no staff hospital_id in
         # scope, and the encounter's is the one that actually matters
         # here (billing another hospital's package to this visit would
-        # be the real bug, regardless of who's billing it).
+        # be the real bug, regardless of who's billing it). The same
+        # query's own hospital_id feeds the PACKAGES module-availability
+        # check right below, rather than a second lookup.
         cur.execute(
             """
-            SELECT p.id
+            SELECT p.id, e.hospital_id
             FROM packages p
             JOIN encounters e ON e.hospital_id = p.hospital_id
             WHERE p.id = %s AND e.id = %s AND p.active = TRUE
             """,
             (source_package_id, encounter_id),
         )
-        if cur.fetchone() is None:
+        row = cur.fetchone()
+        if row is None:
             raise PackageNotFound()
+        # Master spec section 68: PACKAGES degrades to HIDDEN -- billing
+        # a *new* charge via a package is blocked, but a charge already
+        # billed this way before the module was disabled stays exactly
+        # as it is (this check only runs on the way in, never touches
+        # an existing charges row).
+        if not is_module_available(cur, row[1], "PACKAGES"):
+            raise ModuleUnavailable("PACKAGES")
 
     try:
         cur.execute(
@@ -407,24 +419,36 @@ def record_invoice_payment_service(
     amount,
     method: str,
     transaction_id: str | None = None,
+    status: str = "COMPLETED",
 ):
+    """
+    status is COMPLETED or DECLINED (a DECLINED attempt, e.g. a
+    declined card, records the amount that was *attempted* -- useful
+    as an audit trail and for the front desk to see what to retry --
+    without it counting toward the invoice's paid total; retry by
+    calling this again, no separate endpoint needed). The
+    balance-exceeded check only applies to COMPLETED: it exists to
+    stop a real payment from ever taking the balance negative, which
+    isn't a concern for an attempt that didn't succeed.
+    """
     invoice = _get_invoice_for_appointment(cur, appointment_id, lock=True)
 
     if invoice["status"] == "VOID":
         raise InvoiceVoided()
 
-    summary = get_invoice_summary_service(cur, appointment_id, staff_id=staff_id)
-    if amount > summary["balance"]:
-        raise PaymentExceedsBalance()
+    if status == "COMPLETED":
+        summary = get_invoice_summary_service(cur, appointment_id, staff_id=staff_id)
+        if amount > summary["balance"]:
+            raise PaymentExceedsBalance()
 
     try:
         cur.execute(
             f"""
-            INSERT INTO payments (invoice_id, amount, method, transaction_id, recorded_by)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO payments (invoice_id, amount, method, transaction_id, status, recorded_by)
+            VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING {", ".join(_PAYMENT_COLUMNS)}
             """,
-            (invoice["id"], amount, method, transaction_id, staff_id),
+            (invoice["id"], amount, method, transaction_id, status, staff_id),
         )
     except psycopg.errors.UniqueViolation:
         raise DuplicateTransactionId()

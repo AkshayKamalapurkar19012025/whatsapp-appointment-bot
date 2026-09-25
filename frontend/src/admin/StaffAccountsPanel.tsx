@@ -94,7 +94,7 @@ export default function StaffAccountsPanel() {
           minLength={8}
           required
         />
-        <select value={role} onChange={(e) => setRole(e.target.value as StaffRole)}>
+        <select aria-label="Role" value={role} onChange={(e) => setRole(e.target.value as StaffRole)}>
           {STAFF_ROLES.map((r) => (
             <option key={r} value={r}>
               {r}
@@ -125,7 +125,9 @@ export default function StaffAccountsPanel() {
               <th>Username</th>
               <th>Role</th>
               <th>Status</th>
-              <th />
+              <th>
+                <span className="visually-hidden">Actions</span>
+              </th>
             </tr>
           </thead>
           <tbody>

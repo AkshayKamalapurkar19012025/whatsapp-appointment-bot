@@ -8,6 +8,27 @@ about behaviour, not auth.
 from tests.helpers import create_admin_and_get_headers
 
 
+def test_create_is_visible_immediately_despite_the_list_cache(client, db_connection):
+    """Phase 12 hardening (master spec audit gap #7): GET /departments
+    is cached in-process (app/utils/reference_cache.py), so this
+    specifically protects the invalidation contract -- a write must
+    never leave a stale list behind, even for the very next request.
+    Every rename/delete test above already re-reads the list right
+    after its own write and would fail the same way if invalidation
+    broke, but this one names the property directly rather than
+    leaving it as incidental coverage."""
+    admin_headers = create_admin_and_get_headers(db_connection)
+
+    before = client.get("/api/departments").json()
+    created = client.post(
+        "/api/departments", json={"name": "Cache Invalidation Dept"}, headers=admin_headers
+    ).json()
+    after = client.get("/api/departments").json()
+
+    assert not any(d["id"] == created["id"] for d in before)
+    assert any(d["id"] == created["id"] and d["name"] == "Cache Invalidation Dept" for d in after)
+
+
 def test_rename_department(client, db_connection):
     admin_headers = create_admin_and_get_headers(db_connection)
     department = client.post(

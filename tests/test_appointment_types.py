@@ -35,6 +35,23 @@ def test_create_and_list_appointment_type(client, db_connection):
     assert "Consultation" in names
 
 
+def test_create_is_visible_immediately_despite_the_list_cache(client, db_connection):
+    """Phase 12 hardening (master spec audit gap #7): GET /appointment-
+    types is cached in-process (app/utils/reference_cache.py) -- this
+    protects the invalidation contract directly, naming the property
+    rather than leaving it as incidental coverage of the test above."""
+    headers = create_admin_and_get_headers(db_connection)
+
+    before = client.get("/api/appointment-types").json()
+    created = client.post(
+        "/api/appointment-types", json={"name": "Cache Invalidation Type"}, headers=headers
+    ).json()
+    after = client.get("/api/appointment-types").json()
+
+    assert not any(t["id"] == created["id"] for t in before)
+    assert any(t["id"] == created["id"] and t["name"] == "Cache Invalidation Type" for t in after)
+
+
 def test_duplicate_appointment_type_name_is_rejected(client, db_connection):
     headers = create_admin_and_get_headers(db_connection)
     client.post("/api/appointment-types", json={"name": "Follow-up"}, headers=headers)

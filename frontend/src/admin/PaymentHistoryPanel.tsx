@@ -75,7 +75,11 @@ export default function PaymentHistoryPanel() {
           value={patientName}
           onChange={(e) => setPatientName(e.target.value)}
         />
-        <select value={method} onChange={(e) => setMethod(e.target.value as BillPaymentMethod | '')}>
+        <select
+          aria-label="Filter by payment method"
+          value={method}
+          onChange={(e) => setMethod(e.target.value as BillPaymentMethod | '')}
+        >
           <option value="">All methods</option>
           {METHOD_OPTIONS.map((m) => (
             <option key={m} value={m}>

@@ -33,6 +33,10 @@ import type {
   ExceptionsResponse,
   OrderInput,
   OrderResultItemInput,
+  OrderStatus,
+  WorklistOrder,
+  HospitalModule,
+  ModuleKey,
   Package,
   PackageInput,
   PaymentReceipt,
@@ -793,6 +797,19 @@ export function recordOrderResult(
   })
 }
 
+// -- Lab/Radiology Worklist (cross-patient, GET /orders/worklist) ---------
+
+export function listWorklistOrders(params?: {
+  orderType?: 'LAB' | 'RADIOLOGY'
+  status?: OrderStatus
+}): Promise<WorklistOrder[]> {
+  const query = new URLSearchParams()
+  if (params?.orderType) query.set('order_type', params.orderType)
+  if (params?.status) query.set('status', params.status)
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  return request(`/orders/worklist${suffix}`, { auth: 'staff' })
+}
+
 export function assignDoctorToDepartment(
   doctorId: number,
   departmentId: number,
@@ -1526,4 +1543,34 @@ export function updatePackage(packageId: number, payload: PackageInput): Promise
 
 export function updatePackageActive(packageId: number, active: boolean): Promise<{ id: number; active: boolean }> {
   return request(`/packages/${packageId}/active`, { method: 'PATCH', auth: 'staff', body: { active } })
+}
+
+// -- Module licensing/enablement (OPD/HIMS master spec sections 67-68) ---
+
+export function listHospitalModules(hospitalId: number): Promise<HospitalModule[]> {
+  return request(`/hospitals/${hospitalId}/modules`, { auth: 'staff' })
+}
+
+export function setModuleLicensed(
+  hospitalId: number,
+  moduleKey: ModuleKey,
+  licensed: boolean,
+): Promise<{ module_key: ModuleKey; licensed: boolean; enabled: boolean }> {
+  return request(`/hospitals/${hospitalId}/modules/${moduleKey}/license`, {
+    method: 'PATCH',
+    auth: 'staff',
+    body: { licensed },
+  })
+}
+
+export function setModuleEnabled(
+  hospitalId: number,
+  moduleKey: ModuleKey,
+  enabled: boolean,
+): Promise<{ module_key: ModuleKey; licensed: boolean; enabled: boolean }> {
+  return request(`/hospitals/${hospitalId}/modules/${moduleKey}/enable`, {
+    method: 'PATCH',
+    auth: 'staff',
+    body: { enabled },
+  })
 }

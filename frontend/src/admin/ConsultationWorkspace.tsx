@@ -161,11 +161,28 @@ const DISPOSITION_LABELS: Record<ConsultationDisposition, string> = {
 // copy of it.
 export default function ConsultationWorkspace({
   appointmentId,
-  isAdmin,
+  canAmendConsultation,
+  canManageBilling,
+  canRecordVitals,
+  canWriteConsultation,
+  canCreateOrders,
+  canCreatePrescriptions,
   onBack,
 }: {
   appointmentId: number
-  isAdmin: boolean
+  // Six distinct capabilities, not one -- each server-enforced by its
+  // own permission (migrations/0043_role_based_access.sql,
+  // migrations/0048_clinical_rbac_permissions.sql). A DOCTOR who can
+  // amend their own consultation notes has no business voiding a
+  // charge, and a BILLING account managing this visit's bill has no
+  // business amending clinical notes -- collapsing these into fewer
+  // booleans would grant one role another's capability by accident.
+  canAmendConsultation: boolean
+  canManageBilling: boolean
+  canRecordVitals: boolean
+  canWriteConsultation: boolean
+  canCreateOrders: boolean
+  canCreatePrescriptions: boolean
   onBack: () => void
 }) {
   const [tab, setTab] = useState<Tab>('triage')
@@ -626,7 +643,7 @@ export default function ConsultationWorkspace({
           <h4>Billing</h4>
           <AppointmentBillingPanel
             appointmentId={appointmentId}
-            isAdmin={isAdmin}
+            canManageBilling={canManageBilling}
             patientName={encounter?.patient_name ?? ''}
             patientUhid={encounter?.patient_uhid ?? ''}
             doctorName={encounter?.doctor_name ?? ''}
@@ -925,7 +942,7 @@ export default function ConsultationWorkspace({
                 />
               </label>
 
-              {!readOnly && (
+              {!readOnly && canRecordVitals && (
                 <button type="button" className="btn" disabled={vitalsSaving} onClick={handleSaveVitals}>
                   {vitalsSaving ? 'Saving…' : 'Save vitals'}
                 </button>
@@ -1126,7 +1143,7 @@ export default function ConsultationWorkspace({
                 </>
               )}
 
-              {!amending && consultation?.status === 'COMPLETED' && isAdmin && (
+              {!amending && consultation?.status === 'COMPLETED' && canAmendConsultation && (
                 <div className="doctor-quick-actions">
                   <button type="button" className="btn-secondary btn btn-sm" onClick={startAmend}>
                     Amend consultation
@@ -1166,7 +1183,7 @@ export default function ConsultationWorkspace({
                 </div>
               )}
 
-              {!readOnly && (
+              {!readOnly && canWriteConsultation && (
                 <div className="doctor-quick-actions">
                   <button
                     type="button"
@@ -1208,7 +1225,7 @@ export default function ConsultationWorkspace({
             <div className="detail-section">
               {orderError && <p className="error">{orderError}</p>}
 
-              {!readOnly && (
+              {!readOnly && canCreateOrders && (
                 <div className="doctor-form-grid">
                   <label className="inline-label">
                     Order type
@@ -1533,6 +1550,7 @@ export default function ConsultationWorkspace({
             <PrescriptionPanel
               appointmentId={appointmentId}
               appointmentCheckedIn={encounter.appointment_status === 'CHECKED_IN'}
+              canCreatePrescriptions={canCreatePrescriptions}
               patientName={encounter.patient_name}
               patientUhid={encounter.patient_uhid}
               doctorName={encounter.doctor_name}
@@ -1542,7 +1560,7 @@ export default function ConsultationWorkspace({
           {tab === 'billing' && encounter && (
             <AppointmentBillingPanel
               appointmentId={appointmentId}
-              isAdmin={isAdmin}
+              canManageBilling={canManageBilling}
               patientName={encounter.patient_name}
               patientUhid={encounter.patient_uhid}
               doctorName={encounter.doctor_name}

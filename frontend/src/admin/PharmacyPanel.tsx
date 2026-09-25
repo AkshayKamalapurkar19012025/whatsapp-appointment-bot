@@ -25,10 +25,12 @@ function blankDispenseForm(remaining: number): DispenseForm {
 // catalog. Reached from the sidebar directly (AdminApp.tsx), unlike
 // Queue/Consultation which are only reached as actions -- pharmacy
 // staff start their day here, the same way Billing is its own direct
-// destination. There is no dedicated PHARMACIST role yet (see
-// PrescriptionPanel.tsx's own note on this same gap for doctors/
-// nurses); any authenticated staff session can dispense.
-export default function PharmacyPanel({ isAdmin }: { isAdmin: boolean }) {
+// destination. Dispensing itself stays open to any authenticated staff
+// session (bare auth, same as vitals/orders/prescriptions); only stock
+// management (canManageStock below) is real RBAC -- server-enforced by
+// pharmacy.manage_stock (migrations/0043_role_based_access.sql),
+// granted to ADMIN and PHARMACIST.
+export default function PharmacyPanel({ canManageStock }: { canManageStock: boolean }) {
   const [tab, setTab] = useState<PharmacyTab>('queue')
   const [queue, setQueue] = useState<PharmacyQueueEntry[]>([])
   const [queueLoading, setQueueLoading] = useState(true)
@@ -271,7 +273,7 @@ export default function PharmacyPanel({ isAdmin }: { isAdmin: boolean }) {
       {tab === 'stock' && (
         <>
           {stockError && <p className="error">{stockError}</p>}
-          {isAdmin && (
+          {canManageStock && (
             <div className="detail-section">
               <h4>Add stock batch</h4>
               <div className="doctor-form-grid">

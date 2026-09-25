@@ -47,7 +47,12 @@
 
   --color-text: #16211d;
   --color-text-secondary: #4b5a54;
-  --color-text-muted: #7c8c85;
+  /* Phase 12 hardening (master spec audit gap #7's accessibility
+     sub-item): was #7c8c85, 3.53:1 against white -- fails WCAG AA's
+     4.5:1 text minimum (an automated axe-core sweep flagged this exact
+     token on every single admin screen, ~80 usages, since .muted/.
+     stat-label/<th> all read from it). Darkened to 5.3:1, same hue. */
+  --color-text-muted: #5f6f68;
 
   /* Primary -- unchanged from the existing brand teal (kept deliberately,
      per "keep current branding"): already verified for >=4.5:1 text
@@ -63,7 +68,11 @@
   --color-danger-soft: #fbe9e7;
   --color-success: #1f7a4d;
   --color-success-soft: #e4f5ea;
-  --color-warning: #a5680a;
+  /* Phase 12 hardening: was #a5680a, 4.13:1 against --color-warning-soft
+     -- fails WCAG AA's 4.5:1 (axe-core flagged .pill.status-pending and
+     every other tone-warning/status-* pill sharing this token).
+     Darkened to 5.2:1, same hue. */
+  --color-warning: #8f5a08;
   --color-warning-soft: #fdf2df;
   /* Info -- was previously only ever written as the literal #2f6fed/
      #e3edfc, always with this exact meaning (a cool, non-primary blue
@@ -72,7 +81,13 @@
      tint). Named and centralized here rather than left as a repeated
      literal, so it's a real fourth semantic family alongside success/
      warning/danger -- see docs/design-system.md. */
-  --color-info: #2f6fed;
+  /* Phase 12 hardening: was #2f6fed, 3.85:1 against --color-info-soft
+     -- fails WCAG AA's 4.5:1. Not caught by the axe-core sweep itself
+     (no doctor in that run's seed data happened to hash to
+     accent-blue), found by checking every accent-color pair in this
+     same family by hand once the sweep flagged its siblings (accent-
+     rose/-purple below). Darkened to 5.2:1, same hue. */
+  --color-info: #1f5bc9;
   --color-info-soft: #e3edfc;
 
   /* Categorical accents (cardAccent.ts) -- NOT semantic/status colors.
@@ -84,9 +99,13 @@
      purple and rose have no semantic equivalent, so they get their
      own pair, named accent- rather than color- to keep that
      distinction obvious at the call site. */
-  --color-accent-purple: #7c4fd8;
+  /* Phase 12 hardening: both were below WCAG AA's 4.5:1 against their
+     own -soft background (purple 4.29:1, rose 3.79:1) -- axe-core
+     flagged both directly on the Doctors page's department chips.
+     Darkened to ~5.1-5.5:1, same hues. */
+  --color-accent-purple: #6b3fc0;
   --color-accent-purple-soft: #ece4fb;
-  --color-accent-rose: #c34a7c;
+  --color-accent-rose: #a53a66;
   --color-accent-rose-soft: #fbe4ee;
 
   --radius-sm: 8px;
@@ -2303,6 +2322,25 @@ a.link.danger {
   opacity: 0;
 }
 
+/* Phase 12 hardening: the standard "visually hidden but still in the
+   accessibility tree" pattern (clip-based, not just opacity/1px, so it
+   survives more assistive-tech implementations than the file-input
+   trick above). Used for a <th> that's genuinely blank on screen (a
+   trailing row-actions column) but still needs a real name for a
+   screen reader -- axe-core's empty-table-header rule flags the bare
+   version. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .education-card-list {
   display: flex;
   flex-direction: column;
@@ -2764,7 +2802,7 @@ a.link.danger {
 }
 
 .welcome-card h3,
-.chart-card h4 {
+.chart-card h3 {
   margin: 0 0 var(--space-1);
 }
 
@@ -5281,7 +5319,7 @@ a.link.danger {
   border-top: 1px solid var(--color-border);
 }
 
-.department-queue-doctor-section h4 {
+.department-queue-doctor-section h3 {
   margin: 0 0 var(--space-2);
 }
 
@@ -6103,6 +6141,7 @@ a.link.danger {
 .global-search {
   position: relative;
   flex: 1;
+  min-width: 0;
   max-width: 420px;
 }
 
@@ -6339,8 +6378,16 @@ a.link.danger {
   border-bottom: 1px solid var(--color-border);
 }
 
-.admin-sidebar-brand strong {
+.admin-sidebar-brand h1 {
+  /* Phase 12 hardening: was a bare <strong>, no heading semantics at
+     all -- axe-core's page-has-heading-one rule flagged every single
+     admin screen (this renders once, in the shell every screen
+     shares, so it's the one true page-level h1 rather than adding a
+     redundant one to each content panel). Margin reset since this is
+     a compact sidebar label, not a full-width page heading -- an h1's
+     browser-default margin would otherwise blow out this layout. */
   display: block;
+  margin: 0;
   color: var(--color-text);
   font-size: 1.02rem;
   font-weight: 700;
@@ -7296,6 +7343,16 @@ a.link.danger {
   .welcome-totals {
     flex-wrap: wrap;
     gap: var(--space-4);
+  }
+  /* admin-topbar-actions is flex-shrink:0 by design (the account menu
+     and bell must stay clickable, never squashed) -- on a narrow phone
+     viewport that plus the search bar's own min-content width overflows
+     past the edge, so the username/role text (the widest, least-critical
+     part -- the avatar and caret alone still open the same menu) drops
+     out. The account name/role stay reachable via the trigger's own
+     aria-label (AdminTopBar.tsx), so nothing becomes unlabelled. */
+  .admin-account-trigger-text {
+    display: none;
   }
 }
 
@@ -8274,6 +8331,16 @@ a.link.danger {
    #6 -- token/prescription/bill/order requisition) uses instead of
    inventing its own near-identical @media print block each time. */
 @media print {
+  /* body*{visibility:hidden} below only hides descendants -- body's own
+     decorative mesh-gradient background (the `body` rule above) isn't a
+     descendant of itself, so without this it still paints behind the
+     print area on every printed page/PDF, wasting color ink on what's
+     meant to be a plain document. */
+  body {
+    background: none;
+    animation: none;
+  }
+
   body * {
     visibility: hidden;
   }
@@ -8285,9 +8352,30 @@ a.link.danger {
     visibility: visible;
   }
 
-  .receipt-print-area,
   .print-area {
     position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+  }
+
+  /* receipt-print-area specifically needs position:fixed, not absolute:
+     it's the one print view (PaymentReceiptModal.tsx) that lives inside
+     .modal-panel, which is position:relative (so its own close button
+     can be positioned against it) -- that makes .modal-panel this
+     element's containing block for position:absolute, so top:0 lands at
+     the *modal's* top-left, not the page's. Since .modal-overlay centers
+     that panel with flexbox, the receipt printed with a tall blank gap
+     above it instead of starting at the page's own margin. fixed
+     escapes this: position:relative doesn't establish a containing
+     block for fixed descendants (only transform/filter/perspective/
+     contain/will-change do, and nothing here sets any of those), so it
+     renders against the real page instead. The receipt is always a
+     single short payment summary, never a multi-page list, so this
+     doesn't risk the repeat-per-page behavior fixed positioning would
+     otherwise pose for print-area's own (potentially long) tables. */
+  .receipt-print-area {
+    position: fixed;
     top: 0;
     left: 0;
     width: 100%;

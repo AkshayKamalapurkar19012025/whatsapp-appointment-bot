@@ -71,6 +71,11 @@ class PaymentCreate(BaseModel):
     amount: float = Field(gt=0)
     method: Literal["CASH", "UPI", "CARD", "BANK_TRANSFER", "INSURANCE", "OTHER"]
     transaction_id: str | None = None
+    # DECLINED records a failed attempt (e.g. a declined card) as an
+    # audit trail without it counting toward the invoice's paid total --
+    # see record_invoice_payment_service's docstring. Defaults to the
+    # previous, only behavior so every existing caller is unaffected.
+    status: Literal["COMPLETED", "DECLINED"] = "COMPLETED"
 
 
 class RefundCreate(BaseModel):
@@ -151,6 +156,11 @@ def add_charge(
         with conn.cursor() as cur:
             try:
                 result = add_charge_service(cur, appointment_id, staff_id=admin["id"], **body.model_dump())
+            except svc_exc.ModuleUnavailable:
+                raise HTTPException(
+                    status_code=403,
+                    detail="The Packages module isn't enabled for this hospital",
+                )
             except svc_exc.AppointmentNotFound:
                 raise _not_found("Appointment not found")
             except svc_exc.EncounterNotFound:

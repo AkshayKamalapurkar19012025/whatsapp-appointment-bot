@@ -2,9 +2,16 @@
 Order spine endpoints (OPD/HIMS master spec Phase 6). Thin wrappers
 around app/services/order_services.py, nested under
 /appointments/{appointment_id}/orders -- same convention as
-app/api/clinical.py. Every endpoint requires an authenticated staff
-session (see app/api/clinical.py's module docstring for why there's no
-separate DOCTOR role gating this differently yet).
+app/api/clinical.py. Creating an order is gated by order.create
+(migrations/0048_clinical_rbac_permissions.sql, DOCTOR/STAFF/ADMIN);
+recording a result is gated by order.result (migrations/0051, adds
+LAB_TECH -- the Lab/Radiology Worklist screen's whole reason to exist).
+Listing and cancelling stay on bare get_current_staff, still out of
+scope for either migration.
+
+worklist_router (prefix /orders, not /appointments/{id}/orders) is the
+one cross-patient endpoint here: every other route in this file is
+scoped to a single appointment's own encounter.
 """
 
 from typing import Literal
@@ -12,12 +19,13 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.api.staff_auth import get_current_staff
+from app.api.staff_auth import get_current_staff, require_permission
 from app.db.connection import get_connection
 from app.services import exceptions as svc_exc
 from app.services.order_services import (
     create_order_service,
     list_orders_service,
+    list_worklist_orders_service,
     cancel_order_service,
     record_order_result_service,
 )
@@ -25,6 +33,11 @@ from app.services.notification_center_service import create_notification
 
 router = APIRouter(
     prefix="/appointments",
+    tags=["Orders"],
+)
+
+worklist_router = APIRouter(
+    prefix="/orders",
     tags=["Orders"],
 )
 
@@ -68,7 +81,7 @@ def get_orders(appointment_id: int, staff: dict = Depends(get_current_staff)):
 def create_order(
     appointment_id: int,
     body: OrderCreate,
-    staff: dict = Depends(get_current_staff),
+    staff: dict = Depends(require_permission("order.create")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -77,7 +90,13 @@ def create_order(
                     cur,
                     appointment_id,
                     staff_id=staff["id"],
+                    hospital_id=staff["hospital_id"],
                     **body.model_dump(),
+                )
+            except svc_exc.ModuleUnavailable:
+                raise HTTPException(
+                    status_code=403,
+                    detail="The Lab/Radiology module isn't enabled for this hospital -- use External Referral instead",
                 )
             except svc_exc.AppointmentNotFound:
                 raise HTTPException(status_code=404, detail="Appointment not found")
@@ -125,12 +144,25 @@ def cancel_order(
     return result
 
 
+@worklist_router.get("/worklist")
+def get_worklist(
+    order_type: Literal["LAB", "RADIOLOGY", "PROCEDURE", "SERVICE", "EXTERNAL_REFERRAL"] | None = None,
+    status: Literal["ORDERED", "IN_PROGRESS", "COMPLETED", "CANCELLED"] | None = None,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            return list_worklist_orders_service(
+                cur, staff["hospital_id"], order_type=order_type, status=status
+            )
+
+
 @router.post("/{appointment_id}/orders/{order_id}/result")
 def record_order_result(
     appointment_id: int,
     order_id: int,
     body: OrderResultCreate,
-    staff: dict = Depends(get_current_staff),
+    staff: dict = Depends(require_permission("order.result")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
