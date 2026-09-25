@@ -33,10 +33,28 @@ are possible and expected: any allergy/medicine pair that doesn't share
 literal text (brand vs. generic naming, misspellings, drug-class
 relationships) will not be caught. Both are named explicitly here so
 this is never mistaken for real drug-allergy decision support.
+
+Phase 5 (migrations/0054_medication_master.sql) extension: when the
+item being added resolves to a Medication Master row, that row's own
+generic_name/brand_name are added to the candidate text alongside the
+free-text medicine_name/generic_name that were actually typed. This is
+still the exact same substring match, not new intelligence -- it just
+means an ad hoc "Panadol" entry that resolves to the canonical
+Medication "Paracetamol" now also gets checked against "Paracetamol",
+even if the clinician never typed that word themselves. It does not
+close the drug-class gap above (Penicillin still doesn't match
+Amoxicillin); that remains explicitly out of scope.
 """
 
 
-def check_allergy_conflicts(cur, patient_id: int, medicine_name: str, generic_name: str | None) -> list[dict]:
+def check_allergy_conflicts(
+    cur,
+    patient_id: int,
+    medicine_name: str,
+    generic_name: str | None,
+    *,
+    medication: dict | None = None,
+) -> list[dict]:
     cur.execute(
         """
         SELECT id, allergen, severity, reaction
@@ -49,7 +67,10 @@ def check_allergy_conflicts(cur, patient_id: int, medicine_name: str, generic_na
     if not allergies:
         return []
 
-    candidates = [name.strip().lower() for name in (medicine_name, generic_name) if name and name.strip()]
+    candidate_names = [medicine_name, generic_name]
+    if medication is not None:
+        candidate_names.extend([medication.get("generic_name"), medication.get("brand_name")])
+    candidates = [name.strip().lower() for name in candidate_names if name and name.strip()]
 
     conflicts = []
     for allergy_id, allergen, severity, reaction in allergies:

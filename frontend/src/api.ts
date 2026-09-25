@@ -47,6 +47,8 @@ import type {
   Prescription,
   PrescriptionItem,
   PrescriptionItemInput,
+  Medication,
+  MedicationInput,
   QueueDisplayEntry,
   DoctorScheduleEntry,
   DoctorWithSlots,
@@ -1440,8 +1442,18 @@ export function getPharmacyQueue(): Promise<PharmacyQueueEntry[]> {
   return request('/pharmacy/queue', { auth: 'staff' })
 }
 
-export function getPharmacyStock(medicineName?: string): Promise<PharmacyStockBatch[]> {
-  const query = medicineName ? `?medicine_name=${encodeURIComponent(medicineName)}` : ''
+// Phase 5 (migrations/0054_medication_master.sql): medicationId is the
+// preferred, exact lookup when the caller already has one (e.g. an
+// item that was prescribed via a search pick) -- medicineName stays
+// the fuzzy free-text fallback for anything not yet linked, exactly as
+// before this phase. Passing both is harmless; the backend prefers
+// medicationId (app/services/pharmacy_services.py's
+// list_pharmacy_stock_service).
+export function getPharmacyStock(medicineName?: string, medicationId?: number): Promise<PharmacyStockBatch[]> {
+  const params = new URLSearchParams()
+  if (medicineName) params.set('medicine_name', medicineName)
+  if (medicationId != null) params.set('medication_id', String(medicationId))
+  const query = params.toString() ? `?${params.toString()}` : ''
   return request(`/pharmacy/stock${query}`, { auth: 'staff' })
 }
 
@@ -1454,6 +1466,33 @@ export function dispensePrescriptionItem(
   payload: { quantity: number; pharmacy_stock_id?: number; unit_price?: number },
 ): Promise<PrescriptionItem> {
   return request(`/pharmacy/items/${itemId}/dispense`, { method: 'POST', auth: 'staff', body: payload })
+}
+
+// -- Medication Master (OPD/HIMS interoperability master prompt Phase 5,
+// migrations/0054_medication_master.sql) -----------------------------------
+
+export function listMedications(search?: string, includeInactive?: boolean): Promise<Medication[]> {
+  const params = new URLSearchParams()
+  if (search) params.set('search', search)
+  if (includeInactive) params.set('include_inactive', 'true')
+  const query = params.toString() ? `?${params.toString()}` : ''
+  return request(`/pharmacy/medications${query}`, { auth: 'staff' })
+}
+
+export function createMedication(payload: MedicationInput): Promise<Medication> {
+  return request('/pharmacy/medications', { method: 'POST', auth: 'staff', body: payload })
+}
+
+export function updateMedication(medicationId: number, payload: MedicationInput): Promise<Medication> {
+  return request(`/pharmacy/medications/${medicationId}`, { method: 'PATCH', auth: 'staff', body: payload })
+}
+
+export function setMedicationActive(medicationId: number, active: boolean): Promise<Medication> {
+  return request(`/pharmacy/medications/${medicationId}/active`, {
+    method: 'PATCH',
+    auth: 'staff',
+    body: { active },
+  })
 }
 
 // -- Billing (OPD/HIMS master spec Phase 9) --------------------------------

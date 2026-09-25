@@ -33,6 +33,12 @@ from app.services.pharmacy_services import (
     create_pharmacy_stock_service,
     record_dispense_service,
 )
+from app.services.medication_services import (
+    list_medications_service,
+    create_medication_service,
+    update_medication_service,
+    set_medication_active_service,
+)
 from app.services.notification_center_service import create_notification
 
 prescription_router = APIRouter(prefix="/appointments", tags=["Prescription"])
@@ -58,6 +64,11 @@ class PrescriptionItemCreate(BaseModel):
     quantity: int = Field(gt=0)
     food_instructions: str | None = None
     special_instructions: str | None = None
+    # Phase 5 (migrations/0054_medication_master.sql): optional, set
+    # when the clinician picked a Medication Master search result.
+    # medicine_name/generic_name above stay required either way -- see
+    # add_prescription_item_service's own comment on why.
+    medication_id: int | None = None
     # P0 clinical safety: None on the clinician's first attempt. Set to
     # "continue"/"cancel" only when resubmitting after seeing an allergy
     # warning -- see app/services/pharmacy_services.py's
@@ -75,12 +86,26 @@ class StockCreate(BaseModel):
     expiry_date: date
     quantity_on_hand: int = Field(ge=0)
     unit_price: float = Field(default=0, ge=0)
+    # Phase 5: optional Medication Master link, same as above.
+    medication_id: int | None = None
 
 
 class DispenseCreate(BaseModel):
     quantity: int = Field(gt=0)
     pharmacy_stock_id: int | None = None
     unit_price: float | None = Field(default=None, ge=0)
+
+
+class MedicationCreate(BaseModel):
+    generic_name: str = Field(min_length=1)
+    brand_name: str | None = None
+    strength: str | None = None
+    dosage_form: str | None = None
+    default_route: str | None = None
+
+
+class MedicationActiveUpdate(BaseModel):
+    active: bool
 
 
 def _module_unavailable():
@@ -140,6 +165,10 @@ def add_prescription_item(
                     status_code=409,
                     detail="This prescription has already been sent to pharmacy and can no longer be edited",
                 )
+            except svc_exc.MedicationNotFound:
+                raise _not_found("Medication not found")
+            except svc_exc.MedicationInactive:
+                raise HTTPException(status_code=409, detail="This medication is no longer active")
 
             action = _ALLERGY_AUDIT_ACTION_BY_OUTCOME.get(result["outcome"])
             if action is not None:
@@ -241,10 +270,14 @@ def get_pharmacy_queue(staff: dict = Depends(get_current_staff)):
 
 
 @pharmacy_router.get("/stock")
-def get_pharmacy_stock(medicine_name: str | None = None, staff: dict = Depends(get_current_staff)):
+def get_pharmacy_stock(
+    medicine_name: str | None = None,
+    medication_id: int | None = None,
+    staff: dict = Depends(get_current_staff),
+):
     with get_connection() as conn:
         with conn.cursor() as cur:
-            return list_pharmacy_stock_service(cur, medicine_name=medicine_name)
+            return list_pharmacy_stock_service(cur, medicine_name=medicine_name, medication_id=medication_id)
 
 
 @pharmacy_router.post("/stock")
@@ -258,7 +291,73 @@ def create_pharmacy_stock(body: StockCreate, admin: dict = Depends(require_permi
                     status_code=409,
                     detail="A stock batch with this medicine name and batch number already exists",
                 )
+            except svc_exc.MedicationNotFound:
+                raise _not_found("Medication not found")
+            except svc_exc.MedicationInactive:
+                raise HTTPException(status_code=409, detail="This medication is no longer active")
     return result
+
+
+# ---------------------------------------------------------------------
+# Medication Master (Phase 5, migrations/0054_medication_master.sql)
+# ---------------------------------------------------------------------
+
+
+@pharmacy_router.get("/medications")
+def get_medications(
+    search: str | None = None,
+    include_inactive: bool = False,
+    staff: dict = Depends(get_current_staff),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            return list_medications_service(cur, search=search, active_only=not include_inactive)
+
+
+@pharmacy_router.post("/medications")
+def create_medication(body: MedicationCreate, admin: dict = Depends(require_permission("pharmacy.manage_stock"))):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                return create_medication_service(cur, staff_id=admin["id"], **body.model_dump())
+            except svc_exc.DuplicateMedication:
+                raise HTTPException(
+                    status_code=409,
+                    detail="A medication with this generic name, brand, strength, and form already exists",
+                )
+
+
+@pharmacy_router.patch("/medications/{medication_id}")
+def update_medication(
+    medication_id: int,
+    body: MedicationCreate,
+    admin: dict = Depends(require_permission("pharmacy.manage_stock")),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                return update_medication_service(cur, medication_id, **body.model_dump())
+            except svc_exc.MedicationNotFound:
+                raise _not_found("Medication not found")
+            except svc_exc.DuplicateMedication:
+                raise HTTPException(
+                    status_code=409,
+                    detail="A medication with this generic name, brand, strength, and form already exists",
+                )
+
+
+@pharmacy_router.patch("/medications/{medication_id}/active")
+def update_medication_active(
+    medication_id: int,
+    body: MedicationActiveUpdate,
+    admin: dict = Depends(require_permission("pharmacy.manage_stock")),
+):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                return set_medication_active_service(cur, medication_id, active=body.active)
+            except svc_exc.MedicationNotFound:
+                raise _not_found("Medication not found")
 
 
 @pharmacy_router.post("/items/{item_id}/dispense")

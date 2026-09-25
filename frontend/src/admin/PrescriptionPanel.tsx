@@ -20,6 +20,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../components/ui/alert-dialog'
+import MedicationPicker from './MedicationPicker'
 
 const BLANK_ITEM: PrescriptionItemInput = {
   medicine_name: '',
@@ -31,6 +32,7 @@ const BLANK_ITEM: PrescriptionItemInput = {
   quantity: 1,
   food_instructions: '',
   special_instructions: '',
+  medication_id: null,
 }
 
 // OPD/HIMS master spec Phase 8 -- the Prescription tab of Consultation
@@ -237,12 +239,25 @@ export default function PrescriptionPanel({
 
       {editable && (
         <div className="doctor-form-grid">
+          <div className="doctor-form-full">
+            <MedicationPicker
+              onSelect={(med) =>
+                setForm({
+                  ...form,
+                  medicine_name: med.display_name,
+                  generic_name: med.generic_name,
+                  route: form.route?.trim() ? form.route : med.default_route ?? form.route,
+                  medication_id: med.id,
+                })
+              }
+            />
+          </div>
           <label className="inline-label doctor-form-full">
             Medicine *
             <input
               type="text"
               value={form.medicine_name}
-              onChange={(e) => setForm({ ...form, medicine_name: e.target.value })}
+              onChange={(e) => setForm({ ...form, medicine_name: e.target.value, medication_id: null })}
               placeholder="e.g. Paracetamol"
             />
           </label>
@@ -251,7 +266,7 @@ export default function PrescriptionPanel({
             <input
               type="text"
               value={form.generic_name}
-              onChange={(e) => setForm({ ...form, generic_name: e.target.value })}
+              onChange={(e) => setForm({ ...form, generic_name: e.target.value, medication_id: null })}
             />
           </label>
           <label className="inline-label">

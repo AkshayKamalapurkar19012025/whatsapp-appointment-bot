@@ -547,3 +547,24 @@ class ModuleUnavailable(ServiceError):
     def __init__(self, module_key: str):
         self.module_key = module_key
         super().__init__(module_key)
+
+
+class MedicationNotFound(ServiceError):
+    pass
+
+
+class MedicationInactive(ServiceError):
+    """Raised when prescription_items/pharmacy_stock creation is given a
+    medication_id whose medications.active is FALSE -- a deactivated
+    medication can't be newly selected (migrations/0054's own design),
+    though every existing row that already references it keeps working
+    unchanged."""
+    pass
+
+
+class DuplicateMedication(ServiceError):
+    """Raised by create_medication_service when a row with the same
+    (generic_name, brand_name, strength, dosage_form) already exists --
+    same reasoning as DuplicateStockBatch: a genuinely new medication
+    entry should differ in at least one identifying field."""
+    pass

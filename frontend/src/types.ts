@@ -960,6 +960,13 @@ export interface PrescriptionItem {
   // Only present on the item returned directly by the dispense
   // endpoint itself -- confirms what that one action just did.
   dispense_record?: PharmacyDispenseRecord
+  // Medication Master (OPD/HIMS interoperability master prompt Phase 5,
+  // migrations/0054_medication_master.sql) -- set only when the
+  // clinician picked a search result; null on any item entered as
+  // plain free text, including every item that existed before this
+  // phase. medicine_name/generic_name above stay the source of truth
+  // for display either way.
+  medication_id?: number | null
 }
 
 export interface PrescriptionItemInput {
@@ -972,6 +979,9 @@ export interface PrescriptionItemInput {
   quantity: number
   food_instructions?: string
   special_instructions?: string
+  // Phase 5: optional Medication Master link -- see PrescriptionItem's
+  // medication_id above.
+  medication_id?: number | null
 }
 
 export interface Prescription {
@@ -1031,6 +1041,9 @@ export interface PharmacyStockBatch {
   created_by: number
   created_at: string
   updated_at: string
+  // Phase 5 (migrations/0054_medication_master.sql) -- see
+  // PrescriptionItem.medication_id's own comment.
+  medication_id?: number | null
 }
 
 export interface PharmacyStockInput {
@@ -1039,6 +1052,34 @@ export interface PharmacyStockInput {
   expiry_date: string
   quantity_on_hand: number
   unit_price: number
+  medication_id?: number | null
+}
+
+// Medication Master (OPD/HIMS interoperability master prompt Phase 5,
+// migrations/0054_medication_master.sql) -- the internal canonical
+// medication identity prescription_items and pharmacy_stock both
+// optionally reference. display_name is computed server-side
+// (app/services/medication_services.py), never assembled here.
+export interface Medication {
+  id: number
+  generic_name: string
+  brand_name: string | null
+  strength: string | null
+  dosage_form: string | null
+  default_route: string | null
+  active: boolean
+  created_by: number
+  created_at: string
+  updated_at: string
+  display_name: string
+}
+
+export interface MedicationInput {
+  generic_name: string
+  brand_name?: string | null
+  strength?: string | null
+  dosage_form?: string | null
+  default_route?: string | null
 }
 
 // OPD/HIMS master spec Phase 9 (migrations/0033_billing_invoices.sql)

@@ -126,6 +126,23 @@ require the cutover (per §4.A above).
 
 ## 5. Medication strategy
 
+> **Update (Phase 5 of the interoperability master prompt): implemented.**
+> See `docs/workflows/PHARMACY.md`'s "Medication Master" section for the
+> actual, verified behavior, `migrations/0054_medication_master.sql`/
+> `migrations/0055_medications_hospital_id.sql` for the schema,
+> `app/services/medication_services.py` for the service layer, and
+> `tests/test_medication_master.py` for the test coverage. The design
+> below is kept as the historical record of what was approved before
+> implementation — the table name shipped as `medications` (plural,
+> matching this codebase's existing table-naming convention) rather than
+> the singular `medication` sketched below, `strength`/`dosage_form`
+> stayed free text exactly as proposed, and the backfill strategy was
+> tightened to *exact* case/whitespace-normalized text matches only
+> (never near-duplicate/fuzzy merging, and never guessing on an ambiguous
+> match) — see that migration's own comments for why. Everything else
+> below matches what was built, including deliberately not adding the
+> `terminology_code`/`.system`/`.display` columns.
+
 ### Current (from Phase 2, re-confirmed)
 
 `prescription_items.medicine_name`/`.generic_name` (free text) and
@@ -615,7 +632,8 @@ specific evidence that would have justified it:
 
 ### P1 — Domain integrity
 
-- Medication master data (`Medication` table + nullable FKs, §5).
+- Medication master data (`medications` table + nullable FKs, §5;
+  **implemented in Phase 5**).
 - Diagnosis structure, Stage 1 only (`diagnosis_code`/`.system`/`.display`
   on `consultations`, §6).
 - Patient-identifier source-of-truth decision (§4.B — a decision to make,
@@ -750,7 +768,7 @@ not yet built.
 | Priority | Change | Why | Existing Evidence | Files/Tables Affected | Risk | Dependencies |
 |---|---|---|---|---|---|---|
 | P0 | Allergy-vs-prescription check (design §17) | Real, unaddressed clinical-safety gap, confirmed absent in 3 consecutive audits | `app/services/pharmacy_services.py` (zero allergy references, re-confirmed 3×) | new `app/services/allergy_check_service.py`; `ConsultationWorkspace.tsx` Prescription tab (new UI warning); `audit_log` (new action values, no schema change) | Low (additive, non-blocking warning) | None — can ship independent of every other item in this backlog |
-| P1 | Medication master table + nullable FKs | Two independent free-text medicine representations, no shared identity (Phase 2) | `app/services/pharmacy_services.py`'s `ILIKE` fuzzy-match confirmed | new `medication` table; `prescription_items`/`pharmacy_stock` gain nullable `medication_id` | Low (additive; existing free-text columns untouched) | None |
+| P1 | Medication master table + nullable FKs — **implemented, Phase 5** | Two independent free-text medicine representations, no shared identity (Phase 2) | `app/services/pharmacy_services.py`'s `ILIKE` fuzzy-match confirmed | `medications` table (`migrations/0054`); `prescription_items`/`pharmacy_stock` gain nullable `medication_id` | Low (additive; existing free-text columns untouched) | None |
 | P1 | Diagnosis code slot (Stage 1 only) | Free-text diagnosis has no terminology-binding point; codebase's own migration comment already flagged this as deferred work | Migration `0029`'s own comment | `consultations` gains 3 nullable columns | Low (additive) | None |
 | P1 | Patient-identifier source-of-truth decision | Two representations of the phone identifier, one not authoritative (Phase 1/2) | `patient_identifiers`' own migration comment: "not yet the source of truth for anything" | Decision only in this phase; if acted on later: `app/api/scheduling.py`, `app/api/patient_auth.py`, `app/api/patients.py`, `patients.whatsapp_number` | Medium-high (hot-path lookup rewrite, 3 subsystems) if/when actually migrated; the decision itself is zero-risk | Backfill-status question (§4.B) must be answered first |
 | P2 | Allergy code slot | Closes the terminology gap on an already-correct table | Phase 2 §5 | `patient_allergies` gains 3 nullable columns | Low (additive) | None |
