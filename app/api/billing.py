@@ -156,6 +156,11 @@ def add_charge(
         with conn.cursor() as cur:
             try:
                 result = add_charge_service(cur, appointment_id, staff_id=admin["id"], **body.model_dump())
+            except svc_exc.ModuleUnavailable:
+                raise HTTPException(
+                    status_code=403,
+                    detail="The Packages module isn't enabled for this hospital",
+                )
             except svc_exc.AppointmentNotFound:
                 raise _not_found("Appointment not found")
             except svc_exc.EncounterNotFound:

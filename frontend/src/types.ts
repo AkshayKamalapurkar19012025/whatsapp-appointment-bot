@@ -252,6 +252,7 @@ export interface Staff {
   // per-role sidebar/landing-screen logic couldn't compare staff.role
   // against anything but ADMIN/STAFF without a type error).
   role: StaffRole
+  hospital_id: number
 }
 
 // Every role migrations/0031_rbac_decomposition.sql seeded, now
@@ -1195,6 +1196,23 @@ export interface Package {
   description: string | null
   price: number
   active: boolean
+}
+
+// GET/PATCH /api/hospitals/{id}/modules[/...] (OPD/HIMS master spec
+// sections 67-68) -- Licensed/Enabled are the two independently-set
+// booleans; Available is derived (licensed && enabled), never set
+// directly.
+export type ModuleKey = 'LAB_RADIOLOGY' | 'PHARMACY' | 'PACKAGES'
+export type ModuleDegradation = 'EXTERNAL' | 'BLOCKED' | 'HIDDEN'
+
+export interface HospitalModule {
+  module_key: ModuleKey
+  name: string
+  description: string
+  degradation: ModuleDegradation
+  licensed: boolean
+  enabled: boolean
+  available: boolean
 }
 
 export interface PackageInput {

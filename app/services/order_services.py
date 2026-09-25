@@ -36,10 +36,12 @@ from app.services.clinical_services import (
 from app.services.exceptions import (
     EncounterClosed,
     ExternalReferralDestinationRequired,
+    ModuleUnavailable,
     OrderNotFound,
     OrderNotCancellable,
     OrderNotResultable,
 )
+from app.services.module_services import is_module_available
 
 _ORDER_COLUMNS = (
     "id", "encounter_id", "order_type", "description", "clinical_indication",
@@ -73,12 +75,20 @@ def create_order_service(
     appointment_id: int,
     *,
     staff_id: int,
+    hospital_id: int,
     order_type: str,
     description: str,
     clinical_indication: str | None = None,
     priority: str = "ROUTINE",
     external_destination: str | None = None,
 ):
+    # Master spec section 68's own worked example: Lab/Radiology
+    # disabled routes a doctor through External Referral instead --
+    # EXTERNAL_REFERRAL (and PROCEDURE/SERVICE) stay unaffected, only
+    # LAB/RADIOLOGY themselves are gated.
+    if order_type in ("LAB", "RADIOLOGY") and not is_module_available(cur, hospital_id, "LAB_RADIOLOGY"):
+        raise ModuleUnavailable("LAB_RADIOLOGY")
+
     appointment = get_appointment_status_and_doctor(cur, appointment_id)
     encounter_id = get_encounter_id_for_appointment(cur, appointment_id)
 

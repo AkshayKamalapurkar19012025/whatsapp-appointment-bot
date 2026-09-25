@@ -67,6 +67,13 @@ class DispenseCreate(BaseModel):
     unit_price: float | None = Field(default=None, ge=0)
 
 
+def _module_unavailable():
+    return HTTPException(
+        status_code=403,
+        detail="The Pharmacy module isn't enabled for this hospital",
+    )
+
+
 def _not_found(detail: str):
     return HTTPException(status_code=404, detail=detail)
 
@@ -102,8 +109,10 @@ def add_prescription_item(
         with conn.cursor() as cur:
             try:
                 result = add_prescription_item_service(
-                    cur, appointment_id, staff_id=staff["id"], **body.model_dump()
+                    cur, appointment_id, staff_id=staff["id"], hospital_id=staff["hospital_id"], **body.model_dump()
                 )
+            except svc_exc.ModuleUnavailable:
+                raise _module_unavailable()
             except svc_exc.AppointmentNotFound:
                 raise _not_found("Appointment not found")
             except svc_exc.EncounterNotFound:
@@ -147,7 +156,9 @@ def prescribe(appointment_id: int, staff: dict = Depends(require_permission("pre
     with get_connection() as conn:
         with conn.cursor() as cur:
             try:
-                result = prescribe_service(cur, appointment_id, staff_id=staff["id"])
+                result = prescribe_service(cur, appointment_id, staff_id=staff["id"], hospital_id=staff["hospital_id"])
+            except svc_exc.ModuleUnavailable:
+                raise _module_unavailable()
             except svc_exc.AppointmentNotFound:
                 raise _not_found("Appointment not found")
             except svc_exc.EncounterNotFound:
@@ -224,7 +235,11 @@ def dispense_prescription_item(
     with get_connection() as conn:
         with conn.cursor() as cur:
             try:
-                result = record_dispense_service(cur, item_id, staff_id=staff["id"], **body.model_dump())
+                result = record_dispense_service(
+                    cur, item_id, staff_id=staff["id"], hospital_id=staff["hospital_id"], **body.model_dump()
+                )
+            except svc_exc.ModuleUnavailable:
+                raise _module_unavailable()
             except svc_exc.PrescriptionItemNotFound:
                 raise _not_found("Prescription item not found")
             except svc_exc.PrescriptionItemNotDispensable:

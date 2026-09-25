@@ -90,7 +90,13 @@ def create_order(
                     cur,
                     appointment_id,
                     staff_id=staff["id"],
+                    hospital_id=staff["hospital_id"],
                     **body.model_dump(),
+                )
+            except svc_exc.ModuleUnavailable:
+                raise HTTPException(
+                    status_code=403,
+                    detail="The Lab/Radiology module isn't enabled for this hospital -- use External Referral instead",
                 )
             except svc_exc.AppointmentNotFound:
                 raise HTTPException(status_code=404, detail="Appointment not found")

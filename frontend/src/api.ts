@@ -34,6 +34,8 @@ import type {
   OrderResultItemInput,
   OrderStatus,
   WorklistOrder,
+  HospitalModule,
+  ModuleKey,
   Package,
   PackageInput,
   PaymentReceipt,
@@ -1525,4 +1527,34 @@ export function updatePackage(packageId: number, payload: PackageInput): Promise
 
 export function updatePackageActive(packageId: number, active: boolean): Promise<{ id: number; active: boolean }> {
   return request(`/packages/${packageId}/active`, { method: 'PATCH', auth: 'staff', body: { active } })
+}
+
+// -- Module licensing/enablement (OPD/HIMS master spec sections 67-68) ---
+
+export function listHospitalModules(hospitalId: number): Promise<HospitalModule[]> {
+  return request(`/hospitals/${hospitalId}/modules`, { auth: 'staff' })
+}
+
+export function setModuleLicensed(
+  hospitalId: number,
+  moduleKey: ModuleKey,
+  licensed: boolean,
+): Promise<{ module_key: ModuleKey; licensed: boolean; enabled: boolean }> {
+  return request(`/hospitals/${hospitalId}/modules/${moduleKey}/license`, {
+    method: 'PATCH',
+    auth: 'staff',
+    body: { licensed },
+  })
+}
+
+export function setModuleEnabled(
+  hospitalId: number,
+  moduleKey: ModuleKey,
+  enabled: boolean,
+): Promise<{ module_key: ModuleKey; licensed: boolean; enabled: boolean }> {
+  return request(`/hospitals/${hospitalId}/modules/${moduleKey}/enable`, {
+    method: 'PATCH',
+    auth: 'staff',
+    body: { enabled },
+  })
 }

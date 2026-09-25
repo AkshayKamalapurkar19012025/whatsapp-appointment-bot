@@ -11,6 +11,7 @@ import {
   GearSix,
   Gift,
   Pill,
+  PuzzlePiece,
   Receipt,
   ShieldCheck,
   Stethoscope,
@@ -40,6 +41,7 @@ import BillingHistoryPanel from './BillingHistoryPanel'
 import PaymentHistoryPanel from './PaymentHistoryPanel'
 import WaitingTimeAnalyticsPanel from './WaitingTimeAnalyticsPanel'
 import LabRadiologyWorklistPanel from './LabRadiologyWorklistPanel'
+import ModuleLicensingPanel from './ModuleLicensingPanel'
 import AdminSidebar, { type AdminSidebarItem } from './AdminSidebar'
 import AdminTopBar from './AdminTopBar'
 
@@ -63,6 +65,7 @@ type Section =
   | 'pharmacy'
   | 'packages'
   | 'lab-worklist'
+  | 'module-licensing'
 
 // Master spec audit Principle 5 ("Reception/Nurse/Doctor/Lab/
 // Radiology/Pharmacist/Cashier/Admin see different workflows"):
@@ -409,6 +412,14 @@ export default function AdminApp() {
             onSelect: () => goTo('audit-log'),
             group: 'Admin',
           } satisfies AdminSidebarItem,
+          {
+            key: 'module-licensing',
+            label: 'Module Licensing',
+            icon: <PuzzlePiece size={20} weight="regular" />,
+            active: section === 'module-licensing',
+            onSelect: () => goTo('module-licensing'),
+            group: 'Admin',
+          } satisfies AdminSidebarItem,
         ]
       : []),
     {
@@ -525,6 +536,9 @@ export default function AdminApp() {
           {section === 'patients' && <PatientsPanel key={navResetKey} />}
           {section === 'staff-accounts' && isAdmin && <StaffAccountsPanel key={navResetKey} />}
           {section === 'audit-log' && isAdmin && <AuditLogPanel key={navResetKey} />}
+          {section === 'module-licensing' && isAdmin && (
+            <ModuleLicensingPanel key={navResetKey} hospitalId={staff.hospital_id} />
+          )}
           {section === 'billing' && <BillingPanel key={navResetKey} />}
           {section === 'billing-history' && <BillingHistoryPanel key={navResetKey} />}
           {section === 'payment-history' && <PaymentHistoryPanel key={navResetKey} />}

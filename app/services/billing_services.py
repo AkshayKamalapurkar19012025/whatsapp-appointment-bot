@@ -31,6 +31,7 @@ from app.services.exceptions import (
     ChargeAlreadyVoided,
     DuplicateCharge,
     InvalidChargeSource,
+    ModuleUnavailable,
     PackageNotFound,
     PaymentNotFound,
     PaymentAlreadyVoided,
@@ -38,6 +39,7 @@ from app.services.exceptions import (
     PaymentRefundExceedsAmount,
     DuplicateTransactionId,
 )
+from app.services.module_services import is_module_available
 
 import psycopg
 
@@ -334,18 +336,28 @@ def add_charge_service(
         # staff's -- add_charge_service has no staff hospital_id in
         # scope, and the encounter's is the one that actually matters
         # here (billing another hospital's package to this visit would
-        # be the real bug, regardless of who's billing it).
+        # be the real bug, regardless of who's billing it). The same
+        # query's own hospital_id feeds the PACKAGES module-availability
+        # check right below, rather than a second lookup.
         cur.execute(
             """
-            SELECT p.id
+            SELECT p.id, e.hospital_id
             FROM packages p
             JOIN encounters e ON e.hospital_id = p.hospital_id
             WHERE p.id = %s AND e.id = %s AND p.active = TRUE
             """,
             (source_package_id, encounter_id),
         )
-        if cur.fetchone() is None:
+        row = cur.fetchone()
+        if row is None:
             raise PackageNotFound()
+        # Master spec section 68: PACKAGES degrades to HIDDEN -- billing
+        # a *new* charge via a package is blocked, but a charge already
+        # billed this way before the module was disabled stays exactly
+        # as it is (this check only runs on the way in, never touches
+        # an existing charges row).
+        if not is_module_available(cur, row[1], "PACKAGES"):
+            raise ModuleUnavailable("PACKAGES")
 
     try:
         cur.execute(

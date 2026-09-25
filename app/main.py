@@ -45,6 +45,7 @@ from app.api.search import router as search_router
 from app.api.notifications import router as notifications_router
 from app.api.billing_history import router as billing_history_router
 from app.api.waiting_time_analytics import router as waiting_time_analytics_router
+from app.api.module_licensing import router as module_licensing_router
 
 configure_logging()
 access_logger = logging.getLogger("app.access")
@@ -287,6 +288,11 @@ app.include_router(
 
 app.include_router(
     waiting_time_analytics_router,
+    prefix="/api",
+)
+
+app.include_router(
+    module_licensing_router,
     prefix="/api",
 )
 

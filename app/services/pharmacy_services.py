@@ -25,6 +25,7 @@ from app.services.clinical_services import (
 )
 from app.services.exceptions import (
     EncounterClosed,
+    ModuleUnavailable,
     PrescriptionNotFound,
     PrescriptionAlreadyPrescribed,
     PrescriptionEmpty,
@@ -37,6 +38,7 @@ from app.services.exceptions import (
     PharmacyStockNotFound,
     DuplicateStockBatch,
 )
+from app.services.module_services import is_module_available
 
 import psycopg
 
@@ -180,6 +182,7 @@ def add_prescription_item_service(
     appointment_id: int,
     *,
     staff_id: int,
+    hospital_id: int,
     medicine_name: str,
     quantity: int,
     generic_name: str | None = None,
@@ -190,6 +193,9 @@ def add_prescription_item_service(
     food_instructions: str | None = None,
     special_instructions: str | None = None,
 ):
+    if not is_module_available(cur, hospital_id, "PHARMACY"):
+        raise ModuleUnavailable("PHARMACY")
+
     ensured = _ensure_prescription(cur, appointment_id, staff_id)
 
     if ensured["status"] != "DRAFT":
@@ -231,9 +237,12 @@ def remove_prescription_item_service(cur, appointment_id: int, item_id: int, *, 
     return _full_prescription_dict(cur, prescription["id"])
 
 
-def prescribe_service(cur, appointment_id: int, *, staff_id: int):
+def prescribe_service(cur, appointment_id: int, *, staff_id: int, hospital_id: int):
     """Signs off the DRAFT prescription and sends it to pharmacy --
     requires at least one item (PrescriptionEmpty otherwise)."""
+    if not is_module_available(cur, hospital_id, "PHARMACY"):
+        raise ModuleUnavailable("PHARMACY")
+
     appointment = get_appointment_status_and_doctor(cur, appointment_id)
     prescription = _get_prescription_for_appointment(cur, appointment_id)
 
@@ -385,10 +394,14 @@ def record_dispense_service(
     prescription_item_id: int,
     *,
     staff_id: int,
+    hospital_id: int,
     quantity: int,
     pharmacy_stock_id: int | None = None,
     unit_price=None,
 ):
+    if not is_module_available(cur, hospital_id, "PHARMACY"):
+        raise ModuleUnavailable("PHARMACY")
+
     cur.execute(
         """
         SELECT id, prescription_id, medicine_name, quantity, quantity_dispensed

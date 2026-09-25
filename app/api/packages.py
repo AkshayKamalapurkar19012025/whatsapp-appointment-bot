@@ -19,6 +19,7 @@ import psycopg
 from app.api.staff_auth import get_current_staff, require_permission
 from app.db.connection import get_connection
 from app.services.audit_log import record_audit_log
+from app.services.module_services import is_module_available
 
 router = APIRouter(prefix="/packages", tags=["Packages"])
 
@@ -76,6 +77,15 @@ def create_package(body: PackageCreate, admin: dict = Depends(require_permission
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
+                # Master spec section 68: PACKAGES degrades to HIDDEN --
+                # creating a *new* package is blocked; existing ones
+                # (and any invoice already billed through one) are
+                # untouched -- this check only runs on the way in.
+                if not is_module_available(cur, admin["hospital_id"], "PACKAGES"):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="The Packages module isn't enabled for this hospital",
+                    )
                 cur.execute(
                     f"""
                     INSERT INTO packages (hospital_id, name, description, price, created_by)
