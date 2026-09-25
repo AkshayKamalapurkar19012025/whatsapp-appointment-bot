@@ -370,6 +370,26 @@ beyond what's proposed here.
 
 ## 8. Laboratory strategy
 
+> **Update (Phase 7 of the interoperability master prompt): re-audited,
+> no schema change made here.** See `docs/workflows/LABORATORY.md`'s
+> "LOINC readiness" note for the actual, re-verified finding. The "no
+> `lab_tests` master-catalog table" conclusion below was re-checked
+> against the current repository (no catalog UI affordance exists
+> anywhere, same as when this section was written) and still holds —
+> which is also why Phase 7 did **not** add `test_code_system`/
+> `test_code`/`test_code_display` to `orders`: per that phase's own
+> instruction, those fields belong on a "stable test-definition/master
+> concept," and `orders.description` (free text per order instance, no
+> catalog) isn't one. Unlike `consultations.diagnosis` (Phase 6, where a
+> code slot directly on the per-instance row was the right shape because
+> a diagnosis genuinely is narrative/instance-level), a lab test is a
+> a real, catalogable, repeatable concept — coding it per free-text order
+> instance without a catalog would let the same real-world test get
+> inconsistently coded across different orders, which is worse than not
+> coding it at all. LOINC readiness for `orders` stays explicitly
+> deferred until a real test catalog exists. `order_results.unit`
+> **did** get its proposed code slot — see §9's own update note.
+
 ### Current (from Phase 2 §6, re-confirmed)
 
 ```
@@ -409,6 +429,30 @@ two different tables, and should stay that way.
 ---
 
 ## 9. Observation / vitals & unit strategy (UCUM readiness)
+
+> **Update (Phase 7 of the interoperability master prompt): the
+> `order_results.unit` code slot is implemented; the vitals
+> `VITALS_UNITS` constant dict below is explicitly NOT implemented.**
+> See `docs/workflows/LABORATORY.md`'s "Unit coding" section for the
+> actual, verified `order_results` behavior,
+> `migrations/0057_order_result_unit_coding.sql` for the schema, and
+> `tests/test_order_results.py` for the test coverage — two columns
+> shipped (`unit_system`/`unit_code`), not three: the existing
+> free-text `unit` a lab/tech already types already serves as its own
+> display, unlike `diagnosis`/`diagnosis_code_display`, which can
+> genuinely differ in wording (see that migration's own comment).
+> The `VITALS_UNITS` dict sketched below, by contrast, was re-evaluated
+> against Phase 7's own explicit instruction — "Do NOT invent or
+> populate UCUM codes during this phase... do not manually create a
+> pseudo-UCUM dictionary" — and a hardcoded `{"weight_kg": {"code":
+> "kg", ...}}` mapping baked into application code is exactly that,
+> even though every value in it happens to be a real, unambiguous UCUM
+> code. That prohibition, being the more recent and more specific
+> instruction, supersedes this section's own earlier "recommended
+> shape" note. Vitals therefore got no change at all in Phase 7 — a
+> valid, honest outcome the phase's own instructions explicitly allowed
+> for ("if the current test model is too immature... document that
+> rather than forcing a design").
 
 ### Current
 
@@ -535,8 +579,8 @@ Patient                                    [EXISTING]
 | `appointments`+`encounters` | Encounter | `Encounter` | status, start/end, type | none for OPD | internal status enum → `Encounter.status` (§10) | token/queue fields |
 | `consultations.diagnosis` (+ proposed code fields) | Condition | `Condition` | display text (always); code (once §6 Stage 1 ships and is populated) | multi-diagnosis (§6 Stage 2, not proposed now) | free text → `Condition.code.text`; proposed code fields → `Condition.code.coding` | `clinical_notes`/`history_notes`/`examination_notes` (narrative, stays as `Encounter` notes or similar, not `Condition`) |
 | `patient_allergies` (+ proposed code fields) | AllergyIntolerance | `AllergyIntolerance` | allergen text, severity, reaction, status | none structural after §7's proposal | `severity` enum → `AllergyIntolerance.criticality`-adjacent (lossy, 3-value to FHIR's own value set — a real mapping decision, not attempted here) | none |
-| `vitals` | Observation (×N) | `Observation` | every measurement, already typed | UCUM codes (§9's proposed config mapping) | one `vitals` row → N `Observation` resources (fan-out, mapping-layer job) | none |
-| `order_results` | Observation | `Observation` | parameter/value/flags | LOINC code, UCUM unit code (proposed nullable columns, not built) | `is_abnormal`/`is_critical` booleans → `Observation.interpretation` (lossy — two booleans can't express High vs. Low, a real gap noted in Phase 2, not closed by any proposal here) | none |
+| `vitals` | Observation (×N) | `Observation` | every measurement, already typed | UCUM codes (§9's proposed config mapping — explicitly not built in Phase 7, see that section's update note) | one `vitals` row → N `Observation` resources (fan-out, mapping-layer job) | none |
+| `order_results` | Observation | `Observation` | parameter/value/flags; unit code (`unit_system`/`unit_code`, implemented Phase 7, unpopulated) | LOINC code for the parameter itself (deferred — no test catalog exists to anchor it against, see §8's Phase 7 update) | `is_abnormal`/`is_critical` booleans → `Observation.interpretation` (lossy — two booleans can't express High vs. Low, a real gap noted in Phase 2, not closed by any proposal here) | none |
 | `orders` grouped by id | DiagnosticReport | `DiagnosticReport` | implicit (read-time grouping) | a persisted report-level status/conclusion (not proposed — no evidenced need beyond what grouping already provides) | grouped `order_results` → `DiagnosticReport.result` references (mapping-layer job) | none |
 | `prescriptions`/`prescription_items` (+ proposed `medication_id`) | MedicationRequest | `MedicationRequest` | status, dosage instructions | coded medication reference (once §5 ships and is populated) | free-text medicine name → `MedicationRequest.medicationCodeableConcept.text`; `medication_id` (once populated) → a coded reference | `notes`/cancel reason (administrative) |
 
@@ -668,8 +712,11 @@ specific evidence that would have justified it:
 ### P2 — Standards readiness
 
 - Allergy code slot (`allergen_code`/`.system`/`.display`, §7).
-- `order_results` unit code slots (`unit_code`/`.system`, §9).
-- Vitals UCUM metadata mapping (application-code-only, §9).
+- `order_results` unit code slots (`unit_code`/`.system`, §9;
+  **implemented in Phase 7**).
+- Vitals UCUM metadata mapping (application-code-only, §9;
+  **explicitly not implemented in Phase 7** — see that section's own
+  update note for why).
 - Clinical-status → FHIR-status translation tables (§10 — belongs inside
   the eventual FHIR mapping layer, not built now).
 - Diagnosis structure, Stage 2 (multi-diagnosis, §6 — conditional on a
@@ -797,8 +844,8 @@ not yet built.
 | P1 | Diagnosis code slot (Stage 1 only) — **implemented, Phase 6** | Free-text diagnosis has no terminology-binding point; codebase's own migration comment already flagged this as deferred work | Migration `0029`'s own comment | `consultations` gains 3 nullable columns (`migrations/0056`); `consultation_amendments` gains matching `previous_*` archive columns | Low (additive) | None |
 | P1 | Patient-identifier source-of-truth decision | Two representations of the phone identifier, one not authoritative (Phase 1/2) | `patient_identifiers`' own migration comment: "not yet the source of truth for anything" | Decision only in this phase; if acted on later: `app/api/scheduling.py`, `app/api/patient_auth.py`, `app/api/patients.py`, `patients.whatsapp_number` | Medium-high (hot-path lookup rewrite, 3 subsystems) if/when actually migrated; the decision itself is zero-risk | Backfill-status question (§4.B) must be answered first |
 | P2 | Allergy code slot | Closes the terminology gap on an already-correct table | Phase 2 §5 | `patient_allergies` gains 3 nullable columns | Low (additive) | None |
-| P2 | `order_results` unit code slots | Unit field exists but uncoded/unvalidated (Phase 2 §7) | Migration `0031`'s `unit TEXT` | `order_results` gains 2 nullable columns | Low (additive) | None |
-| P2 | Vitals UCUM metadata mapping | Units implicit in column names only, no coded form available to a future mapping layer | Phase 2 §7 (zero `unit` columns found on `vitals`) | New `app/services/` constant, no schema change | Zero (code-only, additive) | None |
+| P2 | `order_results` unit code slots — **implemented, Phase 7** | Unit field exists but uncoded/unvalidated (Phase 2 §7) | Migration `0031`'s `unit TEXT` | `order_results` gains 2 nullable columns (`migrations/0057`) | Low (additive) | None |
+| P2 | Vitals UCUM metadata mapping — **not implemented, Phase 7** (superseded by that phase's own "no pseudo-UCUM dictionary" instruction) | Units implicit in column names only, no coded form available to a future mapping layer | Phase 2 §7 (zero `unit` columns found on `vitals`) | None — no change made | Zero (code-only, additive) | None |
 | P2 | Clinical-status → FHIR-status translation tables | Needed by any future FHIR mapping layer; internal enums correctly stay unchanged | Phase 2 §3 domain #18 | New mapping module, when the FHIR-foundation phase actually starts | Zero (doesn't exist yet, no current code affected) | The eventual FHIR Foundation phase itself |
 | P2 (conditional) | Diagnosis Stage 2 (multi-diagnosis `conditions` table) | No current evidence of a real requirement | §6 | New `conditions` table, `ConsultationWorkspace.tsx` UI | Medium (real new UI/workflow, not just a schema slot) | A concrete product requirement — not evidenced yet, do not build speculatively |
 | P3 | ABDM / SMART / DICOM / HL7 / IHE / NHCX | Unchanged from Phase 0 | `docs/OPD_HIMS_INTEROPERABILITY_AUDIT.md` | — | — | P1 items ideally land first so there's a real code/terminology slot to map from |

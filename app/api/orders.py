@@ -17,7 +17,7 @@ scoped to a single appointment's own encounter.
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.api.staff_auth import get_current_staff, require_permission
 from app.db.connection import get_connection
@@ -58,9 +58,32 @@ class OrderResultItem(BaseModel):
     parameter: str = Field(min_length=1)
     result_value: str = Field(min_length=1)
     unit: str | None = None
+    # OPD/HIMS interoperability master prompt Phase 7 (laboratory/
+    # observation/unit domain hardening, migrations/0057_order_result_
+    # unit_coding.sql): optional structured-coding slot alongside the
+    # free-text unit above, which stays the primary, unchanged field.
+    # Never populated automatically -- there is no terminology service
+    # in this phase, so a caller must supply real values or leave both
+    # NULL.
+    unit_system: str | None = None
+    unit_code: str | None = None
     reference_range: str | None = None
     is_abnormal: bool = False
     is_critical: bool = False
+
+    @field_validator("unit_code")
+    @classmethod
+    def validate_unit_code_requires_system(cls, value: str | None, info):
+        # Structural only (docs/OPD_HIMS_STANDARDS_READINESS.md S9): a
+        # code is meaningless without knowing which terminology it's
+        # from. Mirrored at the DB layer too (order_results_unit_code_
+        # requires_system) -- this just turns the same rule into a
+        # clean 422 instead of a raw constraint-violation error, same
+        # pattern as ConsultationSave's diagnosis_code validator
+        # (app/api/clinical.py).
+        if value is not None and value.strip() and not info.data.get("unit_system"):
+            raise ValueError("unit_code requires unit_system to also be set")
+        return value
 
 
 class OrderResultCreate(BaseModel):

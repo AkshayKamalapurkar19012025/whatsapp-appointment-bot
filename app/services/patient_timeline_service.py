@@ -45,6 +45,7 @@ _ORDER_COLUMNS = (
 
 _ORDER_RESULT_COLUMNS = (
     "id", "order_id", "parameter", "result_value", "unit",
+    "unit_system", "unit_code",
     "reference_range", "is_abnormal", "is_critical", "sequence", "recorded_at",
 )
 

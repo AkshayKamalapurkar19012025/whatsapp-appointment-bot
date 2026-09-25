@@ -861,6 +861,15 @@ export interface OrderResultItem {
   parameter: string
   result_value: string
   unit: string | null
+  // OPD/HIMS interoperability master prompt Phase 7 (migrations/0057_
+  // order_result_unit_coding.sql) -- optional, alongside the required
+  // free-text unit above, never replacing it. Never populated
+  // automatically; null on every result until a human enters real
+  // values through a future terminology-aware UI, which doesn't exist
+  // yet -- this phase is backend-only (see docs/workflows/LABORATORY.md
+  // for why, same reasoning as diagnosis coding in Phase 6).
+  unit_system: string | null
+  unit_code: string | null
   reference_range: string | null
   is_abnormal: boolean
   is_critical: boolean
@@ -873,6 +882,10 @@ export interface OrderResultItemInput {
   parameter: string
   result_value: string
   unit?: string
+  // Phase 7: optional terminology-code slot -- see OrderResultItem's
+  // own comment above.
+  unit_system?: string
+  unit_code?: string
   reference_range?: string
   is_abnormal?: boolean
   is_critical?: boolean
@@ -1387,6 +1400,9 @@ export interface TimelineOrderResult {
   parameter: string
   result_value: string
   unit: string | null
+  // Phase 7 -- see OrderResultItem's own comment (types.ts).
+  unit_system: string | null
+  unit_code: string | null
   reference_range: string | null
   is_abnormal: boolean
   is_critical: boolean

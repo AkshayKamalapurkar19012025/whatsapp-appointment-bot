@@ -105,6 +105,135 @@ def test_recording_a_result_completes_the_order(client, db_connection):
     assert body["results"][0]["is_critical"] is False
 
 
+def test_result_with_no_unit_code(client, db_connection):
+    """OPD/HIMS interoperability master prompt Phase 7: a result with no
+    unit coding at all is the ordinary, unchanged case."""
+    ctx = _checked_in_context(client, db_connection, "Dr. Results UnitCode None")
+    appointment_id = ctx["appointment"]["id"]
+    order = _create_order(client, appointment_id, ctx["admin_headers"])
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/orders/{order['id']}/result",
+        json={"items": [{"parameter": "Hemoglobin", "result_value": "13.8", "unit": "g/dL"}]},
+        headers=ctx["admin_headers"],
+    )
+    assert response.status_code == 200
+    result = response.json()["results"][0]
+    assert result["unit"] == "g/dL"
+    assert result["unit_system"] is None
+    assert result["unit_code"] is None
+
+
+def test_result_with_unit_code(client, db_connection):
+    """A full, structurally valid unit_system/unit_code pair alongside
+    the existing free-text unit. Phase 7 never invents or validates the
+    code's real-world meaning -- this is exactly what the caller
+    supplied."""
+    ctx = _checked_in_context(client, db_connection, "Dr. Results UnitCode Full")
+    appointment_id = ctx["appointment"]["id"]
+    order = _create_order(client, appointment_id, ctx["admin_headers"])
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/orders/{order['id']}/result",
+        json={
+            "items": [
+                {
+                    "parameter": "Hemoglobin",
+                    "result_value": "13.8",
+                    "unit": "g/dL",
+                    "unit_system": "UCUM",
+                    "unit_code": "g/dL",
+                }
+            ]
+        },
+        headers=ctx["admin_headers"],
+    )
+    assert response.status_code == 200
+    result = response.json()["results"][0]
+    assert result["unit_system"] == "UCUM"
+    assert result["unit_code"] == "g/dL"
+
+
+def test_result_rejects_unit_code_without_system(client, db_connection):
+    """docs/OPD_HIMS_STANDARDS_READINESS.md S9's own structural rule: a
+    code without a system is meaningless -- rejected at the API layer
+    before it would even reach the DB's own CHECK constraint."""
+    ctx = _checked_in_context(client, db_connection, "Dr. Results UnitCode NoSystem")
+    appointment_id = ctx["appointment"]["id"]
+    order = _create_order(client, appointment_id, ctx["admin_headers"])
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/orders/{order['id']}/result",
+        json={
+            "items": [
+                {"parameter": "Hemoglobin", "result_value": "13.8", "unit": "g/dL", "unit_code": "g/dL"}
+            ]
+        },
+        headers=ctx["admin_headers"],
+    )
+    assert response.status_code == 422
+
+
+def test_result_allows_unit_system_without_code(client, db_connection):
+    """No rule requires the reverse (system without a code yet) -- this
+    phase deliberately doesn't invent one that isn't there."""
+    ctx = _checked_in_context(client, db_connection, "Dr. Results UnitSystem Only")
+    appointment_id = ctx["appointment"]["id"]
+    order = _create_order(client, appointment_id, ctx["admin_headers"])
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/orders/{order['id']}/result",
+        json={
+            "items": [
+                {"parameter": "Hemoglobin", "result_value": "13.8", "unit": "g/dL", "unit_system": "UCUM"}
+            ]
+        },
+        headers=ctx["admin_headers"],
+    )
+    assert response.status_code == 200
+    result = response.json()["results"][0]
+    assert result["unit_system"] == "UCUM"
+    assert result["unit_code"] is None
+
+
+def test_different_parameters_in_the_same_batch_have_independent_unit_codes(client, db_connection):
+    """unit_system/unit_code live on order_results (per parameter row),
+    not on orders (per test/panel) -- confirms two parameters in the
+    same panel can carry two different coded units, matching how
+    Hemoglobin (g/dL) and WBC (/uL) already carry two different
+    free-text units in the same batch."""
+    ctx = _checked_in_context(client, db_connection, "Dr. Results UnitCode PerParam")
+    appointment_id = ctx["appointment"]["id"]
+    order = _create_order(client, appointment_id, ctx["admin_headers"])
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/orders/{order['id']}/result",
+        json={
+            "items": [
+                {
+                    "parameter": "Hemoglobin",
+                    "result_value": "13.8",
+                    "unit": "g/dL",
+                    "unit_system": "UCUM",
+                    "unit_code": "g/dL",
+                },
+                {
+                    "parameter": "WBC",
+                    "result_value": "7200",
+                    "unit": "/uL",
+                    "unit_system": "UCUM",
+                    "unit_code": "/uL",
+                },
+            ]
+        },
+        headers=ctx["admin_headers"],
+    )
+    assert response.status_code == 200
+    results = response.json()["results"]
+    assert results[0]["unit_code"] == "g/dL"
+    assert results[1]["unit_code"] == "/uL"
+
+
 def test_recording_a_result_requires_at_least_one_item(client, db_connection):
     ctx = _checked_in_context(client, db_connection, "Dr. Results Empty")
     appointment_id = ctx["appointment"]["id"]
