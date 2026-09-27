@@ -797,6 +797,59 @@ export function recordOrderResult(
   })
 }
 
+// -- Diagnostic lifecycle (OPD/HIMS master spec Phase 7, resumed by
+// migrations/0054_diagnostic_workflow.sql): sample collection ->
+// processing -> result entry (above) -> verification -> release.
+// LAB/RADIOLOGY only -- see ClinicalOrder.samples/result_entered_at/
+// verified_at/released_at.
+
+export function collectSample(
+  appointmentId: number,
+  orderId: number,
+  sampleType: string,
+  notes?: string,
+): Promise<ClinicalOrder> {
+  return request(`/appointments/${appointmentId}/orders/${orderId}/collect-sample`, {
+    method: 'POST',
+    auth: 'staff',
+    body: { sample_type: sampleType, notes: notes || undefined },
+  })
+}
+
+export function rejectSample(
+  appointmentId: number,
+  orderId: number,
+  sampleId: number,
+  reason: string,
+): Promise<ClinicalOrder> {
+  return request(`/appointments/${appointmentId}/orders/${orderId}/samples/${sampleId}/reject`, {
+    method: 'POST',
+    auth: 'staff',
+    body: { reason },
+  })
+}
+
+export function startOrderProcessing(appointmentId: number, orderId: number): Promise<ClinicalOrder> {
+  return request(`/appointments/${appointmentId}/orders/${orderId}/start-processing`, {
+    method: 'POST',
+    auth: 'staff',
+  })
+}
+
+export function verifyOrderResult(appointmentId: number, orderId: number): Promise<ClinicalOrder> {
+  return request(`/appointments/${appointmentId}/orders/${orderId}/verify`, {
+    method: 'POST',
+    auth: 'staff',
+  })
+}
+
+export function releaseOrderResult(appointmentId: number, orderId: number): Promise<ClinicalOrder> {
+  return request(`/appointments/${appointmentId}/orders/${orderId}/release`, {
+    method: 'POST',
+    auth: 'staff',
+  })
+}
+
 // -- Lab/Radiology Worklist (cross-patient, GET /orders/worklist) ---------
 
 export function listWorklistOrders(params?: {

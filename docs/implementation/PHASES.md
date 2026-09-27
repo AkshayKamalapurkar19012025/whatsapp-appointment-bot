@@ -34,7 +34,7 @@ The canonical phase sequence for HospitalOS going forward. Each phase below is m
 
 ## Phase 7 — Diagnostics (Laboratory and Radiology)
 
-**Status: 🟡 Partial.** The generic order spine covers both; type-specific workflow granularity (collection tracking, verify-then-release, structured radiology reporting) does not exist. See `docs/workflows/LABORATORY.md`, `docs/workflows/RADIOLOGY.md` for the scoped gap list.
+**Status: ✅ Done for the internal workflow granularity that was scoped; 🟡 the test/study catalog and imaging/PACS gaps remain, out of scope by design.** `migrations/0054_diagnostic_workflow.sql` resumed this phase: LAB orders now go through real sample collection (`lab_samples`, with reject/recollect), and both LAB/RADIOLOGY go through a real draft-result → verify (by a different staff account, ADMIN excepted) → release pipeline before a result is visible as final, instead of completing the instant a result is entered. PROCEDURE/SERVICE/EXTERNAL_REFERRAL orders are completely unaffected — they keep the original one-step lifecycle. See `docs/workflows/LABORATORY.md`/`docs/workflows/RADIOLOGY.md` for the full detail and what's still genuinely missing (a searchable test/study catalog; PACS/DICOM/image storage for Radiology, explicitly deferred).
 
 ## Phase 8 — Prescription + Pharmacy
 
@@ -74,6 +74,4 @@ The canonical phase sequence for HospitalOS going forward. Each phase below is m
 
 ## Recommended next step
 
-Per the audit and this documentation pass: **Phase 11 (Command Center KPI gaps) and Phase 7 (Diagnostics granularity)** are the two most concretely scoped, additive, non-risky next phases if hospital operations feedback calls for them. Neither requires a new architectural decision — both extend tables/screens that already exist. **Do not start IPD or Emergency** until a phase is explicitly scoped for them with the questions in `docs/architecture/OPD_TO_IPD.md`'s Gap section answered first.
-
-This documentation-baselining work itself does not conclude with a "start Phase X" instruction — see the final audit report delivered alongside this doc for the explicit "do not implement the next phase yet" instruction that governs this specific session.
+Phase 7 (Diagnostics granularity) was resumed and completed for its scoped items — see its entry above and `docs/workflows/LABORATORY.md`/`docs/workflows/RADIOLOGY.md`. Of what remains: **Phase 11 (Command Center KPI gaps)** stays the most concretely scoped, additive, non-risky next phase — it extends screens that already exist and requires no new architectural decision. **Phase 9 (billing ledger unification** — folding the consultation-fee `appointments.payment_status` mechanism into the `invoices`/`charges`/`payments` model so a visit has one invoice, not two) is the next phase this diagnostics work itself surfaced as still-deferred, per that migration's own documented reasoning; it is a real architectural decision (the most concurrency-sensitive path in the app), not a small increment, so it deserves its own dedicated phase rather than being folded into another one. **Do not start IPD or Emergency** until a phase is explicitly scoped for them with the questions in `docs/architecture/OPD_TO_IPD.md`'s Gap section answered first.

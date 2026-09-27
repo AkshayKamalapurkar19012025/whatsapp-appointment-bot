@@ -1,5 +1,14 @@
 import { Fragment, useEffect, useState } from 'react'
-import { ApiError, listWorklistOrders, recordOrderResult } from '../api'
+import {
+  ApiError,
+  collectSample,
+  listWorklistOrders,
+  recordOrderResult,
+  rejectSample,
+  releaseOrderResult,
+  startOrderProcessing,
+  verifyOrderResult,
+} from '../api'
 import type { OrderResultItemInput, OrderStatus, WorklistOrder } from '../types'
 import { formatDateTime } from '../format'
 
@@ -14,6 +23,15 @@ import { formatDateTime } from '../format'
 // already uses -- recording a result here and from inside a specific
 // patient's consultation are the same action, just reached from
 // opposite directions (by patient vs. by pending work).
+//
+// Phase 7 (migrations/0054_diagnostic_workflow.sql): the worklist now
+// drives the full sample-collection -> processing -> result-entry ->
+// verification -> release lifecycle, not just result entry. One
+// action per row at a time, chosen from the order's own status --
+// same "the backend owns the state machine, the UI just shows the one
+// next legal action" discipline every other status-driven action in
+// this app already follows (e.g. QueueSection's hold/recall/priority
+// buttons).
 
 const TYPE_OPTIONS: { value: 'LAB' | 'RADIOLOGY' | ''; label: string }[] = [
   { value: '', label: 'All types' },
@@ -23,9 +41,19 @@ const TYPE_OPTIONS: { value: 'LAB' | 'RADIOLOGY' | ''; label: string }[] = [
 
 const STATUS_OPTIONS: { value: OrderStatus | ''; label: string }[] = [
   { value: '', label: 'Pending (open work)' },
-  { value: 'COMPLETED', label: 'Completed' },
+  { value: 'COMPLETED', label: 'Completed (released)' },
   { value: 'CANCELLED', label: 'Cancelled' },
 ]
+
+const STATUS_LABELS: Record<OrderStatus, string> = {
+  ORDERED: 'Ordered',
+  COLLECTED: 'Sample collected',
+  IN_PROGRESS: 'In progress',
+  RESULT_ENTERED: 'Awaiting verification',
+  VERIFIED: 'Awaiting release',
+  COMPLETED: 'Released',
+  CANCELLED: 'Cancelled',
+}
 
 function blankResultItem(): OrderResultItemInput {
   return { parameter: '', result_value: '', unit: '', reference_range: '', is_abnormal: false, is_critical: false }
@@ -41,6 +69,13 @@ export default function LabRadiologyWorklistPanel({ canRecordResults }: { canRec
   const [resultTargetId, setResultTargetId] = useState<number | null>(null)
   const [resultItems, setResultItems] = useState<OrderResultItemInput[]>([])
   const [resultSaving, setResultSaving] = useState(false)
+
+  const [collectTargetId, setCollectTargetId] = useState<number | null>(null)
+  const [sampleType, setSampleType] = useState('')
+  const [sampleNotes, setSampleNotes] = useState('')
+  const [collectSaving, setCollectSaving] = useState(false)
+
+  const [busyOrderId, setBusyOrderId] = useState<number | null>(null)
 
   function load() {
     setLoading(true)
@@ -83,14 +118,110 @@ export default function LabRadiologyWorklistPanel({ canRecordResults }: { canRec
       await recordOrderResult(order.appointment_id, order.id, items)
       setResultTargetId(null)
       setResultItems([])
-      // The order just left "pending" (now COMPLETED) -- drop it from
-      // the list locally instead of a full reload, same as any other
-      // optimistic-remove-on-action list in this app.
-      setOrders((prev) => prev.filter((o) => o.id !== order.id))
+      // Now RESULT_ENTERED (LAB/RADIOLOGY) or COMPLETED (every other
+      // order type) -- either way it's no longer showing the "Record
+      // result" action, so a full reload keeps the row's status/next
+      // action correct without special-casing which case this was.
+      load()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not record the result')
     } finally {
       setResultSaving(false)
+    }
+  }
+
+  function startCollectSample(orderId: number) {
+    setCollectTargetId(orderId)
+    setSampleType('')
+    setSampleNotes('')
+  }
+
+  function cancelCollectSample() {
+    setCollectTargetId(null)
+    setSampleType('')
+    setSampleNotes('')
+  }
+
+  async function handleCollectSample(order: WorklistOrder) {
+    if (!sampleType.trim()) return
+    setCollectSaving(true)
+    setError(null)
+    try {
+      await collectSample(order.appointment_id, order.id, sampleType.trim(), sampleNotes.trim() || undefined)
+      setCollectTargetId(null)
+      setSampleType('')
+      setSampleNotes('')
+      load()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not record the sample collection')
+    } finally {
+      setCollectSaving(false)
+    }
+  }
+
+  async function handleStartProcessing(order: WorklistOrder) {
+    setBusyOrderId(order.id)
+    setError(null)
+    try {
+      await startOrderProcessing(order.appointment_id, order.id)
+      load()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not mark this order in-progress')
+    } finally {
+      setBusyOrderId(null)
+    }
+  }
+
+  async function handleVerify(order: WorklistOrder) {
+    setBusyOrderId(order.id)
+    setError(null)
+    try {
+      await verifyOrderResult(order.appointment_id, order.id)
+      load()
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : 'Could not verify this result',
+      )
+    } finally {
+      setBusyOrderId(null)
+    }
+  }
+
+  async function handleRelease(order: WorklistOrder) {
+    setBusyOrderId(order.id)
+    setError(null)
+    try {
+      await releaseOrderResult(order.appointment_id, order.id)
+      // Released (COMPLETED) orders leave the default "pending" filter
+      // -- drop it locally rather than a full reload when that's the
+      // active filter, same optimistic-remove-on-terminal-action
+      // pattern this screen already used before Phase 7.
+      if (!status) {
+        setOrders((prev) => prev.filter((o) => o.id !== order.id))
+      } else {
+        load()
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not release this result')
+    } finally {
+      setBusyOrderId(null)
+    }
+  }
+
+  async function handleRejectSample(order: WorklistOrder, sampleId: number) {
+    const reason = window.prompt('Reason for rejecting this sample:')
+    if (!reason || !reason.trim()) return
+    setBusyOrderId(order.id)
+    setError(null)
+    try {
+      await rejectSample(order.appointment_id, order.id, sampleId, reason.trim())
+      load()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not reject this sample')
+    } finally {
+      setBusyOrderId(null)
     }
   }
 
@@ -143,12 +274,16 @@ export default function LabRadiologyWorklistPanel({ canRecordResults }: { canRec
               <th>Description</th>
               <th>Priority</th>
               <th>Doctor</th>
+              <th>Status</th>
               <th>Ordered</th>
               {canRecordResults && <th>Actions</th>}
             </tr>
           </thead>
           <tbody>
-            {orders.map((order) => (
+            {orders.map((order) => {
+              const isBusy = busyOrderId === order.id
+              const formOpen = resultTargetId === order.id || collectTargetId === order.id
+              return (
               <Fragment key={order.id}>
                 <tr>
                   <td>
@@ -162,21 +297,105 @@ export default function LabRadiologyWorklistPanel({ canRecordResults }: { canRec
                   </td>
                   <td>{order.priority}</td>
                   <td>{order.doctor_name}</td>
+                  <td>
+                    <span className={`pill status-${order.status.toLowerCase()}`}>{STATUS_LABELS[order.status]}</span>
+                    {order.latest_sample_code && order.latest_sample_status === 'COLLECTED' && (
+                      <div className="muted">{order.latest_sample_code} ({order.latest_sample_type})</div>
+                    )}
+                  </td>
                   <td>{formatDateTime(order.ordered_at)}</td>
                   {canRecordResults && (
                     <td>
-                      {resultTargetId !== order.id && (order.status === 'ORDERED' || order.status === 'IN_PROGRESS') && (
-                        <button type="button" className="btn btn-sm" onClick={() => startRecordResult(order.id)}>
-                          Record result
-                        </button>
+                      {!formOpen && (
+                        <div className="doctor-quick-actions">
+                          {order.order_type === 'LAB' && order.status === 'ORDERED' && (
+                            <button type="button" className="btn btn-sm" onClick={() => startCollectSample(order.id)}>
+                              Collect sample
+                            </button>
+                          )}
+                          {order.order_type === 'LAB' &&
+                            order.status === 'COLLECTED' &&
+                            order.latest_sample_status === 'COLLECTED' &&
+                            order.latest_sample_id && (
+                              <button
+                                type="button"
+                                className="btn-secondary btn btn-sm"
+                                disabled={isBusy}
+                                onClick={() => handleRejectSample(order, order.latest_sample_id as number)}
+                              >
+                                Reject sample
+                              </button>
+                            )}
+                          {((order.order_type === 'LAB' && order.status === 'COLLECTED') ||
+                            (order.order_type === 'RADIOLOGY' && order.status === 'ORDERED')) && (
+                            <button
+                              type="button"
+                              className="btn btn-sm"
+                              disabled={isBusy}
+                              onClick={() => handleStartProcessing(order)}
+                            >
+                              {order.order_type === 'LAB' ? 'Start processing' : 'Mark performed'}
+                            </button>
+                          )}
+                          {(order.status === 'ORDERED' || order.status === 'COLLECTED' || order.status === 'IN_PROGRESS') && (
+                            <button type="button" className="btn btn-sm" onClick={() => startRecordResult(order.id)}>
+                              Record result
+                            </button>
+                          )}
+                          {order.status === 'RESULT_ENTERED' && (
+                            <button type="button" className="btn btn-sm" disabled={isBusy} onClick={() => handleVerify(order)}>
+                              Verify
+                            </button>
+                          )}
+                          {order.status === 'VERIFIED' && (
+                            <button type="button" className="btn btn-sm" disabled={isBusy} onClick={() => handleRelease(order)}>
+                              Release
+                            </button>
+                          )}
+                        </div>
                       )}
                     </td>
                   )}
                 </tr>
 
+                {collectTargetId === order.id && (
+                  <tr>
+                    <td colSpan={canRecordResults ? 8 : 7}>
+                      <div className="doctor-form-grid">
+                        <label className="inline-label">
+                          Sample type
+                          <input
+                            type="text"
+                            value={sampleType}
+                            placeholder="e.g. Blood, Urine, Serum"
+                            onChange={(e) => setSampleType(e.target.value)}
+                          />
+                        </label>
+                        <label className="inline-label">
+                          Notes
+                          <input type="text" value={sampleNotes} onChange={(e) => setSampleNotes(e.target.value)} />
+                        </label>
+                      </div>
+                      <div className="doctor-quick-actions">
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          disabled={collectSaving || !sampleType.trim()}
+                          onClick={() => handleCollectSample(order)}
+                        >
+                          {collectSaving ? 'Saving…' : 'Save collection'}
+                        </button>
+                        <button type="button" className="btn-secondary btn btn-sm" onClick={cancelCollectSample}>
+                          Cancel
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+
                 {resultTargetId === order.id && (
                   <tr>
-                    <td colSpan={canRecordResults ? 7 : 6}>
+                    <td colSpan={canRecordResults ? 8 : 7}>
                       {resultItems.map((item, index) => (
                         <div key={index} className="doctor-form-grid">
                           <label className="inline-label">
@@ -250,7 +469,8 @@ export default function LabRadiologyWorklistPanel({ canRecordResults }: { canRec
                   </tr>
                 )}
               </Fragment>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       )}
