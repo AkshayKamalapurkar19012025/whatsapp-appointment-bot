@@ -494,6 +494,25 @@ touching the `vitals` table at all. This is the smallest possible "future
 UCUM compatibility" step and matches the instruction's explicit preference
 against unnecessary schema complexity.
 
+> **Update (Phase 9 of the interoperability master prompt): vitals →
+> Observation is now implemented, and the `VITALS_UNITS` dict above was
+> re-evaluated and rejected again, this time with the actual mapping
+> code in front of it rather than as a design sketch.** See
+> `app/services/fhir_mappers.py`'s `observation_from_vitals_to_fhir`
+> (one Observation "panel" per `vitals` row, `component[]` per
+> measurement, `id: vt-{vitals.id}`) and `docs/architecture/
+> FHIR_FOUNDATION.md`'s "Observation (from `vitals`)" section. Every
+> `component[].code` is `{"text": "<label>"}` and every `valueQuantity.
+> unit` is a plain string (`"mmHg"`, degrees Celsius, `"%"`, …) — **no
+> `system`/`code` UCUM binding anywhere**, confirmed by
+> `tests/test_fhir.py::test_fhir_observation_from_vitals_panel`'s
+> explicit assertion that no component carries a `coding` or a
+> `valueQuantity.system`/`.code`. The reasoning that killed
+> `VITALS_UNITS` in Phase 7 (a hardcoded per-field UCUM dict is a
+> terminology dictionary, however well-known the individual codes are)
+> applies identically to Phase 9's vitals Observation mapper, and was
+> re-applied rather than assumed still valid.
+
 `order_results.unit` is different — it's genuinely per-row variable data
 (different orders measure different things with different units), so it
 correctly needs the code-slot treatment other free-text fields get:
@@ -607,6 +626,40 @@ Patient                                    [EXISTING]
 > implemented** — real, non-trivial design work (synthetic composite
 > identifiers for a 1-row-to-9-resources fan-out) this foundation phase
 > deferred rather than rushed, not a gap that was missed.
+
+> **Update (Phase 9 of the interoperability master prompt, "FHIR
+> Foundation Hardening & ABDM Readiness"): the one Phase 8 gap above —
+> vitals → Observation — is now implemented, and four more capabilities
+> were added.** See `docs/architecture/FHIR_FOUNDATION.md` (updated in
+> full for Phase 9) and `docs/architecture/ABDM_READINESS_AUDIT.md`
+> (new) for the complete detail; summary here:
+> - **`vitals` → `Observation`** — resolved via the "vital signs panel"
+>   pattern (one Observation per `vitals` row, `component[]` per
+>   measurement) instead of the 1-row-to-N-resources fan-out this
+>   document and Phase 8 both flagged as the blocker — no synthetic
+>   composite ids needed once the panel shape was used instead.
+> - **`PractitionerRole`** — minimal mapping added (practitioner +
+>   organization + active only; no specialty/location, same reasoning
+>   `doctors` row §"Fields missing" already gives for `Practitioner`
+>   itself).
+> - **`meta.lastUpdated`** — added wherever a source table has a real
+>   `updated_at`; `meta.versionId` deliberately never populated (no
+>   version-counter concept exists anywhere in this schema).
+> - **Minimal search + `$everything`** — `?patient=`/`?identifier=`
+>   search and the standard FHIR `$everything` Bundle operation, both
+>   capped at a hard result limit, no real pagination.
+> - **Observation `id` format changed** (breaking, pre-release, see
+>   FHIR_FOUNDATION.md) to a source-prefixed `or-{id}`/`vt-{id}`, now
+>   that `order_results` and `vitals` are both real Observation
+>   sources sharing one resource type.
+>
+> No new terminology code was invented anywhere in this pass — SNOMED
+> CT/LOINC/RxNorm remain **NOT implemented** (re-confirmed, not just
+> assumed still true), and ICD-10/UCUM remain **PARTIALLY implemented**
+> in exactly the same shape §8/§9 already describe. The table below is
+> kept as-is (a historical record, per its own header) rather than
+> rewritten a second time for Phase 9 — `FHIR_FOUNDATION.md`'s own
+> Resource Mapping Table is the current, living version.
 
 | Current Domain | Canonical Concept | Future FHIR Resource | Fields already available | Fields missing | Fields needing transformation | Fields that stay internal-only |
 |---|---|---|---|---|---|---|
@@ -881,8 +934,10 @@ not yet built.
 | P1 | Patient-identifier source-of-truth decision | Two representations of the phone identifier, one not authoritative (Phase 1/2) | `patient_identifiers`' own migration comment: "not yet the source of truth for anything" | Decision only in this phase; if acted on later: `app/api/scheduling.py`, `app/api/patient_auth.py`, `app/api/patients.py`, `patients.whatsapp_number` | Medium-high (hot-path lookup rewrite, 3 subsystems) if/when actually migrated; the decision itself is zero-risk | Backfill-status question (§4.B) must be answered first |
 | P2 | Allergy code slot | Closes the terminology gap on an already-correct table | Phase 2 §5 | `patient_allergies` gains 3 nullable columns | Low (additive) | None |
 | P2 | `order_results` unit code slots — **implemented, Phase 7** | Unit field exists but uncoded/unvalidated (Phase 2 §7) | Migration `0031`'s `unit TEXT` | `order_results` gains 2 nullable columns (`migrations/0057`) | Low (additive) | None |
-| P2 | Vitals UCUM metadata mapping — **not implemented, Phase 7** (superseded by that phase's own "no pseudo-UCUM dictionary" instruction) | Units implicit in column names only, no coded form available to a future mapping layer | Phase 2 §7 (zero `unit` columns found on `vitals`) | None — no change made | Zero (code-only, additive) | None |
+| P2 | Vitals UCUM metadata mapping — **still not implemented (re-confirmed, Phase 9)**; vitals → `Observation` itself is now **implemented, Phase 9**, text-only | Units implicit in column names only, no coded form available to a future mapping layer; Phase 9 built the mapping layer anyway, using plain-text units instead of the rejected `VITALS_UNITS` dict | Phase 2 §7 (zero `unit` columns found on `vitals`) | `app/services/fhir_mappers.py`'s `observation_from_vitals_to_fhir` (new, Phase 9); `vitals` table itself unchanged | Zero (code-only, additive) | Phase 9 (FHIR Foundation Hardening) |
 | P2 | Clinical-status → FHIR-status translation tables — **implemented, Phase 8** | Needed by any future FHIR mapping layer; internal enums correctly stay unchanged | Phase 2 §3 domain #18 | `app/services/fhir_mappers.py`'s per-status `_..._MAP` dicts | Zero (code-only, additive) | Phase 8 (FHIR Foundation) |
+| P2 | `PractitionerRole`, FHIR search, `$everything`, `meta.lastUpdated` — **implemented, Phase 9** | Hardens the Phase 8 FHIR layer for external interoperability use; no new schema | `docs/architecture/FHIR_FOUNDATION.md` | `app/services/fhir_mappers.py`/`app/api/fhir.py` (Phase 9 additions) | Low (additive; one breaking change — Observation `id` now source-prefixed, documented, pre-release) | Phase 8 (FHIR Foundation) |
+| P3 | ABDM readiness assessment — **audited, Phase 9; no connectivity built** | Evidence-based gap analysis requested before any future ABDM work begins | `docs/architecture/ABDM_READINESS_AUDIT.md` (new) | New doc only — no code/schema change | Zero (documentation only) | None |
 | P2 (conditional) | Diagnosis Stage 2 (multi-diagnosis `conditions` table) | No current evidence of a real requirement | §6 | New `conditions` table, `ConsultationWorkspace.tsx` UI | Medium (real new UI/workflow, not just a schema slot) | A concrete product requirement — not evidenced yet, do not build speculatively |
 | P3 | ABDM / SMART / DICOM / HL7 / IHE / NHCX | Unchanged from Phase 0 | `docs/OPD_HIMS_INTEROPERABILITY_AUDIT.md` | — | — | P1 items ideally land first so there's a real code/terminology slot to map from |
 

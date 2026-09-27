@@ -2,7 +2,9 @@
 
 ## Purpose
 
-Establish a minimal, read-only FHIR R4 interoperability layer over this application's existing HIMS domain model — an external representation for a small, verified set of resources, not a redesign of the internal database, and not the internal source of truth. Built per the OPD/HIMS interoperability master prompt's Phase 8.
+Establish a minimal, read-only FHIR R4 interoperability layer over this application's existing HIMS domain model — an external representation for a small, verified set of resources, not a redesign of the internal database, and not the internal source of truth. Built per the OPD/HIMS interoperability master prompt's Phase 8, hardened in Phase 9 (FHIR Foundation Hardening & ABDM Readiness — see `docs/interoperability/ABDM_READINESS_AUDIT.md` for the ABDM-specific assessment produced alongside this hardening pass).
+
+**Phase 9 changed this layer in five ways**, each covered in its own section below: `meta.lastUpdated` on every resource with a real `updated_at` column; a source-prefixed Observation `id` (`or-`/`vt-`) now that vitals is a second Observation source; vitals → Observation mapping (the "vital signs panel" pattern); a minimal `PractitionerRole`; and a minimal FHIR search (`?patient=`, `?identifier=`) plus the standard `$everything` operation as this layer's Bundle/patient-summary answer. Nothing from Phase 8 was removed or renamed except the Observation `id` format, called out explicitly under "Breaking Change" below.
 
 ```
 Existing HIMS Domain Model
@@ -28,22 +30,26 @@ The internal HIMS schema (`patients`, `consultations`, `orders`, `order_results`
 
 ## Resource Mapping Table
 
-| Internal concept | FHIR R4 resource | Readiness | Missing information | Phase 8 action |
+| Internal concept | FHIR R4 resource | Readiness | Missing information | Status |
 |---|---|---|---|---|
 | `patients` | Patient | High | ABHA identifier (absent — not invented) | **Implemented** |
 | `doctors` | Practitioner | Medium | License/registration number, structured qualification, contact info | **Implemented** (partial) |
-| `hospitals` | Organization | High (single-tenant) | Address/contact columns don't exist | **Implemented** (minimal) |
+| `doctors` | PractitionerRole | Low-Medium | No coded specialty; no Location | **Implemented** (minimal — Phase 9) |
+| `hospitals` | Organization | High (single-tenant) | Address/contact columns don't exist; no real hierarchy | **Implemented** (minimal) |
 | `appointments` | Appointment | High | No structured reason field | **Implemented** |
 | `encounters` | Encounter | High | Single care setting (`encounter_type = 'OPD'` only) | **Implemented** |
 | `consultations.diagnosis`(+code fields) | Condition | Medium | Code usually absent (no terminology source yet); clinicalStatus not tracked | **Implemented** (code absent unless populated) |
 | `patient_allergies` | AllergyIntolerance | High | No coded allergen; no separate onset date | **Implemented** |
 | `medications` | Medication | High | No RxNorm/ingredient coding | **Implemented** |
 | `prescriptions`+`prescription_items` | MedicationRequest | Medium-High | Dosage/frequency/duration are free text, not structured Timing | **Implemented** |
-| `order_results` | Observation | Medium | No LOINC; unit code usually absent (Phase 7 slot) | **Implemented** |
-| `vitals` | Observation (×N fan-out) | Data present, mapping not built | Would need synthetic composite ids, 1 row → up to 9 resources | **NOT implemented** |
+| `order_results` | Observation (`or-{id}`) | Medium | No LOINC; unit code usually absent (Phase 7 slot) | **Implemented** |
+| `vitals` | Observation (`vt-{id}`, panel w/ `component[]`) | Medium | No LOINC/UCUM; composite vitals only, not per-field resources | **Implemented — Phase 9** |
 | `orders` | ServiceRequest | High | No coded category/test code | **Implemented** |
+| n/a | Bundle (`searchset`, `?patient=`/`?identifier=`) | — | No real pagination (hard cap, `_SEARCH_LIMIT = 50`) | **Implemented — Phase 9** |
+| `patients` + everything referencing it | Bundle (`collection`, `Patient/{id}/$everything`) | — | Same per-category cap as search | **Implemented — Phase 9** |
+| n/a | Location | — | No room/ward/address data exists anywhere in this schema | **NOT implemented** (see "Location" below) |
 
-11 of 12 candidate mappings are implemented. Only vitals→Observation is deliberately deferred — see "Explicitly Not Implemented" below.
+14 of 15 candidate resource/operation mappings are implemented as of Phase 9. Only `Location` is deliberately not built — see "Explicitly NOT Implemented" below.
 
 ## Implemented Resources — mapping notes
 
@@ -53,7 +59,10 @@ Each subsection names exactly what's real, what's absent (never invented), and a
 `Patient.id` = internal `patients.id`. `Patient.identifier` carries the UHID (this application's real permanent identity, per `docs/decisions/ADR-001-PATIENT-IDENTITY.md`) and `government_id` when present. `Patient.active` is derived from `merged_into_id IS NULL` (a merged-away record is genuinely no longer the patient's live record — a legitimate derivation, not a fabrication). `Patient.name` is `HumanName.text` only — the internal `name` column is one free-text field with no given/family split, and inventing one by parsing the string would misrepresent names that don't split cleanly. `Patient.link` (pointing a merged record at its survivor) is **not implemented**. **ABHA is absent** — no field for it exists internally, and none is invented here.
 
 ### Practitioner
-Sourced from `doctors`, not `staff` — see "Staff vs. Practitioner" below for why that distinction matters throughout this layer. `qualification[].code.text` carries the free-text `qualifications` column (CodeableConcept's documented free-text fallback). No `identifier` (no license/registration number column exists). **`specialization` is deliberately not mapped** — in real FHIR that's a `PractitionerRole` concept, not `Practitioner` itself, and `PractitionerRole` is not implemented this phase.
+Sourced from `doctors`, not `staff` — see "Staff vs. Practitioner" below for why that distinction matters throughout this layer. `qualification[].code.text` carries the free-text `qualifications` column (CodeableConcept's documented free-text fallback). No `identifier` (no license/registration number column exists). **`specialization` is deliberately not mapped** on `Practitioner` itself — in real FHIR that's a `PractitionerRole` concept.
+
+### PractitionerRole (Phase 9)
+One `PractitionerRole` per `doctors` row, id reused from the doctor's own id (a genuine 1:1 mapping — no separate identifier scheme needed). Carries only `practitioner` (→ `Practitioner/{id}`), `organization` (→ `Organization/{hospital_id}`), and `active`. **`specialty` is deliberately omitted** — `doctors.specialization` is still uncoded free text (the same gap `Practitioner` already documents), and moving an uncoded string to a different resource doesn't make it any more coded. **`location` is deliberately omitted** — `doctor_departments` is a real many-to-many relationship, but a scheduling "department" is an operational grouping in this application, not a physical FHIR `Location` (no room/ward/address data exists anywhere in this schema — see "Location" below), and PractitionerRole has no native "department" element to force it into instead.
 
 ### Organization
 One row exists today (`hospitals.id = 1`) since this deployment is single-tenant. `Organization.identifier` carries `hospitals.code`. No address/telecom (no such columns exist).
@@ -87,8 +96,15 @@ Sourced from Phase 5's Medication Master (`medications`), reusing that module's 
 ### MedicationRequest
 One resource per `prescription_items` row. Uses **`medicationReference`** when Phase 5's `medication_id` link is set, and **`medicationCodeableConcept`** (free text) otherwise — exactly mirroring the optional-link semantics Phase 5 built into prescribing itself. `status` is derived: `DRAFT`→`draft`, `CANCELLED`→`cancelled`, `PRESCRIBED`→`completed` once `quantity_dispensed >= quantity` else `active` (a direct derivation from already-present fields, not a guess). `dosageInstruction[].text` joins the free-text dosage/frequency/duration/food-instructions fields — **never parsed into a structured FHIR `Timing`** (e.g. turning "1-0-1" into a real dosing schedule would be a guess about clinical intent this module refuses to make).
 
-### Observation (from `order_results` only)
+### Observation (from `order_results`) — id `or-{order_results.id}`
 `status` is always `"final"` — a result only exists once its order reaches `COMPLETED`, in the same transaction (`app/services/order_services.py`), and there is no amendment/correction workflow (confirmed in Phase 7) that would ever produce `amended`/`corrected`. **Value typing is a syntactic transformation, not a clinical one**: if `result_value` parses as a number, it becomes `valueQuantity` (carrying `unit`/`unit_system`/`unit_code` when present, from Phase 7's own coding slot); otherwise it stays `valueString`. `interpretation` is included only when `is_abnormal`/`is_critical` is actually `true` — never asserted as `"Normal"` when both are false, matching the existing result table/UI's own restraint (it shows nothing, not a "Normal" label, when neither flag is set). No LOINC (still absent, confirmed in Phase 7).
+
+### Observation (from `vitals`) — id `vt-{vitals.id}` (Phase 9)
+**One Observation resource per `vitals` row**, not one per measurement — the standard real-world FHIR "vital signs panel" pattern, and the one that was actually evaluated and rejected in Phase 7/8 as "would need synthetic composite ids, 1 row → up to 9 resources" (see the now-superseded line in the Phase 8 mapping table). Every non-`NULL` measurement among `bp_systolic`, `bp_diastolic`, `pulse`, `temperature_celsius`, `spo2`, `respiratory_rate`, `weight_kg`, `height_cm`, `bmi` (a `GENERATED` column, passed through like any other value, never recomputed here), and `pain_score` becomes one entry in `component[]`. **This single design choice also satisfies the "blood pressure is one clinical measurement, not two unrelated observations" requirement** — `bp_systolic`/`bp_diastolic` are simply two components of the same panel, exactly like every other vital, with no special-casing needed.
+
+`category` carries the real, standard HL7 `observation-category`/`vital-signs` code — a structural/administrative classification of *what kind* of Observation this is (parallel to `Encounter.class`'s `v3-ActCode`/`AMB`), not a clinical judgment. **No LOINC or UCUM anywhere** — every `component[].code` is `{"text": "<human-readable label>"}` (e.g. "Systolic blood pressure", "Oxygen saturation") and every `valueQuantity.unit` is a plain string (e.g. `"mmHg"`, `"°C"`, `"%"`), never a `system`/`code` binding. This was a specific, repeatedly-considered decision: the individual LOINC codes for vitals (8480-6, 8462-4, 8867-4, …) are extremely well-known, but they are still the exact class of external clinical terminology Phase 9's own instruction singled out as never to hardcode without an authoritative source — unlike `v3-ActCode`/`observation-category`, which are HL7's own structural/workflow vocabularies, not a claim about what a specific measurement *means* clinically. `chief_complaint`/`priority`/`nursing_notes` are deliberately excluded from this Observation — they are not vital-sign measurements (closer to an Encounter/Condition-reason concept and free narrative, respectively), and folding them in would misrepresent what kind of data they are.
+
+**Returns no resource (404) when every measurement field is `NULL`** — a triage row that only records `chief_complaint` (no actual vital taken yet) has nothing to represent as an Observation, the same "nothing documented, so no resource" rule `Condition` already established for a diagnosis-less consultation.
 
 ### ServiceRequest
 One resource per `orders` row. `category` carries `order_type` (LAB/RADIOLOGY/PROCEDURE/SERVICE/EXTERNAL_REFERRAL) as free text, not a coded system. `authoredOn` (not `occurrenceDateTime`) uses `ordered_at`, since this schema doesn't separately track a planned/scheduled service time.
@@ -99,21 +115,37 @@ A recurring, easy-to-get-wrong distinction handled carefully throughout this lay
 
 ## Explicitly NOT Implemented
 
-- **Vitals → Observation.** `vitals` is data-complete (every measurement, already typed) but structurally different from `order_results`: one `vitals` row holds up to nine distinct measurements, so a faithful mapping needs a 1-row-to-N-resources fan-out with synthetic composite identifiers (e.g. `vitals-{id}-bp_systolic`) — real design work `docs/OPD_HIMS_STANDARDS_READINESS.md` §9 itself already flagged as "a mapping-layer job" for a dedicated pass, not something to rush inside this foundation phase. Deferred, not abandoned.
-- **`PractitionerRole`** (doctor specialization, department affiliation).
-- **LOINC** on `order_results.parameter`/`orders.description` — no test/parameter catalog exists internally to anchor a code to (`docs/workflows/LABORATORY.md`'s own Phase 7 finding, re-confirmed here); coding per free-text instance without a catalog would let the same real-world test get inconsistently coded across orders.
-- **RxNorm / any external medication terminology.**
-- **DiagnosticReport, `Bundle`/patient-summary, FHIR search beyond `GET /Resource/{id}`.** Only single-resource reads are implemented; no query parameters, no `_include`, no pagination.
-- **Write operations** (`POST`/`PUT`/`PATCH`/`DELETE`) — this is a read-only layer, full stop. No external system can create or modify a clinical record through FHIR in this phase.
-- **`AuditEvent`, `Consent`, `Subscription`, CDS Hooks.**
+- **`Location`.** No room/ward/bed/address data exists anywhere in this schema (`departments` has no location columns at all — re-verified against `information_schema.columns` in Phase 9) — inventing room numbers or a physical hierarchy would fabricate data this application has never collected. Deferred until real location data exists to map, not built as a stub.
+- **`Organization` hierarchy.** This deployment is single-tenant (one `hospitals` row) with no department/sub-organization structure in the data — `departments` is a scheduling grouping, not a legal/organizational sub-unit, and forcing it into a fabricated parent/child `Organization` hierarchy was considered and rejected in Phase 9.
+- **`DiagnosticReport`.** No internal concept groups multiple `order_results` into one authored, signed-off report distinct from the order itself.
+- **LOINC** on `order_results.parameter`/`orders.description`/vitals measurements — no test/parameter catalog exists internally to anchor a code to (`docs/workflows/LABORATORY.md`'s own Phase 7 finding, re-confirmed in Phase 9's terminology readiness review below); coding per free-text instance without a catalog would let the same real-world test get inconsistently coded across orders.
+- **RxNorm / ATC / any external medication terminology.**
+- **UCUM on vitals.** `order_results.unit_system`/`unit_code` (Phase 7) are real, human-entered coding slots and are used as-is; vitals has no equivalent column, and Phase 9 deliberately did not manufacture one from column names (e.g. inferring `Cel`/`kg`/`mmHg` UCUM codes because a column is named `temperature_celsius`) — see the terminology readiness matrix below.
+- **Real pagination.** Every search/`$everything` endpoint below applies a hard `LIMIT 50` (`_SEARCH_LIMIT`) and returns everything in one response — no `link[]`/`next`/`_count` cursor. This repo's actual data volumes (dozens of rows per table, confirmed live) don't yet justify building real pagination.
+- **Write operations** (`POST`/`PUT`/`PATCH`/`DELETE`) — this is a read-only layer, full stop. No external system can create or modify a clinical record through FHIR.
+- **`AuditEvent`.** No read-auditing of FHIR access exists (see "Audit" below, unchanged since Phase 8).
+- **`Consent`.** No consent model of any kind exists in this codebase (verified in Phase 9 by grepping every migration and every `app/` module for "consent" — zero matches). Not implemented, and the existing break-glass/emergency-access pattern (if any exists elsewhere in this application) is never treated as a substitute for a real FHIR `Consent` resource or an ABDM consent artifact.
+- **`Subscription`, CDS Hooks, NHCX, HL7 v2, DICOM, IHE.**
 - **SMART on FHIR, OAuth2/OIDC.** See "Authentication" below.
-- **ABDM profiles.** Base R4 resources only — no custom profile, no ABDM-specific extension or identifier system.
+- **ABDM profiles, ABHA identity, ABDM consent exchange, HIU/HIP APIs, ABDM sandbox/network connectivity.** Base R4 resources only — no custom profile, no ABDM-specific extension or identifier system, and no network call to any ABDM service anywhere in this codebase. See `docs/interoperability/ABDM_READINESS_AUDIT.md` for the full, evidence-based readiness assessment and gap analysis — that document explicitly does not implement any of this either.
 
 ## Identifiers & References
 
 `Resource.id` is this application's own internal integer primary key, stringified (`str(patients.id)`, etc.) — the **same exposure level** every existing `/api/...` endpoint already uses for `patient_id`/`appointment_id`/etc. in its own URLs, behind the same staff-session authentication and `hospital_id` tenant check. FHIR introduces no new identifier scheme, no UUIDs, no public/opaque-id layer. The clinically meaningful identifier (UHID) is carried separately, in `Patient.identifier`, matching FHIR's own distinction between a resource's technical `id` and its clinical `identifier`.
 
 References between resources (`Patient/{id}`, `Encounter/{id}`, `Practitioner/{id}`, `Medication/{id}`) are always constructed from a real, already-fetched internal foreign key. A reference is **never fabricated** — if the related row doesn't exist or the field is `NULL`, the reference is simply absent from the resource.
+
+**Re-verified in Phase 9** (the instruction explicitly asked this to be re-checked, not assumed still true): every table this layer reads a primary key from (`patients`, `doctors`, `hospitals`, `appointments`, `encounters`, `consultations`, `patient_allergies`, `medications`, `prescription_items`, `order_results`, `vitals`, `orders`) is backed by its own single **global** Postgres identity/sequence — confirmed via `pg_get_serial_sequence` and by inspecting real rows across multiple `hospital_id` values — so no two hospitals can ever produce the same internal id for the same table. The bare-integer id scheme from Phase 8 remains safe to keep for every resource except Observation (below); it was not redesigned.
+
+### Observation `id` format — breaking change (Phase 9)
+
+Phase 9 added `vitals` as a second source for the `Observation` resource type. `order_results.id` and `vitals.id` are two **independent** auto-increment sequences — without a prefix, `order_results` row 5 and `vitals` row 5 would both have produced `Observation/5`, a real identifier collision Phase 8 never had to consider because only one source table existed. The fix: every `Observation.id` now carries a two-letter source prefix — **`or-{id}`** for `order_results`, **`vt-{id}`** for `vitals` — applied to both sources for consistency, not just the new one. `GET /fhir/r4/Observation/{id}` parses this prefix and queries the matching table; an id with neither prefix, or a non-numeric suffix, is a 404. This is a **breaking change** from Phase 8's bare-integer Observation ids, made deliberately: no external consumer of this not-yet-released interoperability layer exists yet to break.
+
+## Meta and Versioning (Phase 9)
+
+`meta.lastUpdated` is populated on every resource whose source table has a genuine, actively-maintained `updated_at` column (`Patient`, `Practitioner`, `PractitionerRole` (reusing `doctors.updated_at`, the same column `Practitioner` reads), `Organization`, `Appointment`, `Encounter`, `Condition`, `Medication`, `MedicationRequest`, `ServiceRequest`) — built from that real column, never a fabricated timestamp. Resources sourced from tables with **no** `updated_at` column (`AllergyIntolerance` ← `patient_allergies`; `Observation` ← `order_results` or `vitals`) simply have **no `meta`** at all, rather than a guessed or borrowed timestamp.
+
+**`meta.versionId` is never populated, on any resource.** `lastUpdated` and `versionId` are independently optional FHIR elements — omitting one says nothing false about the other. No table anywhere in this schema tracks a real, incrementing per-row version counter (re-verified across every source table in Phase 9), so inventing a `versionId` — even a fake "1" for every resource — would assert a version-history guarantee (that this exact representation is stable and retrievable by version) this application cannot actually honor.
 
 ## Tenant Isolation
 
@@ -125,7 +157,26 @@ Every query filters by `hospital_id`, exactly matching the convention `app/api/p
 
 ## Read-Only Scope
 
-Only `GET /fhir/r4/{Resource}/{id}` exists. No create/update/delete route. This is deliberate: an interoperability boundary that only reads never becomes a second, uncontrolled write path into clinical data alongside the application's own existing, carefully RBAC-gated write endpoints.
+Only `GET` routes exist (single-resource reads, search, and `$everything` — all three read-only). No create/update/delete route. This is deliberate: an interoperability boundary that only reads never becomes a second, uncontrolled write path into clinical data alongside the application's own existing, carefully RBAC-gated write endpoints.
+
+## Search (Phase 9)
+
+The smallest useful search set, not a general FHIR search engine:
+
+- **`GET /fhir/r4/Patient?identifier={uhid}`** — exact match on the one identifier this system treats as a real, permanent identity (`patients.uhid`, per `docs/decisions/ADR-001-PATIENT-IDENTITY.md`). No fuzzy name/DOB search — that already exists as this application's own internal `/api/patients` search and is a different, non-FHIR concern.
+- **`GET /fhir/r4/{Appointment,Encounter,Condition,AllergyIntolerance,MedicationRequest,Observation}?patient={id}`** — every one of these resource types already carries (directly, or via its encounter) a `patient_id` internally, so `?patient=` is an honest search parameter for each. `Observation?patient=` searches **both** sources (`or-`/`vt-`) and merges the results into one Bundle.
+
+Every search query reuses the exact same `hospital_id`-scoped SQL shape (same joins, same tenant filter) as the matching single-resource `GET` above it — no new query pattern, no new index. A `patient` id that belongs to a different hospital, or doesn't exist at all, silently produces an **empty Bundle** rather than a 404 or 403 (the join itself yields zero rows) — this matches real-world FHIR search semantics (an unmatched search is empty, not an error) and leaks nothing a 404 wouldn't already leak less of. Every result set is capped at `_SEARCH_LIMIT = 50` with no further pagination (see "Explicitly NOT Implemented"). Results are returned as a `Bundle` of `type: "searchset"` with `total` and `entry[].resource` only — no `search.mode`, no `fullUrl` (this server assigns no absolute URL to a resource that would make one honest).
+
+**Assessed and not built:** search by any other parameter (name, date range, status, `_include`/`_revinclude`, `_sort`, chained search). None of these had a concrete evidenced need in this phase; adding them speculatively would be exactly the kind of premature generality this codebase's own engineering conventions (see root `CLAUDE.md`) already discourage.
+
+## $everything / Bundle (Phase 9)
+
+**`GET /fhir/r4/Patient/{id}/$everything`** — FHIR's own standard operation name (not an invented one) for "every resource this server can produce about this patient." Returns a `Bundle` of `type: "collection"` containing the `Patient` plus every `Appointment`, `Encounter`, `Condition`, `AllergyIntolerance`, `MedicationRequest`, `ServiceRequest`, and `Observation` (both sources) for that patient, each capped at the same `_SEARCH_LIMIT`. This one operation deliberately serves both the "minimal Bundle" and "Patient Summary" asks from Phase 9's instruction, rather than building two separate, overlapping endpoints (one real FHIR standard operation beats one real operation plus one invented `$summary`-style name).
+
+Every entry is a **reference**, never a `contained` resource — this application's real data volumes are small enough that a client can simply dereference each entry with its own `GET`, so there is no genuine need to inline resources and no risk of the `contained`-resource id-scoping pitfalls that come with it. A patient id from a different hospital, or one that doesn't exist, returns the same 404 `OperationOutcome` as every other single-resource lookup in this layer.
+
+No new database table, no new "patient summary" cache, no denormalized read model — `$everything` is computed on read from the same per-resource queries the search endpoints above already use, called against one `patient_id` and assembled into one Bundle.
 
 ## Error Handling
 
@@ -143,19 +194,32 @@ No FHIR library dependency was added (`requirements.txt` gains nothing from this
 
 **FHIR reads are not audit-logged in Phase 8.** `app/services/audit_log.py`'s `record_audit_log` is used exclusively for RBAC-gated *write* actions everywhere else in this codebase (confirmed by inspection — every one of its ~20 existing call sites is a mutation); no `GET` endpoint anywhere in this application, FHIR or otherwise, is currently audited. Adding read-auditing only for FHIR would be a first-of-its-kind departure from that convention, done without a concrete driving requirement. This is a decision to revisit, not an oversight — if/when FHIR access needs stronger accountability than the rest of this API currently has, that's real, separately-scoped future work, not invented here.
 
+## Terminology Readiness Matrix (Phase 9)
+
+A precise readiness assessment per terminology system — "a code *field* exists" is explicitly **not** the same claim as "terminology is *supported*," and this matrix distinguishes them:
+
+| Terminology | Where a slot exists | Populated today? | Readiness |
+|---|---|---|---|
+| **SNOMED CT** | Nowhere — no column anywhere in this schema is scoped to SNOMED specifically | No | **NOT implemented** — no catalog, no ingestion path, no evidenced need identified |
+| **ICD (10/11)** | `consultations.diagnosis_code_system`/`diagnosis_code`/`diagnosis_code_display` (Phase 6) — generic, not ICD-specific; happens to hold `"ICD-10"` when a human enters it | Rarely — free-text entry, not validated against a real ICD catalog | **PARTIALLY implemented** — the slot is real and passed through honestly (`Condition.code.coding`), but `Coding.system` is whatever free text was typed (not a real URI), and nothing here validates the code against an actual ICD-10 code list |
+| **LOINC** | Nowhere — `order_results.parameter`, `orders.description`, and every vitals label are free text | No | **NOT implemented** — no lab/vitals test catalog exists internally to anchor a code to; Phase 7 and Phase 9 both independently confirmed this and both declined to hardcode well-known LOINC codes without one |
+| **UCUM** | `order_results.unit_system`/`unit_code` (Phase 7) — generic, not UCUM-specific; happens to hold `"UCUM"` when a human enters it | Sometimes — depends on data entry | **PARTIALLY implemented** — same pattern as ICD-10 above: passed through honestly when present, never validated, never manufactured for vitals (which has no such column at all) |
+| **RxNorm / ATC** | Nowhere — `medications` (Phase 5's Medication Master) has no terminology-code column | No | **NOT implemented** — `docs/OPD_HIMS_STANDARDS_READINESS.md` §18 documents this as a readiness gap to evaluate, not a Phase 9 build item |
+
+The through-line: this application's terminology-*readiness* work (Phases 6/7) built honest, optional, human-populated coding *slots* next to existing free text — never a code assigned by inference from another field, and never a hardcoded lookup table pretending to be a real terminology binding. Phase 9 made no change to this pattern; it only re-confirmed it while extending the FHIR layer that reads from it.
+
 ## FHIR Compliance Claim
 
-**FHIR R4 read-only resource mapping implemented for:** Patient, Practitioner, Organization, Appointment, Encounter, Condition, AllergyIntolerance, Medication, MedicationRequest, Observation (from `order_results`), ServiceRequest.
+**FHIR R4 read-only resource mapping implemented for:** Patient, Practitioner, PractitionerRole, Organization, Appointment, Encounter, Condition, AllergyIntolerance, Medication, MedicationRequest, Observation (from `order_results` and `vitals`), ServiceRequest — plus a minimal search (`?patient=`, `?identifier=`) and the standard `$everything` operation.
 
-This is **not** a claim of "FHIR compliant," "FHIR certified," "ABDM compliant," or "SMART on FHIR" — none of those are true of this phase, and none is claimed. It is a claim about exactly the list above: a working, tenant-isolated, read-only mapping from real internal data to FHIR R4 JSON shapes, verified by `tests/test_fhir.py` and a live end-to-end patient journey (see the Phase 8 verification report for the exact run).
+This is **not** a claim of "FHIR compliant," "FHIR certified," "ABDM compliant," or "SMART on FHIR" — none of those are true of this phase, and none is claimed. It is a claim about exactly the list above: a working, tenant-isolated, read-only mapping from real internal data to FHIR R4 JSON shapes, verified by `tests/test_fhir.py` and a live end-to-end patient journey (see the Phase 9 verification report for the exact run). See `docs/interoperability/ABDM_READINESS_AUDIT.md` for why "this FHIR layer exists" is explicitly not treated as "this system is ABDM-ready."
 
 ## Future Work
 
-- ABDM FHIR profiles (a distinct future phase, per the master prompt series).
+- ABDM connectivity itself (ABHA creation/linking, consent exchange, HIU/HIP APIs, sandbox/network integration) — a distinct future phase; see `docs/interoperability/ABDM_READINESS_AUDIT.md` for the gap analysis and proposed future adapter architecture this would build against.
 - SMART on FHIR / OAuth2/OIDC authentication.
 - Write support (`POST`/`PUT` for external systems to create/update records) — a materially larger trust and validation problem than this phase's read-only scope.
 - FHIR Subscriptions, CDS Hooks, `AuditEvent`, `Consent`.
-- Vitals → Observation fan-out.
-- `PractitionerRole` (specialization, department affiliation).
-- A real FHIR search API (`GET /Patient?identifier=...`, `_include`, pagination) beyond single-resource `GET /Resource/{id}`.
-- A `Bundle`-based patient summary, once the above resources are individually stable and a concrete consuming use case exists.
+- `DiagnosticReport`, `Location`, a real `Organization` hierarchy — once real data exists to map, not before.
+- Real FHIR search pagination (`link[]`/`_count`) and additional search parameters, once actual data volumes or a concrete consuming use case justify them.
+- SNOMED CT / LOINC / RxNorm ingestion (a genuine terminology-catalog project, not a mapping-layer change).
