@@ -475,3 +475,114 @@ Naming the next phase matters, since the answer changes completely depending on 
 | **This audit's own original draft** | Framed the billing-ledger P0 primarily as a future/IPD-driven risk | Understated — the two ledgers already back two disjoint, disagreeing live reports today (§1); this is the most significant correction in this addendum |
 
 No further verification passes are planned. Per the instruction accompanying this follow-up, this addendum stops here.
+
+---
+
+## Second Addendum: Proof, PHASES.md Correction, Ledger Dependency Inventory, and ADR-009 Options
+
+No application, migration, API, or frontend code was changed to produce this addendum. One new test file was added, per explicit instruction — see §1.
+
+### 1. Proof: a real, running failing test, not a hypothetical
+
+A local Postgres 16 instance was started in this environment, both the dev and `_test` databases were provisioned via `scripts/provision_local_db.sh`, and all 57 migrations were applied via `scripts/migrate.py` — this is a real database running the real schema, not a mock.
+
+`tests/test_billing_ledger_reconciliation_gap.py` was added (committed alongside this addendum). It drives one OPD visit through both ledgers exactly as real usage does:
+
+1. Seed a doctor with a ₹500 consultation fee, create a patient, create and confirm-and-check-in an appointment.
+2. `POST /api/appointments/{id}/payment` (`method: CASH, outcome: PAID`) — Ledger A, the consultation fee.
+3. `POST /api/appointments/{id}/bill/charges` (₹1,200 "CBC") + `POST /api/appointments/{id}/bill/payments` (₹1,200, CASH) — Ledger B, a lab charge, paid in full.
+4. `GET /api/dashboard/billing` (the Dashboard's real, shipped "Billing" panel — see §2's correction below on why this is live, not unused) and `GET /api/billing/payments` (Payment History) — the two live reports.
+
+**Actual output, captured from a real run** (`pytest tests/test_billing_ledger_reconciliation_gap.py --runxfail --tb=short`, numbers below are real, not illustrative):
+
+```
+AssertionError: Dashboard billing report shows 500.0, missing the 1200 lab charge recorded through Ledger B
+assert 500.0 == 1700
+```
+
+Re-run with the first assertion disabled to reach the second:
+
+```
+AssertionError: Payment History shows 1200.0, missing the 500 consultation fee recorded through Ledger A
+assert 1200.0 == 1700
+```
+
+True total collected for this one visit: ₹1,700. The Dashboard's billing report shows ₹500. Payment History shows ₹1,200. Neither shows ₹1,700, and no third screen combines them. This is the exact scenario claimed in the first addendum, now proven against a real database rather than argued from reading code. The test is committed as `@pytest.mark.xfail(strict=True, ...)`, matching this codebase's own established convention (`tests/test_concurrency.py`'s double-booking race) for a confirmed, reproducible, tracked-but-unfixed gap: it will fail loudly (an unexpected pass) the moment ADR-009 is implemented, which is the correct signal to remove the marker.
+
+Run in normal (non-`--runxfail`) mode, the test reports `XFAIL`, not a bare pass — it is a real, meaningful assertion, not a vacuous or disabled test.
+
+One environment note, disclosed for completeness: running the entire 791-test suite sequentially in this sandbox produced 106 unrelated failures/33 errors after several minutes; every one checked was confirmed to pass individually and in small groups (e.g. `test_appointment_types.py`, `test_audit_log.py`, `test_availability_engine.py` together: 38 passed). This is a resource artifact of this constrained container over a ~9.5-minute sequential run (Postgres itself showed `max_connections=100` with only 6 active, ruling out simple DB exhaustion), not a defect introduced by the new test file, which sits alphabetically both before and after tests that failed in the full run and passed the same tests failed regardless of proximity to it.
+
+### 2. The PHASES.md / "UI-9" claim — correcting the premise, not conceding it
+
+Checked directly: `docs/implementation/PHASES.md` contains **zero** occurrences of "UI-" anywhere (`grep -n "UI-" docs/implementation/PHASES.md` returns nothing). Its actual structure is `## Phase 0` through `## Phase 14`, each a full-stack phase (backend + frontend together, e.g. "Phase 9 — Billing + Payment," "Phase 7 — Diagnostics"), not a separate UI-numbered track:
+
+```
+Phase 0 — Repository Audit
+Phase 1 — Design System + Application Shell
+Phase 2 — Patient Identity
+Phase 3 — Encounter Foundation
+Phase 4 — Check-in + Queue
+Phase 5 — Triage + Consultation
+Phase 6 — Order Spine
+Phase 7 — Diagnostics (Laboratory and Radiology)
+Phase 8 — Prescription + Pharmacy
+Phase 9 — Billing + Payment
+Phase 10 — Patient 360
+Phase 11 — Hospital Command Center
+Phase 12 — Production Hardening
+Phase 13 — Printing & Document Management
+Phase 14 — Full End-to-End Validation
+Phases beyond the original 15 — not yet scoped (IPD, Emergency)
+```
+
+**Which claim was wrong**: neither this audit nor its first addendum ever asserted that a "UI-1..UI-13" sequence exists in this repository or that any document here reused it — the first addendum's exact words were "this audit could not verify that citation — no document matching a numbered 'UI-9' phase... exists anywhere in this repository." That statement is accurate and is restated, not retracted, here. The premise that "the earlier UI audit said it reused `docs/implementation/PHASES.md`'s UI-1..UI-13 sequence" does not describe anything in this document or its addendum — if a document with that framing exists, it is external to this repository and was not produced by this audit. What **is** true and worth restating plainly: `docs/implementation/PHASES.md`'s own Phase 9 ("Billing + Payment") is marked `✅ Done`, and that same doc's own "Recommended next step" section (quoted in the original report's §10) independently names billing-ledger unification as the next deferred architectural item — a fact this audit's ADR-009 is built on, and one that holds regardless of what any external, unverifiable "UI-9" document says.
+
+### 3. Every read and write of `appointments.payment_status` — file:line, classified
+
+Checked directly via `grep -rn "payment_status" app/` and by reading each call site's containing function:
+
+| Location | Function | Read or write | Classification |
+|---|---|---|---|
+| `app/services/appointment_services.py:1682` | `record_payment_service` | **Write** → `PAID`/`FAILED` | **Workflow-gating** — line 1695 (in the same function) calls `generate_queue_token_service`: a token is issued only from this write path |
+| `app/services/appointment_services.py:1755` | `waive_consultation_fee_service` | **Write** → `WAIVED` | **Workflow-gating** — line 1767 calls `generate_queue_token_service` |
+| `app/services/appointment_services.py:1823` | `settle_free_visit_service` | **Write** → `WAIVED` | **Workflow-gating** — line 1835 calls `generate_queue_token_service` |
+| `app/services/appointment_services.py:1893` | `record_refund_service` | **Write** → `REFUNDED` | **Reporting only** — no downstream trigger; the token was already issued earlier in the visit |
+| `app/services/appointment_services.py:1578`, `1612` | `_lock_appointment_for_payment` | Read (`FOR UPDATE`) | **Workflow-gating** — the row-lock guard shared by all three write functions above |
+| `app/services/appointment_services.py:1586–1588` | `add_invoice_line_item_service` | Read | **Workflow-gating** — refuses to add a Ledger A line item unless `payment_status IN ('UNPAID','FAILED')` |
+| `app/services/appointment_services.py:1869, 1882, 1884` | `record_refund_service` | Read | **Workflow-gating** — refund is refused unless `payment_status == 'PAID'` |
+| `app/services/appointment_services.py:1910–1923` | `_current_payment_record` | Read | **Reporting only** — builds the payment-detail object returned by the API |
+| `app/services/visit_completion_service.py:75–77` | `get_visit_completion_checklist_service` | Read | **Reporting only, but workflow-adjacent** — feeds the non-gating "payment completed" checklist line; the same function's own comment (lines 55–62) explicitly documents this as a *deliberately separate signal* from Ledger B's "billing completed" line, shown side by side rather than combined — this is the one place in the codebase that already handles the two-ledger split honestly rather than silently picking one |
+| `app/api/appointments.py:272, 338` | appointment list/detail endpoint | Read | **Reporting** (API surface consumed by both the frontend list view and, indirectly, `AppointmentActions.tsx`'s gating logic below) |
+| `app/api/dashboard.py:200, 214, 225, 230, 242, 254, 267, 291` | `get_billing_report` | Read (8 separate queries) | **Reporting only** — confirmed to be the sole source of the Dashboard's "Billing" panel, Ledger-A-exclusive |
+| `frontend/src/admin/AppointmentActions.tsx:152–178` | action-menu builder | Read (`a.payment_status`, sourced from the endpoint above) | **Frontend-only workflow gate** — "Mark completed" is not rendered at all while `payment_status` is `UNPAID`/`FAILED`; confirmed this is UI-only, since `mark_completed_service` itself (the backend function actually invoked) contains no payment check — a direct API call to `/complete` is not blocked by payment state, only the button is hidden |
+
+**`billing_services.py` was checked and confirmed to contain zero references to `appointments.payment_status`** — the two ledgers genuinely never cross-read each other in code, exactly as `tests/test_billing_invoices.py`'s own module docstring states ("Deliberately separate from, and never touching, the existing appointments.consultation_fee/payment_status flow").
+
+**One additional, relevant finding not previously surfaced**: `app/services/exception_engine.py`'s `_payment_pending` function (lines 277–307), which powers the live "Needs Attention" `PAYMENT_PENDING` exception, reads exclusively from `invoices`/`charges`/`payments` (Ledger B) and has no `appointments.payment_status` reference at all. A visit whose consultation fee alone remains unpaid — no Ledger B charge ever created — produces `gross_amount = 0` for that invoice, so `balance = 0`, so it is silently never flagged as a `PAYMENT_PENDING` exception. This is a fourth live surface exhibiting the same root gap, not a new independent bug.
+
+**Why this inventory matters for ADR-009**: the queue-token issuance trigger (`generate_queue_token_service`, called only from the three write functions above) is the single highest-stakes dependency on Ledger A — "a patient shouldn't enter the queue before payment/waiver" is a real, tested, operationally load-bearing rule, not incidental reporting. Any unification plan must either preserve this exact trigger unchanged, or replace it with a provably equivalent one before Ledger A's write path is touched.
+
+### 4. ADR-009 options, given the dependency inventory above
+
+**Option A — Fold Ledger A into Ledger B outright.** The consultation fee becomes a `charges` row (`source_type='CONSULTATION'`) on the encounter's invoice from the start; queue-token issuance is re-triggered off "this invoice's consultation-fee charge is settled or waived" instead of `appointments.payment_status`. **Risk**: this touches the exact trigger identified in §3 as the highest-stakes dependency, on the same code path this repository's own migration `0033` header already declined to touch for this reason. It also has no home for the tested 3-day-same-doctor waiver business rule (`waive_consultation_fee_service`) — Ledger B has void/discount, not an equivalent waiver-with-eligibility-check concept — so Option A requires designing that rule's Ledger-B equivalent before it can ship, not just moving data.
+
+**Option B — Keep Ledger A as the operational gate; dual-write into Ledger B; make Ledger B the sole reporting source (recommended default).** `record_payment_service`, `waive_consultation_fee_service`, and `settle_free_visit_service` keep writing `appointments.payment_status` exactly as today — **the queue-token trigger is not touched at all**. In the same transaction, each also inserts a matching `charges` row (`source_type='CONSULTATION'`) and a `payments` row on that encounter's invoice. `get_billing_report` (Dashboard), `list_payments_service`/`list_invoices_service` (History), and `_payment_pending` (Exception Engine) switch to read only Ledger B, which is now a strict superset. `appointments.payment_status` is **kept, not deprecated** — it continues to legitimately drive the queue-token gate and the 3-day-waiver eligibility check; it simply stops being read by anything reporting-facing.
+
+- **Consultation fees enter Ledger B going forward**: via the dual-write added inside the three existing Ledger A write functions, in the same transaction — no new endpoint, no new trigger point.
+- **Backfill of historical data**: add a nullable `charges.legacy_appointment_id` column with a partial unique index, then a one-time script inserting one `charges` + `payments` pair per historical appointment where `payment_status IN ('PAID','WAIVED','REFUNDED')` and no such row exists yet, `ON CONFLICT (legacy_appointment_id) DO NOTHING` — safely re-runnable, matching this codebase's own established idempotent-backfill idiom (`0003`'s exclusion constraint, `0054`'s medication-master backfill).
+- **What happens to `payment_status`**: **kept**, not derived and not deprecated — it remains the real, load-bearing operational field for queue-token issuance and the waiver rule. What changes is that nothing outside `appointment_services.py` reads it anymore.
+- **Risks**: (1) a dual-write bug silently under/over-counts Ledger B — mitigated by promoting `tests/test_billing_ledger_reconciliation_gap.py` from `xfail` to a real, permanent assertion as part of this work, so a regression here is caught immediately, not rediscovered later; (2) the backfill must run once, cleanly, before dual-writes go live, to avoid a window where some historical rows exist twice under different keys — the `legacy_appointment_id` uniqueness guard makes a double-run harmless but a *partial* run (backfill half-done, dual-write already live) could still double-count a payment made in that gap; sequence backfill-then-cutover, not the reverse; (3) `WAIVED`/`REFUNDED` visits need a Ledger B representation that reads as "not outstanding" (e.g. a `$0`/`method='WAIVED'` payment, or a full charge-level discount) — get this wrong and the Exception Engine's `PAYMENT_PENDING` check (§3) could start firing false positives for legitimately waived visits.
+
+**Recommended default: Option B.** It resolves the actual harm proven in §1 (disjoint reporting) without touching the one code path this repository has consistently, deliberately protected across its entire history (booking/queue/token concurrency) — the same discipline that produced the double-booking fix's own test-first, `xfail`-tracked pattern this new test now follows. Option A is the more architecturally "complete" answer and becomes worth reconsidering specifically if/when IPD is committed (an admission has no "consultation fee" or appointment-driven token to trigger off in the first place, so the whole Ledger-A-as-gate model needs rethinking for IPD regardless) — but that is a reason to defer Option A to that decision point, not a reason to do it now.
+
+### 5. Stopgap label/copy changes (proposed text only, not applied)
+
+Checked the exact current copy in each affected component:
+
+- **`frontend/src/admin/BillingPanel.tsx:83`** — currently `<span className="stat-label">Collected (last {report.window_days} days)</span>`, displaying `report.total_collected` (confirmed: this is the one figure on any of these three screens that actually presents itself as a total). **Proposed**: `Consultation fees collected (last {report.window_days} days)`, with a small helper line beneath the stat card: `"Excludes lab, radiology, pharmacy, and package charges — see Billing History for those."`
+- **`frontend/src/admin/BillingPanel.tsx:47`** — currently `<h2>Billing</h2>` with no subtitle, above all four Ledger-A-only sections (collections, outstanding, waivers, refunds). **Proposed**: add `<p className="panel-subtitle">Consultation-fee reconciliation</p>` directly under the `<h2>`.
+- **`frontend/src/admin/PaymentHistoryPanel.tsx:67`** — currently `<h2>Payment History</h2>`. Checked: the `total` shown on this screen (line 153, `{pageStart}–{pageEnd} of {total}`) is a row count for pagination, not a monetary sum — so there is no dollar figure to relabel here, but the heading itself implies completeness it doesn't have. **Proposed**: add a one-line note under the heading: `"Invoice payments only (lab, radiology, pharmacy, packages, and other billed charges). Consultation fees collected at check-in appear under Billing, not here."`
+- **`frontend/src/admin/BillingHistoryPanel.tsx:64`** — currently `<h2>Billing History</h2>`, same `total`-is-a-row-count situation. **Proposed**: the same one-line note as above, adapted: `"Invoice charges only... Consultation fees appear under Billing, not here."`
+
+These four are copy-only changes to existing JSX text and would not touch any query, endpoint, or data model — genuinely separable from ADR-009's implementation and safe to ship immediately once approved, independent of which ADR-009 option is eventually chosen.
