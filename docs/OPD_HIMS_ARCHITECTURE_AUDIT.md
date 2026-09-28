@@ -586,3 +586,95 @@ Checked the exact current copy in each affected component:
 - **`frontend/src/admin/BillingHistoryPanel.tsx:64`** — currently `<h2>Billing History</h2>`, same `total`-is-a-row-count situation. **Proposed**: the same one-line note as above, adapted: `"Invoice charges only... Consultation fees appear under Billing, not here."`
 
 These four are copy-only changes to existing JSX text and would not touch any query, endpoint, or data model — genuinely separable from ADR-009's implementation and safe to ship immediately once approved, independent of which ADR-009 option is eventually chosen.
+
+**Applied**, separately, per explicit instruction (see the third addendum below for the commit).
+
+---
+
+## Third Addendum: Test Suite Report, Applied Stopgap, and ADR-009 Option Diff-Sizing
+
+No application, migration, or backend/API code was changed to produce this addendum. The stopgap copy from addendum 2 §5 was applied, as its own frontend-only commit, per explicit instruction — see §1 below for what else was checked before and after it.
+
+### 1. Report
+
+**Full test suite result.** The prior addendum's full-suite run (106 failed, 660 passed, 1 skipped, 1 xfailed, 33 errors) was re-investigated rather than taken at face value. Re-running it turned up something worth being direct about: this session's local Postgres instance had gone down between conversation turns (`database system was not properly shut down; last known up at 2026-09-28 09:47:16 UTC`, restarted at `14:11:01` — a multi-hour gap, consistent with this being an ephemeral container that doesn't keep a manually-started background service alive across a session pause). The very next full run hit that outage directly (`connection to server ... failed: Connection refused` on every test, `1 error during collection`, from `app/db/test_connection.py` — which SETUP.md itself already documents as "not a pytest test despite the filename," a pre-existing, unrelated collection quirk). Postgres was restarted, WAL recovery completed cleanly, and the test database's `schema_migrations` count (64) and existing data were confirmed intact.
+
+**With Postgres confirmed stable, a fresh full run produced:**
+
+```
+FAILED tests/test_scheduling_flow.py::test_booking_uses_doctor_specific_timezone
+1 failed, 799 passed, 1 xfailed, 1 warning in 686.40s (0:11:26)
+```
+
+The one failure is unrelated to anything touched in this session — `assert ny_time.hour == 9` / `AssertionError: assert 10 == 9`, a date-sensitive assertion in a doctor-timezone booking test (`tests/test_scheduling_flow.py:110`), consistent with a hardcoded-offset assumption that doesn't hold on every calendar date (a DST-boundary-shaped bug, not a billing, RBAC, or ledger issue). It was not investigated further, since it sits well outside this task's scope and predates every change in this conversation.
+
+**The earlier 106-failed/33-errors run is now understood to be a real but different environmental event** — Postgres was confirmed up throughout that specific run (its own log shows normal query activity, not a mass connection-refused pattern), so it was not the same outage as above; the exact trigger wasn't identified and is not chased further here, since the same test files were independently confirmed to pass both in isolation and as a group at the time, and now pass again in a full, clean run. The honest summary: this sandbox's Postgres has proven unstable across long-running or multi-turn sessions at least twice; a single clean full run (799 passed, 1 unrelated pre-existing failure, 1 xfailed as designed) is the trustworthy result, not the earlier noisy one.
+
+**Dashboard billing report's live frontend consumer**: confirmed real, not speculative. `frontend/src/admin/BillingPanel.tsx:3` imports and calls `getBillingReport` (`frontend/src/api.ts:415-416`, `GET /dashboard/billing`), rendered as the sidebar's real "Billing" screen (`AdminApp.tsx:312`'s own comment: `"Reports" entry that's real (GET /dashboard/billing)`). `app/api/dashboard.py`'s own docstring — "no frontend for this yet" — is itself stale; `BillingPanel.tsx`'s own header comment says plainly: "GET /dashboard/billing, built alongside refunds and itemized invoicing (migrations/0025/0026) but **never wired to a page until now**." Added to the doc-drift list in addendum 1 §7 in spirit: the backend docstring simply predates the frontend work that wired it up.
+
+**Why 64 migration files, not 57 or 65 — reconciled precisely.** `ls migrations` returns 65 entries total, but one of them is `README.md`, not a migration — so 64 `.sql` files. Those 64 files span 57 *distinct numeric prefixes* (`0001`–`0057`); seven numbers (`0029`, `0030`, `0031`, `0032`, `0033`, `0048`, `0054`) each have two files sharing that prefix with different descriptive suffixes (e.g. `0054_diagnostic_workflow.sql` and `0054_medication_master.sql`), accounting for the extra seven files (`57 + 7 = 64`). The original audit's "65 total... migrations `0001`–`0057`" conflated the directory's total entry count (65, including the README) with the migration count; "57" in casual chat shorthand referred to the highest numeric prefix, not the number of files applied. The precise, verified figures: **65 directory entries, 64 migration files, 57 distinct numeric prefixes, 64 rows in `schema_migrations` after a full apply** — all four numbers are correct for what they each actually measure, and none of them is "the" single right answer to "how many migrations" without saying which of the four is meant. This document will say "64 migration files" going forward.
+
+### 2. Stopgap copy — applied
+
+Commit `65c69df`, frontend-only, three files (`BillingPanel.tsx`, `PaymentHistoryPanel.tsx`, `BillingHistoryPanel.tsx`), 13 insertions / 4 deletions. `npx tsc -b` confirmed clean (exit 0) after the change. The two most important corrections were the existing subtitle text itself, found to be actively overclaiming rather than merely silent: Payment History's `"Every payment across every invoice, newest first"` and Billing History's `"Every invoice across every visit, newest first"` — both literally false given the two-ledger split, now corrected to name their actual scope and point to the other screen.
+
+### 3. Diff-sizing ADR-009's two options
+
+**Option A — make Ledger B canonical; move the queue-token trigger to "consultation charge paid or waived in Ledger B."**
+
+| File | Function(s) | Nature of change |
+|---|---|---|
+| `app/services/appointment_services.py` | `record_payment_service` | Remove the `generate_queue_token_service` call from this path (trigger moves elsewhere); Ledger A write becomes either removed or a read-only compatibility shim |
+| | `waive_consultation_fee_service` | The 3-day-same-doctor-revisit eligibility rule (the one genuinely tested business rule in this function) has no home in Ledger B today — must be ported into a new `billing_services.py` function, not just relocated |
+| | `settle_free_visit_service` | Same porting problem as above |
+| | `record_refund_service` | Retired in favor of Ledger B's existing `refund_invoice_payment_service` |
+| | `add_invoice_line_item_service`, `_lock_appointment_for_payment`, `_current_payment_record` | Dead code after cutover — remove or formally deprecate |
+| `app/services/billing_services.py` | `record_invoice_payment_service` (extend) | New logic: after a payment, check whether the CONSULTATION-source charge specifically is now settled (not "is the whole invoice paid" — a patient can owe for a pending lab charge while the consultation fee itself is settled), and if so call `generate_queue_token_service` — a new cross-module call from billing into appointment services that doesn't exist today, with its own locking-order implications since token generation takes its own advisory lock |
+| | New `waive_charge_service` (or equivalent) | Must carry the ported 3-day eligibility rule from above |
+| | `_ensure_invoice` (call site, not the function) | Must be called *eagerly* at check-in (a new call from `confirm_and_check_in_service`/`mark_visited_service`), not lazily on first `GET .../bill` as today, so a CONSULTATION charge exists the moment it's owed |
+| `app/api/appointments.py` | `/payment`, `/waive-payment`, `/refund-payment` | Either retired or reimplemented as thin compatibility wrappers over the new Ledger-B functions |
+| `app/api/billing.py` | New waive-charge endpoint | To expose the ported business rule |
+| `frontend/src/admin/AppointmentActions.tsx:152-178` | action-menu builder | Full rewrite — the entire "Mark completed" gating logic keys off `payment_status`, which no longer means the same thing (or is removed); needs to key off a new Ledger-B-derived field instead |
+| `frontend/src/admin/AppointmentBillingPanel.tsx` / `ConsultationWorkspace.tsx` | payment-collection call sites | Repointed to new endpoints |
+| Migrations | 1 new (a way to eagerly link an invoice's CONSULTATION charge to check-in time, if not already sufficient via `source_type` alone) | Small, but not zero |
+| Tests | Most of `test_consultation_payments.py` (currently the dedicated file for this exact mechanism) | **Rewritten, not added to** — its assertions are against the endpoints/behavior being replaced; `test_queue_tokens.py`/`test_queue_token_generation.py` fixtures need updating since the trigger moves; new tests needed for the ported waiver rule under its new home |
+
+**Verdict on A**: touches the single highest-concurrency code path in the app (queue-token generation) as a *behavior* change, not an addition; requires designing and shipping a new waiver mechanic before it can ship at all (not optional — the 3-day rule is real, tested, and currently has no Ledger-B equivalent); invalidates and requires rewriting the majority of an existing, substantial test file rather than adding to it; requires a real frontend rewrite of the "what can I do with this appointment right now" logic. Large, multi-file, behavior-changing diff.
+
+**Option B — dual-write; Ledger A remains the operational gate.**
+
+| File | Function(s) | Nature of change |
+|---|---|---|
+| `app/services/appointment_services.py` | `record_payment_service` | **Additive only** — one new call after the existing `UPDATE`, mirroring the payment into Ledger B, in the same transaction; the existing `UPDATE` and `generate_queue_token_service` call are untouched |
+| | `waive_consultation_fee_service`, `settle_free_visit_service` | Same — one additive mirroring call each |
+| | `record_refund_service` | One additive call updating the mirrored Ledger B payment's `refunded_amount` |
+| | `_lock_appointment_for_payment`, `add_invoice_line_item_service`, `_current_payment_record`, `generate_queue_token_service` | **Untouched** |
+| `app/services/billing_services.py` | New small helper (e.g. `_mirror_legacy_appointment_payment`), called from the four functions above | New, narrow, additive — `billing_services.py` gains one new entry point, doesn't lose or change any existing one |
+| `app/api/dashboard.py` | `get_billing_report`'s 8 queries (lines 200–291) | **Rewritten** to read `invoices`/`charges`/`payments` instead of `appointments.payment_status` — real work, but confined to one file, with a fairly direct Ledger-B equivalent per query since the dual-write guarantees the data now exists there; response JSON shape unchanged, so **no frontend change required** for this part |
+| `app/services/billing_history_service.py`, `app/services/exception_engine.py` | — | **Untouched** — already Ledger-B-only, correct by construction once Ledger B is the superset |
+| `frontend/*` | — | **Untouched**, for the scope this option proves fixed (see the scope note below) |
+| Migrations | 1 new — `charges.legacy_appointment_id` (nullable, partial unique index) as the backfill idempotency key | Small |
+| New script | `scripts/backfill_ledger_a_to_b.py` (one-time, idempotent) | New, self-contained |
+| Tests | `test_billing_ledger_reconciliation_gap.py`: remove the `xfail` marker (becomes the acceptance test) | **Added to, not rewritten** — every existing test in `test_consultation_payments.py`/`test_billing_invoices.py`/`test_queue_tokens.py` keeps passing unmodified, since no existing behavior changed, only new rows get written alongside it; new tests needed for the mirroring itself and for the backfill script's idempotency |
+
+**One scope nuance worth being explicit about**: the dual-write as described (mirroring only on successful `PAID`/`WAIVED`/`REFUNDED` outcomes) closes exactly the gap `test_billing_ledger_reconciliation_gap.py` proves — the Dashboard-vs-Payment-History disagreement for a *settled* visit. It does **not**, by itself, close the Exception Engine's `PAYMENT_PENDING` blind spot for a visit whose consultation fee is still *unpaid* (addendum 2 §3's "additional finding") — that needs the CONSULTATION charge created *unpaid* at check-in time, not only mirrored at payment time, which means also touching `confirm_and_check_in_service`/`mark_visited_service` (one more additive call, same pattern, slightly larger scope). Both scope levels are Option B, at different completeness; the ADR amendment in §4 below assumes the fuller scope, since a half-fix that leaves the Exception Engine gap open would be a known, named gap to carry forward, not a hidden one.
+
+**Verdict on B**: every backend change is additive (new calls, new rows, new file); zero existing tests require modification; the queue-token trigger — the one path this codebase has protected throughout its history — is never touched; the one required frontend change is none, for the Dashboard fix, since the response shape doesn't change. Meaningfully smaller and lower-risk than Option A, at the cost of leaving two ledgers physically existing (Ledger A remains the operational source of truth for check-in gating, Ledger B becomes the operational + reporting source of truth for money) rather than truly unifying the model.
+
+### 4. ADR-009 amendment — Option B, as recommended, with the four required elements
+
+**Same-transaction guarantee.** Every mirroring insert happens on the same `cur`/transaction as the Ledger A write it mirrors — identical discipline to this codebase's own established rule for `record_audit_log()` (addendum 1's Gap #5) and for every existing billing mutation's `FOR UPDATE` pattern. Concretely: `record_payment_service`'s existing `UPDATE appointments ... SET payment_status = %s` and the new `charges`/`payments` inserts it triggers must commit or roll back together — a partial mirror (Ledger A updated, Ledger B insert failed) is exactly the bug class §3's "dual-write bug" risk names, and the same-transaction guarantee is what prevents it structurally rather than by convention.
+
+**Mirroring of waivers, refunds, reversals, and edits.** Four distinct Ledger A events, each with its own mirror shape:
+- **`PAID`** (`record_payment_service`) → a `charges` row (`source_type='CONSULTATION'`) + a `payments` row (`status='COMPLETED'`) for the same amount/method.
+- **`FAILED`, later retried** (`record_payment_service` called twice for the same appointment — this is Ledger A's only "edit" path; it has no separate edit endpoint, the same function's `UPDATE` simply overwrites `payment_status`/`payment_amount` on each call) → the first call mirrors to a `payments` row with `status='DECLINED'` (migration `0050`, built for exactly this case); the second, successful call mirrors to a new `payments` row with `status='COMPLETED'` — reusing Ledger B's own existing declined-then-retried pattern rather than inventing a new one.
+- **`WAIVED`** (`waive_consultation_fee_service`, `settle_free_visit_service`) → a `charges` row plus a `payments` row representing the waiver as fully settled with no cash movement (e.g. `method='WAIVED'`, amount equal to the charge, `$0` actually collected — the exact representation needs a one-line decision at implementation time, not left ambiguous, since the Exception Engine's `PAYMENT_PENDING` balance math must treat it as `balance <= 0`).
+- **`REFUNDED`** (`record_refund_service`) → an `UPDATE` to the *already-mirrored* `payments` row's `refunded_amount`, using the same accumulating, capped pattern Ledger B's own `refund_invoice_payment_service` already uses (`refunded_amount <= amount`) — not a new payment row.
+
+No other reversal/edit path exists in Ledger A today (confirmed in addendum 2 §3's full inventory) — these four cover every write site.
+
+**Dashboard reads Ledger B only, after the change.** `get_billing_report`'s eight queries (`app/api/dashboard.py:200-291`) are rewritten to read `invoices`/`charges`/`payments` exclusively; the `appointments.payment_status` references in that file are removed, not merely supplemented. The response JSON shape (`total_collected`, `collections_by_method`, `collections_by_doctor`, `outstanding_unpaid`, `waivers`, `refunds`) stays the same, so `BillingPanel.tsx` requires no change — only the backend query source moves.
+
+**Acceptance criterion.** `tests/test_billing_ledger_reconciliation_gap.py` passes with the `@pytest.mark.xfail(strict=True, ...)` marker **removed**. Per `strict=True`'s own semantics (already relied on elsewhere in this codebase for the double-booking fix), the marker must be deleted, not merely left in place expecting an "unexpected pass" — a passing `xfail` fails the suite under `strict=True` by design, so removing the marker is itself part of the acceptance criterion, not a formality.
+
+**Exit plan — is dual-write permanent or transitional, and what retires Ledger A.** Transitional, with an explicit, separate future decision required to complete it, not an automatic follow-on: Option B intentionally leaves `appointments.payment_status` as the real, load-bearing queue-token gate (§3's dependency inventory), so it cannot be dropped without first doing the work Option A describes — moving the gate itself onto Ledger B. The honest exit plan is therefore two-phase, and this ADR only decides the first: **Phase 1 (this decision)** — dual-write ships, all reporting reads Ledger B, `payment_status` remains the operational gate, kept indefinitely in that role. **Phase 2 (a separate, later decision, not committed by this ADR)** — only if/when the queue-token trigger itself is worth moving off Ledger A (the OPD_TO_IPD.md-flagged moment this becomes forced is IPD, whose admissions have no appointment-driven fee to gate on in the first place, so the whole Ledger-A-as-gate model needs rethinking for that case regardless) — at that point Option A's remaining scope (the waiver-rule port, the frontend gating rewrite, retiring `appointments.payment_status`'s write path) becomes the actual unification, and the dual-write from Phase 1 is what makes that migration safe, since Ledger B has already been carrying every historical row correctly for however long Phase 1 has been live. Phase 1 alone is a legitimate, stable, indefinitely-livable end state on its own — it is not required to lead to Phase 2 on any particular timeline, and should not be scheduled as if it must.
