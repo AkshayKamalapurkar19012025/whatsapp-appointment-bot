@@ -45,7 +45,10 @@ export default function BillingPanel() {
       <div className="admin-content-header">
         <div>
           <h2>Billing</h2>
-          <p className="muted">Collections, outstanding balances, waivers, and refunds.</p>
+          <p className="muted">
+            Consultation-fee collections, outstanding balances, waivers, and refunds — not lab,
+            radiology, pharmacy, or package charges (see Billing History for those).
+          </p>
         </div>
       </div>
 
@@ -80,7 +83,7 @@ export default function BillingPanel() {
               </span>
               <div className="stat-body">
                 <span className="stat-value">₹{report.total_collected}</span>
-                <span className="stat-label">Collected (last {report.window_days} days)</span>
+                <span className="stat-label">Consultation fees collected (last {report.window_days} days)</span>
               </div>
             </div>
             <div className="stat-card">
