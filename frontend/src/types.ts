@@ -788,6 +788,16 @@ export interface Consultation {
   history_notes: string | null
   examination_notes: string | null
   diagnosis: string | null
+  // OPD/HIMS interoperability master prompt Phase 6 (migrations/0056_
+  // consultation_diagnosis_coding.sql) -- optional, alongside the
+  // required free-text diagnosis above, never replacing it. Never
+  // populated automatically; null on every consultation until a human
+  // enters real values through a future terminology-aware UI, which
+  // doesn't exist yet -- this phase is backend-only (see docs/workflows/
+  // CONSULTATION.md's "Diagnosis coding" section for why).
+  diagnosis_code_system: string | null
+  diagnosis_code: string | null
+  diagnosis_code_display: string | null
   clinical_notes: string | null
   follow_up_date: string | null
   follow_up_reason: string | null
@@ -818,6 +828,9 @@ export interface ConsultationAmendment {
   previous_history_notes: string | null
   previous_examination_notes: string | null
   previous_diagnosis: string | null
+  previous_diagnosis_code_system: string | null
+  previous_diagnosis_code: string | null
+  previous_diagnosis_code_display: string | null
   previous_clinical_notes: string | null
   previous_follow_up_date: string | null
   previous_follow_up_reason: string | null
@@ -869,6 +882,15 @@ export interface OrderResultItem {
   parameter: string
   result_value: string
   unit: string | null
+  // OPD/HIMS interoperability master prompt Phase 7 (migrations/0057_
+  // order_result_unit_coding.sql) -- optional, alongside the required
+  // free-text unit above, never replacing it. Never populated
+  // automatically; null on every result until a human enters real
+  // values through a future terminology-aware UI, which doesn't exist
+  // yet -- this phase is backend-only (see docs/workflows/LABORATORY.md
+  // for why, same reasoning as diagnosis coding in Phase 6).
+  unit_system: string | null
+  unit_code: string | null
   reference_range: string | null
   is_abnormal: boolean
   is_critical: boolean
@@ -881,6 +903,10 @@ export interface OrderResultItemInput {
   parameter: string
   result_value: string
   unit?: string
+  // Phase 7: optional terminology-code slot -- see OrderResultItem's
+  // own comment above.
+  unit_system?: string
+  unit_code?: string
   reference_range?: string
   is_abnormal?: boolean
   is_critical?: boolean
@@ -1000,6 +1026,13 @@ export interface PrescriptionItem {
   // Only present on the item returned directly by the dispense
   // endpoint itself -- confirms what that one action just did.
   dispense_record?: PharmacyDispenseRecord
+  // Medication Master (OPD/HIMS interoperability master prompt Phase 5,
+  // migrations/0054_medication_master.sql) -- set only when the
+  // clinician picked a search result; null on any item entered as
+  // plain free text, including every item that existed before this
+  // phase. medicine_name/generic_name above stay the source of truth
+  // for display either way.
+  medication_id?: number | null
 }
 
 export interface PrescriptionItemInput {
@@ -1012,6 +1045,9 @@ export interface PrescriptionItemInput {
   quantity: number
   food_instructions?: string
   special_instructions?: string
+  // Phase 5: optional Medication Master link -- see PrescriptionItem's
+  // medication_id above.
+  medication_id?: number | null
 }
 
 export interface Prescription {
@@ -1028,6 +1064,24 @@ export interface Prescription {
   created_at: string
   updated_at: string
   items: PrescriptionItem[]
+}
+
+// P0 clinical safety (OPD/HIMS interoperability master prompt Phase 4) --
+// a text match between one of the patient's active patient_allergies rows
+// and the medicine just submitted. See app/services/allergy_check_
+// service.py for the matching rule and its documented limitations: this
+// is a same-text match, not real drug-allergy decision support.
+export interface AllergyConflict {
+  allergy_id: number
+  allergen: string
+  severity: AllergySeverity | null
+  reaction: string | null
+  matched_against: string
+}
+
+export interface AddPrescriptionItemResult {
+  prescription: Prescription
+  allergy_warning: { conflicts: AllergyConflict[] } | null
 }
 
 export interface PharmacyQueueEntry {
@@ -1053,6 +1107,9 @@ export interface PharmacyStockBatch {
   created_by: number
   created_at: string
   updated_at: string
+  // Phase 5 (migrations/0054_medication_master.sql) -- see
+  // PrescriptionItem.medication_id's own comment.
+  medication_id?: number | null
 }
 
 export interface PharmacyStockInput {
@@ -1061,6 +1118,34 @@ export interface PharmacyStockInput {
   expiry_date: string
   quantity_on_hand: number
   unit_price: number
+  medication_id?: number | null
+}
+
+// Medication Master (OPD/HIMS interoperability master prompt Phase 5,
+// migrations/0054_medication_master.sql) -- the internal canonical
+// medication identity prescription_items and pharmacy_stock both
+// optionally reference. display_name is computed server-side
+// (app/services/medication_services.py), never assembled here.
+export interface Medication {
+  id: number
+  generic_name: string
+  brand_name: string | null
+  strength: string | null
+  dosage_form: string | null
+  default_route: string | null
+  active: boolean
+  created_by: number
+  created_at: string
+  updated_at: string
+  display_name: string
+}
+
+export interface MedicationInput {
+  generic_name: string
+  brand_name?: string | null
+  strength?: string | null
+  dosage_form?: string | null
+  default_route?: string | null
 }
 
 // OPD/HIMS master spec Phase 9 (migrations/0033_billing_invoices.sql)
@@ -1355,6 +1440,9 @@ export interface TimelineOrderResult {
   parameter: string
   result_value: string
   unit: string | null
+  // Phase 7 -- see OrderResultItem's own comment (types.ts).
+  unit_system: string | null
+  unit_code: string | null
   reference_range: string | null
   is_abnormal: boolean
   is_critical: boolean

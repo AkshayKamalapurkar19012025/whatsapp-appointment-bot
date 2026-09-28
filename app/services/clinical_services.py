@@ -201,7 +201,9 @@ def get_latest_vitals_service(cur, appointment_id: int):
 
 _CONSULTATION_COLUMNS = (
     "id", "encounter_id", "doctor_id", "status", "chief_complaint",
-    "history_notes", "examination_notes", "diagnosis", "clinical_notes",
+    "history_notes", "examination_notes", "diagnosis",
+    "diagnosis_code_system", "diagnosis_code", "diagnosis_code_display",
+    "clinical_notes",
     "follow_up_date", "follow_up_reason", "disposition", "disposition_notes",
     "started_at", "completed_at",
 )
@@ -268,6 +270,13 @@ def save_consultation_draft_service(
     history_notes=None,
     examination_notes=None,
     diagnosis=None,
+    # Phase 6 (migrations/0056_consultation_diagnosis_coding.sql):
+    # optional, alongside the existing free-text diagnosis above, never
+    # replacing it. No code is ever assigned by this service -- these
+    # are exactly what the caller passed, or NULL.
+    diagnosis_code_system=None,
+    diagnosis_code=None,
+    diagnosis_code_display=None,
     clinical_notes=None,
     follow_up_date=None,
     follow_up_reason=None,
@@ -298,15 +307,19 @@ def save_consultation_draft_service(
             f"""
             INSERT INTO consultations (
                 encounter_id, doctor_id, chief_complaint, history_notes,
-                examination_notes, diagnosis, clinical_notes,
+                examination_notes, diagnosis,
+                diagnosis_code_system, diagnosis_code, diagnosis_code_display,
+                clinical_notes,
                 follow_up_date, follow_up_reason, disposition, disposition_notes, created_by
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING {", ".join(_CONSULTATION_COLUMNS)}
             """,
             (
                 encounter_id, appointment["doctor_id"], chief_complaint,
-                history_notes, examination_notes, diagnosis, clinical_notes,
+                history_notes, examination_notes, diagnosis,
+                diagnosis_code_system, diagnosis_code, diagnosis_code_display,
+                clinical_notes,
                 follow_up_date, follow_up_reason, disposition, disposition_notes, staff_id,
             ),
         )
@@ -318,6 +331,9 @@ def save_consultation_draft_service(
                 history_notes = %s,
                 examination_notes = %s,
                 diagnosis = %s,
+                diagnosis_code_system = %s,
+                diagnosis_code = %s,
+                diagnosis_code_display = %s,
                 clinical_notes = %s,
                 follow_up_date = %s,
                 follow_up_reason = %s,
@@ -330,6 +346,7 @@ def save_consultation_draft_service(
             """,
             (
                 chief_complaint, history_notes, examination_notes, diagnosis,
+                diagnosis_code_system, diagnosis_code, diagnosis_code_display,
                 clinical_notes, follow_up_date, follow_up_reason,
                 disposition, disposition_notes, staff_id,
                 existing[0],
@@ -399,7 +416,9 @@ def complete_consultation_service(cur, appointment_id: int, *, staff_id: int):
 
 _AMENDMENT_COLUMNS = (
     "id", "consultation_id", "previous_chief_complaint", "previous_history_notes",
-    "previous_examination_notes", "previous_diagnosis", "previous_clinical_notes",
+    "previous_examination_notes", "previous_diagnosis",
+    "previous_diagnosis_code_system", "previous_diagnosis_code", "previous_diagnosis_code_display",
+    "previous_clinical_notes",
     "previous_follow_up_date", "previous_follow_up_reason",
     "previous_disposition", "previous_disposition_notes",
     "reason", "amended_by", "amended_at",
@@ -423,6 +442,9 @@ def amend_consultation_service(
     history_notes=None,
     examination_notes=None,
     diagnosis=None,
+    diagnosis_code_system=None,
+    diagnosis_code=None,
+    diagnosis_code_display=None,
     clinical_notes=None,
     follow_up_date=None,
     follow_up_reason=None,
@@ -440,7 +462,8 @@ def amend_consultation_service(
     cur.execute(
         """
         SELECT id, status, chief_complaint, history_notes, examination_notes,
-               diagnosis, clinical_notes, follow_up_date, follow_up_reason,
+               diagnosis, diagnosis_code_system, diagnosis_code, diagnosis_code_display,
+               clinical_notes, follow_up_date, follow_up_reason,
                disposition, disposition_notes
         FROM consultations WHERE encounter_id = %s FOR UPDATE
         """,
@@ -450,8 +473,9 @@ def amend_consultation_service(
     if row is None:
         raise EncounterNotFound()
 
-    (consultation_id, status, prev_cc, prev_hn, prev_en, prev_dx, prev_cn, prev_fd, prev_fr,
-     prev_disp, prev_disp_notes) = row
+    (consultation_id, status, prev_cc, prev_hn, prev_en, prev_dx,
+     prev_dx_sys, prev_dx_code, prev_dx_disp,
+     prev_cn, prev_fd, prev_fr, prev_disp, prev_disp_notes) = row
 
     if status != "COMPLETED":
         raise ConsultationNotAmendable()
@@ -463,14 +487,18 @@ def amend_consultation_service(
         """
         INSERT INTO consultation_amendments (
             consultation_id, previous_chief_complaint, previous_history_notes,
-            previous_examination_notes, previous_diagnosis, previous_clinical_notes,
+            previous_examination_notes, previous_diagnosis,
+            previous_diagnosis_code_system, previous_diagnosis_code, previous_diagnosis_code_display,
+            previous_clinical_notes,
             previous_follow_up_date, previous_follow_up_reason,
             previous_disposition, previous_disposition_notes, reason, amended_by
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
-            consultation_id, prev_cc, prev_hn, prev_en, prev_dx, prev_cn, prev_fd, prev_fr,
+            consultation_id, prev_cc, prev_hn, prev_en, prev_dx,
+            prev_dx_sys, prev_dx_code, prev_dx_disp,
+            prev_cn, prev_fd, prev_fr,
             prev_disp, prev_disp_notes, reason, staff_id,
         ),
     )
@@ -482,6 +510,9 @@ def amend_consultation_service(
             history_notes = %s,
             examination_notes = %s,
             diagnosis = %s,
+            diagnosis_code_system = %s,
+            diagnosis_code = %s,
+            diagnosis_code_display = %s,
             clinical_notes = %s,
             follow_up_date = %s,
             follow_up_reason = %s,
@@ -494,6 +525,7 @@ def amend_consultation_service(
         """,
         (
             chief_complaint, history_notes, examination_notes, diagnosis,
+            diagnosis_code_system, diagnosis_code, diagnosis_code_display,
             clinical_notes, follow_up_date, follow_up_reason,
             disposition, disposition_notes, staff_id, consultation_id,
         ),

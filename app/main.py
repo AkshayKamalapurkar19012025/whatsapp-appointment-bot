@@ -46,6 +46,7 @@ from app.api.notifications import router as notifications_router
 from app.api.billing_history import router as billing_history_router
 from app.api.waiting_time_analytics import router as waiting_time_analytics_router
 from app.api.module_licensing import router as module_licensing_router
+from app.api.fhir import router as fhir_router
 
 configure_logging()
 access_logger = logging.getLogger("app.access")
@@ -296,6 +297,12 @@ app.include_router(
     prefix="/api",
 )
 
+# OPD/HIMS interoperability master prompt Phase 8: deliberately mounted
+# with NO /api prefix -- fhir_router already carries its own /fhir/r4
+# prefix (app/api/fhir.py), and this interoperability boundary is meant
+# to be a visibly separate surface from the application's own internal
+# /api/... REST API the frontend calls, not another route under it.
+app.include_router(fhir_router)
 
 @app.get("/health")
 def health_check():

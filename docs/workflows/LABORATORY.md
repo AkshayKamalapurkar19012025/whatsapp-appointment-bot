@@ -54,6 +54,14 @@ A sample can be rejected (wrong tube, hemolyzed, insufficient quantity) after co
 - `lab_samples` — the specimen: `sample_code` (`LAB-NNNNNN`, generated), `sample_type` (free text — Blood/Urine/Serum/Plasma/Swab/…, no catalog table), `status` (COLLECTED/REJECTED), collection/rejection attribution. One row per collection attempt; history preserved, never overwritten.
 - `order_results` — unchanged generic parameter/value/unit/reference-range/abnormal/critical table, one row per result item.
 
+### Unit coding (OPD/HIMS interoperability master prompt Phase 7)
+
+**Status: Implemented.** `order_results.unit_system`/`.unit_code` apply to every `order_type` that records results, not just LAB — see `docs/workflows/ORDERS.md`'s "Unit coding" section for the full, actual behavior. Laboratory results are the primary real-world case (e.g. "g/dL", "mmol/L"), but the columns live on the shared `order_results` table, same as Radiology.
+
+### LOINC readiness (parameter/test coding) — explicitly NOT added
+
+Re-evaluated in Phase 7 and **deliberately not implemented**, distinct from the unit-coding decision above. A LOINC code identifies *what was measured* (the parameter/test itself, e.g. "Hemoglobin" or the order's own "CBC"), not the unit it's measured in. This repository has no stable, reusable test-definition/master concept to anchor such a code to — `orders.description` and `order_results.parameter` are both per-instance free text, typed fresh on every order (there is no lab-test catalog anywhere, confirmed by source search; see this doc's own "Target State"/"Gap" below and `docs/OPD_HIMS_STANDARDS_READINESS.md` §8, both independently reaching the same conclusion before and re-confirmed during Phase 7). Adding a code column directly to `orders`/`order_results` without a catalog behind it — unlike `consultations.diagnosis_code`, which is legitimately instance-level since a diagnosis is narrative by nature — would let the same real-world test get inconsistently coded across different orders, which is a worse outcome than staying uncoded. LOINC readiness for the test/parameter side stays deferred until a real test catalog exists to anchor codes to.
+
 ## 10. API requirements
 
 See `docs/workflows/ORDERS.md` for the shared order-creation/listing/cancellation endpoints. Lab-specific: `app/api/orders.py`'s `collect_sample`, `reject_sample`, `start_order_processing`, `verify_order_result`, `release_order_result` — all under `/appointments/{appointment_id}/orders/{order_id}/...`, all reject a PROCEDURE/SERVICE/EXTERNAL_REFERRAL order_id with 422.
@@ -84,7 +92,7 @@ Not idempotent by header/key (no `Idempotency-Key` mechanism exists anywhere in 
 
 ## 17. Tests
 
-`tests/test_lab_workflow.py` (21 tests: full lifecycle, sample collect/reject/recollect, invalid transitions, RBAC, concurrency, worklist visibility, billing/cancel interaction) — a dedicated file, unlike before this phase. `tests/test_orders.py`/`test_order_results.py` still cover order creation/cancellation/listing generically (now largely exercised via non-diagnostic `SERVICE`/`PROCEDURE` order types where a test's point was orthogonal to this lifecycle).
+`tests/test_lab_workflow.py` (21 tests: full lifecycle, sample collect/reject/recollect, invalid transitions, RBAC, concurrency, worklist visibility, billing/cancel interaction) — a dedicated file. `tests/test_orders.py`/`test_order_results.py` still cover order creation/cancellation/listing generically (now largely exercised via non-diagnostic `SERVICE`/`PROCEDURE` order types where a test's point was orthogonal to this lifecycle), and also include the interoperability master prompt's Phase 7 unit-coding scenarios — no code, full code pair, code without system rejected, system without code allowed, independent codes per parameter in the same batch.
 
 ## 18. Exit conditions
 

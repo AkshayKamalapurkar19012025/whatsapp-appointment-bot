@@ -71,7 +71,13 @@ _ORDER_COLUMNS = (
 )
 
 _RESULT_COLUMNS = (
-    "id", "order_id", "parameter", "result_value", "unit", "reference_range",
+    "id", "order_id", "parameter", "result_value", "unit",
+    # Phase 7 (migrations/0057_order_result_unit_coding.sql): optional,
+    # alongside the existing free-text unit above, never replacing it.
+    # No code is ever assigned by this service -- these are exactly
+    # what the caller passed, or NULL.
+    "unit_system", "unit_code",
+    "reference_range",
     "is_abnormal", "is_critical", "sequence", "recorded_by", "recorded_at",
 )
 
@@ -384,10 +390,10 @@ def cancel_order_service(cur, appointment_id: int, order_id: int, *, staff_id: i
 def record_order_result_service(cur, appointment_id: int, order_id: int, *, staff_id: int, items: list[dict]):
     """Records one batch of result items against an order. `items` are
     plain dicts with `parameter`/`result_value` required and
-    `unit`/`reference_range`/`is_abnormal`/`is_critical` optional --
-    already validated non-empty and shaped by the API layer's Pydantic
-    model (app/api/orders.py's OrderResultCreate), not re-validated
-    here.
+    `unit`/`unit_system`/`unit_code`/`reference_range`/`is_abnormal`/
+    `is_critical` optional -- already validated non-empty and shaped by
+    the API layer's Pydantic model (app/api/orders.py's
+    OrderResultCreate), not re-validated here.
 
     Not gated on appointment status -- see this module's own docstring
     for why.
@@ -425,14 +431,15 @@ def record_order_result_service(cur, appointment_id: int, order_id: int, *, staf
         cur.execute(
             """
             INSERT INTO order_results (
-                order_id, parameter, result_value, unit, reference_range,
-                is_abnormal, is_critical, sequence, recorded_by
+                order_id, parameter, result_value, unit, unit_system, unit_code,
+                reference_range, is_abnormal, is_critical, sequence, recorded_by
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 order_id, item["parameter"], item["result_value"],
-                item.get("unit"), item.get("reference_range"),
+                item.get("unit"), item.get("unit_system"), item.get("unit_code"),
+                item.get("reference_range"),
                 item.get("is_abnormal", False), item.get("is_critical", False),
                 sequence, staff_id,
             ),

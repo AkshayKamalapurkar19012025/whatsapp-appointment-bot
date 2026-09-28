@@ -39,6 +39,8 @@ from app.services.exceptions import (
     DuplicateStockBatch,
 )
 from app.services.module_services import is_module_available
+from app.services.allergy_check_service import check_allergy_conflicts
+from app.services.medication_services import require_active_medication
 
 import psycopg
 
@@ -51,12 +53,12 @@ _PRESCRIPTION_COLUMNS = (
 _ITEM_COLUMNS = (
     "id", "prescription_id", "medicine_name", "generic_name", "dosage",
     "route", "frequency", "duration", "quantity", "quantity_dispensed",
-    "food_instructions", "special_instructions", "created_at", "updated_at",
+    "food_instructions", "special_instructions", "medication_id", "created_at", "updated_at",
 )
 
 _STOCK_COLUMNS = (
     "id", "medicine_name", "batch_number", "expiry_date", "quantity_on_hand",
-    "unit_price", "active", "created_by", "created_at", "updated_at",
+    "unit_price", "active", "created_by", "medication_id", "created_at", "updated_at",
 )
 
 _DISPENSE_COLUMNS = (
@@ -192,6 +194,25 @@ def add_prescription_item_service(
     duration: str | None = None,
     food_instructions: str | None = None,
     special_instructions: str | None = None,
+    # Phase 5 (migrations/0054_medication_master.sql): optional link to
+    # the Medication Master, set when the clinician picked a search
+    # result rather than typing pure free text. medicine_name/
+    # generic_name stay required and are still what's actually stored/
+    # displayed -- see docs/OPD_HIMS_STANDARDS_READINESS.md S17's
+    # "prefer a backward-compatible representation" guidance. Validated
+    # active (MedicationInactive) so a deactivated medication can't be
+    # newly prescribed against, even if a stale frontend still offers it.
+    medication_id: int | None = None,
+    # P0 clinical safety (see app/services/allergy_check_service.py):
+    # None on the clinician's first attempt to add this line. If that
+    # attempt finds a conflict, the item is deliberately NOT inserted --
+    # the caller (app/api/pharmacy.py) surfaces the conflict as a
+    # warning instead, and the clinician resubmits this same call with
+    # "continue" (insert anyway) or "cancel" (don't insert) once they've
+    # decided. A resubmission with no remaining conflict (e.g. the
+    # allergy was resolved in between) inserts normally either way --
+    # there's nothing left to override.
+    allergy_decision: str | None = None,
 ):
     if not is_module_available(cur, hospital_id, "PHARMACY"):
         raise ModuleUnavailable("PHARMACY")
@@ -204,21 +225,57 @@ def add_prescription_item_service(
     if ensured["appointment_status"] != "CHECKED_IN":
         raise EncounterClosed()
 
+    medication = require_active_medication(cur, medication_id) if medication_id is not None else None
+
+    cur.execute("SELECT patient_id FROM appointments WHERE id = %s", (appointment_id,))
+    (patient_id,) = cur.fetchone()
+
+    # Re-run on every attempt, including a "continue"/"cancel"
+    # resubmission -- allergy data could change between the warning and
+    # this call, and the authoritative check belongs as close to the
+    # actual INSERT as possible, not cached from the first attempt.
+    conflicts = check_allergy_conflicts(cur, patient_id, medicine_name, generic_name, medication=medication)
+
+    # "cancel" always means "don't add this medicine" -- honored
+    # unconditionally, even if a recheck no longer finds a conflict
+    # (e.g. the allergy was resolved in between), since it's an explicit
+    # decision the clinician already made.
+    if allergy_decision == "cancel":
+        return {
+            "prescription": _full_prescription_dict(cur, ensured["id"]),
+            "allergy_warning": None,
+            "outcome": "cancelled",
+        }
+
+    if conflicts and allergy_decision is None:
+        return {
+            "prescription": _full_prescription_dict(cur, ensured["id"]),
+            "allergy_warning": {"conflicts": conflicts},
+            "outcome": "warning_shown",
+        }
+
     cur.execute(
         """
         INSERT INTO prescription_items (
             prescription_id, medicine_name, generic_name, dosage, route,
-            frequency, duration, quantity, food_instructions, special_instructions
+            frequency, duration, quantity, food_instructions, special_instructions,
+            medication_id
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             ensured["id"], medicine_name, generic_name, dosage, route,
             frequency, duration, quantity, food_instructions, special_instructions,
+            medication_id,
         ),
     )
 
-    return _full_prescription_dict(cur, ensured["id"])
+    return {
+        "prescription": _full_prescription_dict(cur, ensured["id"]),
+        "allergy_warning": None,
+        "outcome": "overridden" if conflicts else "added",
+        "overridden_conflicts": conflicts if conflicts else None,
+    }
 
 
 def remove_prescription_item_service(cur, appointment_id: int, item_id: int, *, staff_id: int):
@@ -345,8 +402,22 @@ def list_pharmacy_queue_service(cur):
     return queue
 
 
-def list_pharmacy_stock_service(cur, medicine_name: str | None = None):
-    if medicine_name:
+def list_pharmacy_stock_service(cur, medicine_name: str | None = None, medication_id: int | None = None):
+    # Phase 5: medication_id, when given, is the reliable lookup (used
+    # by PharmacyPanel.tsx's dispense screen for an item that already
+    # has one) -- exact match, not fuzzy text. medicine_name stays the
+    # fallback for stock batches with no medication_id yet, or for the
+    # free-text stock search box, exactly as before this phase.
+    if medication_id is not None:
+        cur.execute(
+            f"""
+            SELECT {", ".join(_STOCK_COLUMNS)} FROM pharmacy_stock
+            WHERE active AND medication_id = %s
+            ORDER BY expiry_date
+            """,
+            (medication_id,),
+        )
+    elif medicine_name:
         cur.execute(
             f"""
             SELECT {", ".join(_STOCK_COLUMNS)} FROM pharmacy_stock
@@ -371,17 +442,23 @@ def create_pharmacy_stock_service(
     expiry_date,
     quantity_on_hand: int,
     unit_price=0,
+    # Phase 5: same optional, validated-active link as prescription
+    # items -- see add_prescription_item_service's own comment.
+    medication_id: int | None = None,
 ):
+    if medication_id is not None:
+        require_active_medication(cur, medication_id)
+
     try:
         cur.execute(
             f"""
             INSERT INTO pharmacy_stock (
-                medicine_name, batch_number, expiry_date, quantity_on_hand, unit_price, created_by
+                medicine_name, batch_number, expiry_date, quantity_on_hand, unit_price, created_by, medication_id
             )
-            VALUES (%s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING {", ".join(_STOCK_COLUMNS)}
             """,
-            (medicine_name, batch_number, expiry_date, quantity_on_hand, unit_price, staff_id),
+            (medicine_name, batch_number, expiry_date, quantity_on_hand, unit_price, staff_id, medication_id),
         )
     except psycopg.errors.UniqueViolation:
         raise DuplicateStockBatch()
@@ -404,7 +481,7 @@ def record_dispense_service(
 
     cur.execute(
         """
-        SELECT id, prescription_id, medicine_name, quantity, quantity_dispensed
+        SELECT id, prescription_id, medicine_name, quantity, quantity_dispensed, medication_id
         FROM prescription_items
         WHERE id = %s
         FOR UPDATE
@@ -415,7 +492,7 @@ def record_dispense_service(
     if row is None:
         raise PrescriptionItemNotFound()
 
-    item_id, prescription_id, medicine_name, item_quantity, quantity_dispensed = row
+    item_id, prescription_id, medicine_name, item_quantity, quantity_dispensed, item_medication_id = row
 
     cur.execute("SELECT status FROM prescriptions WHERE id = %s", (prescription_id,))
     (prescription_status,) = cur.fetchone()
@@ -430,16 +507,30 @@ def record_dispense_service(
 
     if pharmacy_stock_id is not None:
         cur.execute(
-            "SELECT id, medicine_name, quantity_on_hand, unit_price FROM pharmacy_stock WHERE id = %s FOR UPDATE",
+            """
+            SELECT id, medicine_name, quantity_on_hand, unit_price, medication_id
+            FROM pharmacy_stock WHERE id = %s FOR UPDATE
+            """,
             (pharmacy_stock_id,),
         )
         stock_row = cur.fetchone()
         if stock_row is None:
             raise PharmacyStockNotFound()
 
-        stock_id, stock_medicine_name, quantity_on_hand, stock_unit_price = stock_row
+        stock_id, stock_medicine_name, quantity_on_hand, stock_unit_price, stock_medication_id = stock_row
 
-        if stock_medicine_name.strip().lower() != medicine_name.strip().lower():
+        # Phase 5: a shared, non-NULL medication_id is the reliable
+        # match (same canonical medication, regardless of how each side's
+        # free-text medicine_name happens to be spelled). Falls back to
+        # the pre-existing exact-text check when either side has no
+        # medication_id yet -- unchanged behavior for anything not yet
+        # linked to the Medication Master.
+        same_medication = (
+            item_medication_id is not None
+            and stock_medication_id is not None
+            and item_medication_id == stock_medication_id
+        )
+        if not same_medication and stock_medicine_name.strip().lower() != medicine_name.strip().lower():
             raise MedicineMismatch()
 
         if quantity_on_hand < quantity:

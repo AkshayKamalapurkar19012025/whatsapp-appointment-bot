@@ -1,0 +1,12 @@
+-- Reconciling Phase 5's new medications table
+-- (migrations/0054_medication_master.sql) with tests/test_hospital_
+-- tenant_coverage.py's coverage check: medications is a standalone
+-- master table with no FK to any hospital-scoped entity at all
+-- (generic_name/brand_name/strength/dosage_form/default_route/active,
+-- created_by -> staff) -- same category as pharmacy_stock, which got
+-- its own hospital_id column for the identical reason
+-- (migrations/0037_pharmacy_stock_hospital_id.sql), not a derived-
+-- through-FK exemption. Two hospitals in a future multi-tenant
+-- deployment would keep genuinely separate medication catalogues, so
+-- this needs its own column too.
+ALTER TABLE medications ADD COLUMN hospital_id BIGINT NOT NULL DEFAULT 1 REFERENCES hospitals(id);

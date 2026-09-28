@@ -255,6 +255,107 @@ def test_save_consultation_rejects_invalid_disposition(client, db_connection):
     assert response.status_code == 422
 
 
+def test_save_consultation_with_no_diagnosis_code(client, db_connection):
+    """Case A (OPD/HIMS interoperability master prompt Phase 6): a
+    diagnosis with no code at all is the ordinary, unchanged case."""
+    ctx = _checked_in_context(client, db_connection, "Dr. Dx Code None")
+    response = client.put(
+        f"/api/appointments/{ctx['appointment']['id']}/consultation",
+        json={"chief_complaint": "Fatigue", "diagnosis": "Anemia"},
+        headers=ctx["admin_headers"],
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["diagnosis"] == "Anemia"
+    assert body["diagnosis_code_system"] is None
+    assert body["diagnosis_code"] is None
+    assert body["diagnosis_code_display"] is None
+
+
+def test_save_consultation_with_diagnosis_code(client, db_connection):
+    """Case B: diagnosis text plus a full, structurally valid code
+    triple. Phase 6 never invents or validates the code's real-world
+    meaning -- this is exactly what the caller supplied."""
+    ctx = _checked_in_context(client, db_connection, "Dr. Dx Code Full")
+    response = client.put(
+        f"/api/appointments/{ctx['appointment']['id']}/consultation",
+        json={
+            "chief_complaint": "Excessive thirst",
+            "diagnosis": "Type 2 diabetes mellitus",
+            "diagnosis_code_system": "ICD-10",
+            "diagnosis_code": "E11",
+            "diagnosis_code_display": "Type 2 diabetes mellitus",
+        },
+        headers=ctx["admin_headers"],
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["diagnosis_code_system"] == "ICD-10"
+    assert body["diagnosis_code"] == "E11"
+    assert body["diagnosis_code_display"] == "Type 2 diabetes mellitus"
+
+
+def test_save_consultation_rejects_code_without_system(client, db_connection):
+    """docs/OPD_HIMS_STANDARDS_READINESS.md S6's own structural rule:
+    a code without a system is meaningless -- rejected at the API layer
+    before it would even reach the DB's own CHECK constraint."""
+    ctx = _checked_in_context(client, db_connection, "Dr. Dx Code NoSystem")
+    response = client.put(
+        f"/api/appointments/{ctx['appointment']['id']}/consultation",
+        json={"chief_complaint": "Cough", "diagnosis": "Bronchitis", "diagnosis_code": "J20"},
+        headers=ctx["admin_headers"],
+    )
+    assert response.status_code == 422
+
+
+def test_save_consultation_allows_system_without_code(client, db_connection):
+    """No rule requires the reverse (system without a code yet) -- this
+    phase deliberately doesn't invent one that isn't there."""
+    ctx = _checked_in_context(client, db_connection, "Dr. Dx System Only")
+    response = client.put(
+        f"/api/appointments/{ctx['appointment']['id']}/consultation",
+        json={
+            "chief_complaint": "Joint pain",
+            "diagnosis": "Suspected rheumatoid arthritis",
+            "diagnosis_code_system": "SNOMED CT",
+        },
+        headers=ctx["admin_headers"],
+    )
+    assert response.status_code == 200
+    assert response.json()["diagnosis_code_system"] == "SNOMED CT"
+    assert response.json()["diagnosis_code"] is None
+
+
+def test_update_consultation_can_remove_diagnosis_code(client, db_connection):
+    """The full-form-save semantics already established for every other
+    consultation field (save_consultation_draft_service's own docstring)
+    apply here too: omitting the code fields on a later save clears
+    them, it doesn't leave the old ones in place."""
+    ctx = _checked_in_context(client, db_connection, "Dr. Dx Code Remove")
+    appointment_id = ctx["appointment"]["id"]
+
+    client.put(
+        f"/api/appointments/{appointment_id}/consultation",
+        json={
+            "chief_complaint": "Fatigue",
+            "diagnosis": "Anemia",
+            "diagnosis_code_system": "ICD-10",
+            "diagnosis_code": "D64.9",
+        },
+        headers=ctx["admin_headers"],
+    )
+
+    response = client.put(
+        f"/api/appointments/{appointment_id}/consultation",
+        json={"chief_complaint": "Fatigue", "diagnosis": "Anemia"},
+        headers=ctx["admin_headers"],
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["diagnosis_code_system"] is None
+    assert body["diagnosis_code"] is None
+
+
 def test_complete_consultation_requires_chief_complaint_and_diagnosis(client, db_connection):
     ctx = _checked_in_context(client, db_connection, "Dr. Consult Incomplete")
     appointment_id = ctx["appointment"]["id"]

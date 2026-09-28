@@ -55,6 +55,23 @@ Create order, Cancel order, Record result, Mark critical/abnormal.
 
 `orders`, `order_results`.
 
+### Unit coding (OPD/HIMS interoperability master prompt Phase 7)
+
+**Status: Implemented** (`migrations/0057_order_result_unit_coding.sql`), per `docs/OPD_HIMS_STANDARDS_READINESS.md` §9's design. `order_results.unit` (free text, e.g. "g/dL") stays exactly as it was — the field every existing API caller/UI/Patient-360-timeline already reads. Two new, purely optional columns sit alongside it, per result row (not per order — two parameters in the same panel, e.g. Hemoglobin and WBC, routinely need two different units, and applies to every `order_type`, not just LAB):
+
+- `unit_system` — free text naming the terminology `unit_code` came from (e.g. "UCUM"). Not an enum — no terminology system has been chosen for this codebase.
+- `unit_code` — the structured code itself, in `unit_system`'s terminology.
+
+No `unit_display` column — unlike `consultations.diagnosis_code_display` (Phase 6), the existing free-text `unit` a lab/tech already types already serves as its own display in virtually every real case, so a third column would just duplicate it.
+
+The only structural rule enforced (API-level 422 and a DB `CHECK`, both): `unit_code` requires `unit_system`. **No code is ever assigned automatically** — every result's coded-unit fields are `NULL` unless a caller explicitly supplies real values through the API; nothing in this codebase invents or looks up a UCUM code from the free-text unit.
+
+**Deliberately backend-only this phase, not exposed in `ConsultationWorkspace.tsx`'s or `LabRadiologyWorklistPanel.tsx`'s result-entry UI.** Same reasoning as diagnosis coding (`docs/workflows/CONSULTATION.md`): no terminology catalog exists for a technician to pick a UCUM code from, so a raw text-code input would just invite freehand, unverifiable codes. Fully exercised at the API/DB layer instead (`tests/test_order_results.py`), and visible end-to-end in Patient 360 (`app/services/patient_timeline_service.py`'s `_ORDER_RESULT_COLUMNS`).
+
+**Result/parameter coding (LOINC) is a separate question, explicitly not addressed by this change** — see `docs/workflows/LABORATORY.md`'s "LOINC readiness" section for why coding *what was measured* (vs. *what unit it's in*, covered here) was deliberately not built this phase.
+
+**Vitals were evaluated and explicitly excluded** — `vitals`' units are fixed by column naming (`weight_kg`, `temperature_celsius`), never stored as data, so there is no per-row `unit` field for a code to sit next to the way there is on `order_results`. `docs/OPD_HIMS_STANDARDS_READINESS.md` §9 sketches an application-level `VITALS_UNITS` constant mapping as a possible future step, but Phase 7 did not build it — a hardcoded dictionary of UCUM codes baked into application code is exactly what that phase's own instruction prohibits ("do not manually create a pseudo-UCUM dictionary"), even though the codes involved are real and unambiguous.
+
 ## 10. API requirements
 
 Order CRUD and result-recording endpoints under `app/api/orders.py`, scoped by `encounter_id`; the worklist reads across encounters filtered by `order_type`/`status`.
@@ -85,7 +102,7 @@ Result recording should not create duplicate `order_results` rows for the same o
 
 ## 17. Tests
 
-`tests/test_orders.py`, `test_order_results.py`.
+`tests/test_orders.py`, `test_order_results.py` (includes the Phase 7 unit-coding scenarios: no code, full code pair, code without system rejected, system without code allowed, independent codes per parameter within the same result batch).
 
 ## 18. Exit conditions
 
