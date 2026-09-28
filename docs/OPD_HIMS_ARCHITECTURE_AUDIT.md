@@ -373,3 +373,105 @@ These should be applied as small, factual edits to the named docs the next time 
 - `docs/ux/NAVIGATION.md` line 9 claims sidebar items are "further gated by permission/module-availability checks — e.g. Pharmacy only shows when the PHARMACY module is available." **Not currently true** for ADMIN/STAFF sessions — confirmed no such gating exists in `AdminApp.tsx`'s `menuItems` for Pharmacy/Packages/Lab Worklist (Gap #6 above).
 - `docs/DATABASE_P1_NOTES.md` describes the cross-path double-booking race as an open, undecided item ("Needs an explicit decision... not applied here"). **This is stale** — the fix was applied (unified advisory lock across both paths, migration `0003`'s exclusion constraint as backstop) and `tests/test_concurrency.py`'s own docstring documents the fix and the tests no longer being `xfail`. This doc should be marked historical/superseded, the way `ipd-service/schema/0001_baseline_ipd_schema.sql` already is.
 - `docs/OPD_HIMS_MASTER_SPEC_AUDIT.md`'s RBAC finding ("Role-based work is aspirational, not real") is superseded by `docs/product/PRODUCT_VISION.md`'s later correction and independently re-confirmed by this audit against current source and live-HTTP tests — no action needed since `PRODUCT_VISION.md` already documents the correction, but worth noting `MASTER_SPEC_AUDIT.md` itself was not retroactively annotated at that specific line.
+
+---
+
+## Addendum: Follow-up Verification
+
+This addendum responds to specific pushback on the audit above: the P0 label was asserted without proof of present-day harm, "safe to continue, with conditions" never named the conditions, most of the priority list leaned on an uncommitted IPD timeline, and citations from parallel research agents hadn't been independently re-opened. No code was changed to produce this addendum.
+
+### 1. P0 justification — revised, with present-day evidence (not an IPD-hypothetical)
+
+The original write-up justified the P0 mostly by appeal to future cost ("every future phase that touches money makes unification more expensive"). That's a real but weak argument on its own — a design smell isn't a P0 by itself. Re-verifying the actual billing/reporting code turned up something stronger: **the two ledgers already back two different, live, currently-shipped reporting screens, and the two screens disagree today, not hypothetically.**
+
+- `app/services/billing_history_service.py:55-86` (`list_invoices_service`) and `:140-167` (`list_payments_service`) — the queries backing the **Billing History** and **Payment History** screens (`BillingHistoryPanel.tsx`/`PaymentHistoryPanel.tsx`) — join only `invoices`/`charges`/`payments`/`encounters`/`patients`/`appointments` (the last only for the doctor's name). Confirmed directly: neither query references `appointments.payment_status`, `payment_amount`, or `invoice_line_items` anywhere. Every consultation fee collected through Ledger A is structurally invisible to these two screens.
+- `app/api/dashboard.py:155-291` (`get_billing_report`, the Dashboard's billing reconciliation view) — confirmed directly: every branch of this function queries `appointments.payment_status` (`WHERE payment_status = 'PAID'`, `WHERE a.payment_status IN ('UNPAID','FAILED')`, `WHERE payment_status = 'WAIVED'`, `WHERE payment_status = 'REFUNDED'`). It never touches `invoices`, `charges`, or `payments` at all.
+
+**Reproducible scenario, today, OPD-only, no IPD involved**: a cashier collects a ₹500 consultation fee at check-in (Ledger A: `appointments.payment_status` → `PAID`) and later, during the same visit, bills a ₹1,200 lab charge through the encounter invoice (Ledger B: `invoices`/`payments`). The Dashboard's "Billing Report" shows this visit's ₹500 as reconciled revenue and says nothing about the ₹1,200. The Billing History / Payment History screens show the ₹1,200 payment and say nothing about the ₹500. **No screen in the application shows this visit's true total of ₹1,700 collected, and no screen is wrong about what it does show — each is a correct but structurally partial view of the same visit's money.** A hospital administrator reconciling daily collections by adding up what the Dashboard's billing report says will silently undercount by the sum of every consultation fee collected that day; a hospital administrator using Payment History for the same purpose will silently undercount by the sum of every consultation fee for the opposite reason. This is present-day, OPD-only harm, not a consequence of IPD or insurance being built later.
+
+**Correction to the original framing**: the P0 label is upheld, but for this reason — two live reporting surfaces already produce disjoint, non-reconciling pictures of the same money — not for the originally-stated "will matter once IPD/insurance exists" reason. That original framing undersold the finding and is the fair target of the "IPD is doing the prioritizing" critique below. No failing automated test currently encodes this scenario (worth adding one as part of ADR-009's own work, not before).
+
+### 2. Conditions behind "safe to continue, with conditions" — made explicit and checkable
+
+"Safe to continue" means: OPD feature work, Phase 11 (Command Center KPIs), and Phase 7/13 follow-ons (catalog, printing) may proceed **unconditionally** — none of them reads or writes billing data in a new way, and none is affected by anything below. The conditions are specific to *which* phase is picked up next:
+
+| Condition | Checkable as | Owner decision needed |
+|---|---|---|
+| Before any phase that adds or redesigns a billing screen/panel | Does the phase touch `AppointmentBillingPanel.tsx`, `BillingPanel.tsx`, `BillingHistoryPanel.tsx`, or `PaymentHistoryPanel.tsx`, or add a new billing/reporting screen? | ADR-009 (ledger unification plan) must be decided first — see §6 below for why |
+| Before Internal Referral is scoped | Does the phase create a second encounter for an existing patient? | ADR-001/003 addendum (simultaneous-open-encounter policy) and ADR-008 (referral linkage model) must be decided first |
+| Before IPD is scoped at all | N/A — not currently planned, see §2 below | ADR-009, ADR-001/003, ADR-011 (Ward/Bed), ADR-014 (MAR) all need answers, but only when/if IPD is actually committed |
+| Before any insurance/TPA claims work | Does the phase add payer/policy/pre-auth/claim fields? | ADR-009 (a claim needs one canonical invoice to attach to) and ADR-011 (insurance master data) |
+
+Everything not listed above (Command Center KPIs, printing, catalog work, audit-log coverage extension, the `appointments.status` CHECK constraint) has no condition attached and can start immediately.
+
+### 3. Citation verification — re-opened directly, not re-trusted from the parallel agents
+
+| Claim | Verification method | Result |
+|---|---|---|
+| Ledger A payments invisible to Billing/Payment History | Read `billing_history_service.py` in full, confirmed no reference to `appointments.payment_status`/`payment_amount` in either query | **VERIFIED** (and strengthened — see §1) |
+| Dashboard billing report reads Ledger A only | Read `app/api/dashboard.py:155-291` directly (grep + inspection) | **VERIFIED** — new finding this pass, not in the original agent reports |
+| Cross-path double-booking race reproduced (19/20) and fixed via unified advisory lock + exclusion constraint | Read `migrations/0003_prevent_overlapping_bookings.sql` and `tests/test_concurrency.py`'s own docstring directly (done in an earlier turn of this same session, not delegated) | **VERIFIED** — the docstring itself documents "HISTORY... FIX APPLIED... all three tests below now assert the double-scheduling-free outcome directly (no xfail)" |
+| RBAC roles were genuinely non-functional before PR #114, genuinely functional after | Read `migrations/0031_rbac_decomposition.sql`'s own seed comment ("seeded now... but unused... until their own modules exist") and `migrations/0043_role_based_access.sql`'s header (documents exactly two blockers — a CHECK constraint rejecting any role but ADMIN/STAFF, and zero `role_permissions` rows — and how this migration fixes both) directly, plus confirmed `tests/test_role_based_access.py` contains the specific named tests (`test_account_can_be_created_with_every_seeded_role`, `test_pharmacist_role_can_manage_stock_staff_role_cannot`, six more) | **VERIFIED** |
+| No medication-administration (MAR) concept exists | Re-ran the grep myself: `grep -rni "administer" migrations/ app/services/ app/api/` (excluding "administrat[ion/or]" false positives) — zero hits | **VERIFIED** |
+| No constraint prevents simultaneous OPEN encounters per patient | Read `migrations/0028_encounters.sql`'s full `CREATE TABLE encounters` directly (no unique constraint beyond the primary key) and `migrations/0049_hardening_indexes.sql` (adds only plain, non-unique indexes on `patient_id`/`hospital_id`) | **VERIFIED**, with one correction: `encounters` also carries a `doctor_id` column not surfaced in the original write-up — an encounter is scoped to (patient, doctor), which matters for §4 below |
+
+No citation required correction. One gap in the original report's own diligence was found and is disclosed in §1: the dashboard-vs-history disjoint-ledger evidence existed in the code the whole time but wasn't surfaced by any of the five research agents or by me — it only came up under this follow-up's specific instruction to find present-day harm.
+
+### 4. Duplicate encounters — what's actually guarded, precisely
+
+`encounters` is scoped to **(patient_id, doctor_id)**, not patient alone (confirmed directly, migration `0028`, line 31). This changes the shape of the question:
+
+- **Same patient, same doctor, same/overlapping time slot, double-click or retry**: guarded, but incidentally — not by an idempotency key, by the *same* mechanism that prevents two different patients double-booking a slot: `pg_advisory_xact_lock(doctor_id)` plus the `EXCLUDE USING gist (doctor_id WITH =, slot WITH &&)` constraint (migration `0003`) block a second overlapping row for that doctor regardless of which patient submits it. A retried request for the identical doctor+time is rejected by the same protection, with the same friendly error path.
+- **Same patient, same doctor, same day, but a *different* time slot** (e.g., a retry that lands on the next available slot because the first attempt's slot filled in between) — **not guarded by anything**. No idempotency-key mechanism exists (confirmed earlier in this audit, Gap #16); nothing on the client or server deduplicates "this patient already has an appointment with this doctor today" before creating a second one. This is a real, currently-unguarded gap, though it requires a specific retry-with-slot-change sequence to trigger, not a bare double-click on an unchanged form.
+- **Same patient, different doctor/department, same day**: definitionally a *different* (patient, doctor) pair, so this is not a duplicate at all under the current model — it is two legitimate, independent encounters (e.g., Cardiology follow-up and Orthopedics consultation on the same day). Nothing should guard against this, and nothing does.
+
+**Answer to the specific question asked**: the system guards against the "double-click, identical slot" case as a side effect of its booking-concurrency protection, not as a deliberate encounter-deduplication feature. It does not guard against "same patient, same doctor, same day, different slot" at all. Neither gap is IPD-specific — both are exercisable in pure OPD usage today, which is why Gap #4 in the original report (multiple OPEN encounters) was correctly flagged as P1 rather than P0: it is a real, present, narrow gap, but it requires a specific retry sequence rather than ordinary use, unlike the billing-ledger finding in §1, which is triggered by the single most common OPD sequence (consultation fee + any lab/pharmacy charge on the same visit).
+
+### 5. Scope split — two rankings
+
+**IPD's actual status in this repository's own planning docs**: not committed, with no timing. `docs/implementation/PHASES.md`'s own words: *"IPD. No phase number assigned yet — deliberately, since scoping it prematurely risks exactly the 'implement future modules prematurely' anti-pattern CLAUDE.md names,"* and *"Emergency. Not scoped at all — no schema groundwork exists."* There is no roadmap document, ADR, or product doc in this repository asserting an IPD timeline. This is a fair challenge to the original report: it let the shape of a hypothetical IPD phase drive most of the priority list.
+
+**(a) If OPD is the committed scope for the next 6 months and IPD/Emergency remain unscoped:**
+
+| Rank | Item | Why it moves here |
+|---|---|---|
+| **P0** | Billing ledger disagreement (§1) | Present-day harm, OPD-only, no IPD required |
+| **P1** | Audit-log coverage (billing voids/refunds, consultation amendments) | Compliance-relevant regardless of IPD; cheap; independent of everything else |
+| **P1** | `appointments.status` missing DB CHECK constraint | Cheap, safe, closes the one status column without a DB backstop; independent of IPD |
+| **P2** | Frontend/backend module-gating mismatch (Gap #6) | Real, but cosmetic-only; backend already enforces it |
+| **P2** | Configuration-matrix test suite (Gap #17) | Still useful even with just three existing modules (Lab/Pharmacy/Packages); less urgent without a second module family to test against |
+| **P3** | Simultaneous-open-encounter policy (§4) | Real but narrow (requires a specific retry sequence); not urgent absent IPD |
+| **Drops off the list entirely** | Encounter-type widening (ADR-003), MAR (ADR-014), Ward/Bed/Insurance master data (ADR-011), Internal Referral (ADR-008) | All three exist only to serve IPD/Emergency/Referral, none of which is committed; deciding them now would be exactly the "designing against a hypothetical system" the pushback warned about |
+
+**(b) If IPD is committed with rough timing (e.g., "next 12 months"):**
+
+| Rank | Item | Why |
+|---|---|---|
+| **P0** | Billing ledger unification (ADR-009) | Same present-day harm as (a), now *also* the thing that must not be inherited twice by IPD billing |
+| **P0** | Encounter policy (ADR-001/003 addendum) | Now genuinely blocking — an admission must have a defined relationship to any open OPD encounter for the same patient |
+| **P1** | MAR model (ADR-014), Ward/Bed master data (ADR-011) | Now real, scoped work, not speculative |
+| **P1** | Internal Referral (ADR-008) | Worth deciding alongside encounter policy since both define "a second encounter for the same patient," even if Referral itself isn't IPD |
+| **P2** | Everything from list (a) that isn't superseded | Audit-log coverage, `appointments.status` CHECK, module-gating mismatch, config-matrix tests — unchanged, still worth doing, just no longer the top of the list |
+
+The practical recommendation: **decide (a) vs (b) first** — that single business decision (is IPD actually planned, roughly when) determines which of these two tables governs, and most of the disagreement in the pushback traces back to the original report not asking this question explicitly.
+
+### 6. Blocking decisions for the next phase
+
+Naming the next phase matters, since the answer changes completely depending on which one it is:
+
+- **If the next phase is Phase 11 (Command Center KPIs)**: zero ADRs block it. It reads existing `appointments`/dashboard data additively; nothing in this audit constrains it.
+- **If the next phase touches any billing screen** (`AppointmentBillingPanel.tsx`, `BillingPanel.tsx`, `BillingHistoryPanel.tsx`, `PaymentHistoryPanel.tsx`, or a new one): **ADR-009 blocks it.** Concretely: building or redesigning a billing UI before deciding the unification approach means building against a data model that's a known, upcoming moving target — the UI would need to be redone once Ledger A is folded into Ledger B (§9's five-step plan changes which endpoints/fields exist). **Recommended default**: decide ADR-009's five-step plan now (it's a sequencing and backfill decision, not a UI decision) and let it run in the background while other non-billing UI work proceeds in parallel — the two are not mutually exclusive, only "redesign the billing screens" and "decide how billing data is modeled" are ordered.
+- **If the next phase is Internal Referral**: **ADR-001/003 addendum and ADR-008 block it**, per §4 and §7's original reasoning — a referral creates a second (patient, doctor) encounter, and its linkage model can't be designed sensibly before the general "second encounter for this patient" policy is decided.
+- **On the specific "UI-9 billing workspace" reference**: this audit could not verify that citation — no document matching a numbered "UI-9" phase (or any separate UI/UX redesign audit) exists anywhere in this repository (confirmed by search at the start of the original audit; the task's own Level 3 source was not found in-repo either). If such a plan exists outside this repository, the principle above still applies regardless of its phase number: any UI phase that touches billing should be sequenced after the ADR-009 decision (not necessarily after its full implementation), not before, for the reason stated above.
+
+### 7. Doc drift found during this audit (consolidated)
+
+| Doc | Claim | Actual (source-verified) |
+|---|---|---|
+| `docs/OPD_HIMS_MASTER_SPEC_AUDIT.md` (PR #112) | "Role-based work is aspirational, not real" | False as of PR #114/migration `0043` — genuinely functional, HTTP-tested (§3 above) |
+| `docs/ux/NAVIGATION.md:9` | Sidebar items are gated by module availability (e.g. Pharmacy) | Not true for ADMIN/STAFF — no such gating exists in `AdminApp.tsx` |
+| `docs/DATABASE_P1_NOTES.md` item 4 | Cross-path double-booking race is an open, undecided item | Stale — fixed, confirmed by `test_concurrency.py`'s own "FIX APPLIED" docstring (§3 above) |
+| `docs/workflows/BILLING.md` §8 | Flags its own uncertainty ("TODO — VERIFY") over whether migration `0050`'s `DECLINED` status fully closes the "no pending/failed payment state" gap | Resolved, not a false claim — Ledger A has had `FAILED` since migration `0018`, Ledger B has `DECLINED` since `0050`, both support retry (verified by the billing research pass, re-confirmed by citation review) |
+| **This audit's own original draft** | Framed the billing-ledger P0 primarily as a future/IPD-driven risk | Understated — the two ledgers already back two disjoint, disagreeing live reports today (§1); this is the most significant correction in this addendum |
+
+No further verification passes are planned. Per the instruction accompanying this follow-up, this addendum stops here.
