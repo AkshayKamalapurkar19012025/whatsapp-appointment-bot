@@ -14,6 +14,7 @@ This document is the entry point. It states what exists today, in outline, and p
 - **OPD scheduling & booking**: doctor schedules with date ranges, one-off blocks, an availability engine shared across the REST API and the WhatsApp conversational flow, advisory-lock + DB exclusion-constraint concurrency protection.
 - **Walk-in registration, check-in, and queue/token**: real arrival timestamps, token issuance, a live per-doctor queue view.
 - **Encounter-centric clinical flow**: triage/vitals → consultation (with amendment workflow) → orders (lab/radiology/procedure/external-referral) → results → prescription → pharmacy dispensing (inventory/batch/expiry-aware) → billing (charges, packages, tax, discounts) → payment → receipt.
+- **Lab/Radiology diagnostic lifecycle** (migration `0054`): LAB orders go through real sample collection/rejection/recollection (`lab_samples`); both LAB and RADIOLOGY go through draft-result → verify (by a different staff account, ADMIN excepted) → release before a result counts as final, instead of completing the instant a value is entered. PROCEDURE/SERVICE/EXTERNAL_REFERRAL keep the original one-step lifecycle. See `docs/workflows/LABORATORY.md`/`docs/workflows/RADIOLOGY.md`.
 - **Visit Completion checklist**: a non-gating precondition summary shown before "Complete Visit" (see `docs/workflows/OPD_CHECKIN_QUEUE.md` and master spec section 43).
 - **Patient 360**: a cross-domain timeline (vitals/consultations/orders/results/prescriptions/billing) per patient, reached from Patients/search.
 - **Role-based access control**: `ADMIN`/`STAFF` plus differentiated `DOCTOR`/`NURSE`/`RECEPTIONIST`/`LAB_TECH`/`PHARMACIST`/`BILLING` roles, each with its own sidebar, landing screen, and gated capabilities (`AdminApp.tsx`'s `ROLE_LANDING_SECTION`, permission checks server-side via `require_permission()`).
@@ -26,12 +27,12 @@ This document is the entry point. It states what exists today, in outline, and p
 - **Printing**: token slip, prescription, itemized bill, lab/radiology requisition, payment receipt, appointment slip, and patient registration summary all have dedicated print layouts via one shared `.print-area`/`@media print` mechanism and the browser's native print/Save-as-PDF — see `docs/printing/DOCUMENT_MANAGEMENT.md`.
 - **API error envelope**: `{success, errorCode, message, details}` on every error response, centralized via `app/error_handling.py`, alongside the pre-existing `detail` field for backward compatibility.
 - **Pagination**: `GET /api/patients/admin` and comparable admin list endpoints now take `limit`/`offset`.
-- **Testing**: 683 backend test functions; frontend build/typecheck/lint clean as a standing bar.
+- **Testing**: 712 backend test functions (683 before Phase 7's diagnostic-lifecycle tests were added); frontend build/typecheck/lint clean as a standing bar.
 
 ### What does not exist yet
 
 - **IPD (in-patient) and Emergency workflows.** `encounters.encounter_type` is reserved for `'OPD'` only today (CHECK constraint). A separate `ipd-service/schema/0001_baseline_ipd_schema.sql` sketch exists but is explicitly marked **SUPERSEDED** — the decision was to extend the OPD app's own database when IPD is built, not stand up a separate service. See `docs/architecture/OPD_TO_IPD.md` and `docs/decisions/ADR-004-OPD-IPD-CONTINUITY.md`.
-- **Lab/Radiology-specific result workflows.** Results use one generic `ORDERED → IN_PROGRESS → COMPLETED` pipeline and one generic parameter/value/unit/reference-range table for every order type — not the richer, type-specific pipelines (sample collection, verify-then-release, radiology Findings/Impression structure) a dedicated Lab/Radiology module would eventually want.
+- **A lab/radiology test or study catalog.** Order descriptions remain staff-typed free text — sample collection and verify/release now exist (see above), but there is still no searchable catalog to select a test/study from. Image/attachment storage or PACS/DICOM/RIS integration for Radiology also remain entirely unbuilt — explicitly out of scope, not attempted.
 - **A shared `PatientHeader` / `StatusBadge` / `Timeline` component.** Patient context is shown on every relevant screen, but each screen currently reimplements the markup locally rather than sharing one component.
 - **i18n / multilingual documents.** Every string is hard-coded English.
 - **Insurance/TPA claim workflow** beyond the `invoices.bill_type` classification (payer/policy/pre-auth/co-pay/claim fields are explicitly deferred, not faked).

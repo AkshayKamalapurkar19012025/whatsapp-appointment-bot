@@ -298,7 +298,64 @@ class OrderNotCancellable(ServiceError):
 class OrderNotResultable(ServiceError):
     """Raised by record_order_result_service when the order is already
     COMPLETED (results already recorded -- no amendment workflow yet,
-    see migrations/0031's header) or CANCELLED (nothing to result)."""
+    see migrations/0031's header) or CANCELLED (nothing to result), or
+    (LAB/RADIOLOGY only, migrations/0054) already RESULT_ENTERED/
+    VERIFIED -- once a result is drafted, correcting it goes through
+    reject-and-recollect + a fresh result batch, not a silent second
+    /result call."""
+    pass
+
+
+class DiagnosticActionNotSupportedForOrderType(ServiceError):
+    """Raised when a LAB/RADIOLOGY-only action (collect sample, reject
+    sample, start processing, verify, release) is attempted against a
+    PROCEDURE/SERVICE/EXTERNAL_REFERRAL order -- those three order
+    types have no sample/verification/release concept and keep the
+    original one-step ORDERED -> COMPLETED/CANCELLED lifecycle
+    unchanged (migrations/0054's header)."""
+    pass
+
+
+class OrderNotCollectible(ServiceError):
+    """Raised by record_sample_collection_service when the order isn't
+    currently ORDERED -- collection only makes sense before processing
+    has started (a fresh recollection after rejection first goes back
+    to ORDERED via reject_sample_service)."""
+    pass
+
+
+class SampleNotFound(ServiceError):
+    pass
+
+
+class SampleAlreadyRejected(ServiceError):
+    pass
+
+
+class OrderNotStartable(ServiceError):
+    """Raised by mark_order_in_progress_service when the order isn't
+    currently ORDERED or COLLECTED."""
+    pass
+
+
+class OrderNotVerifiable(ServiceError):
+    """Raised by verify_order_result_service when the order isn't
+    currently RESULT_ENTERED."""
+    pass
+
+
+class SameStaffCannotVerifyOwnResult(ServiceError):
+    """Raised by verify_order_result_service: the staff account that
+    drafted the result cannot also verify it, unless that account is
+    ADMIN -- see migrations/0054's own comment on why this is the real
+    safeguard this app can honestly enforce without a distinct
+    pathologist/senior-lab-tech role to gate on instead."""
+    pass
+
+
+class OrderNotReleasable(ServiceError):
+    """Raised by release_order_result_service when the order isn't
+    currently VERIFIED."""
     pass
 
 

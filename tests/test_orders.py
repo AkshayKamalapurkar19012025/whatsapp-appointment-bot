@@ -318,13 +318,21 @@ def test_worklist_defaults_to_open_orders_across_patients(client, db_connection)
 
 
 def test_worklist_excludes_completed_and_cancelled_by_default(client, db_connection):
+    # SERVICE, not LAB, for the "completed" order -- as of migrations/
+    # 0054_diagnostic_workflow.sql a LAB order's /result call moves it
+    # to RESULT_ENTERED (still open work awaiting verification, so it
+    # deliberately stays in the default worklist -- see
+    # tests/test_lab_workflow.py::test_default_worklist_includes_
+    # unverified_and_unreleased_lab_orders), not COMPLETED. SERVICE
+    # orders are unaffected by Phase 7 and still complete in one call,
+    # which is what this test's "excludes COMPLETED" half needs.
     ctx = _checked_in_context(client, db_connection, "Dr. Worklist Excl")
     appointment_id = ctx["appointment"]["id"]
     admin_headers = ctx["admin_headers"]
 
     completed = client.post(
         f"/api/appointments/{appointment_id}/orders",
-        json={"order_type": "LAB", "description": "Will be completed"},
+        json={"order_type": "SERVICE", "description": "Will be completed"},
         headers=admin_headers,
     ).json()
     client.post(

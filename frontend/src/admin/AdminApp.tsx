@@ -283,7 +283,15 @@ export default function AdminApp() {
   const canCreatePrescriptions = canWriteConsultation
   // order.result (migrations/0051) -- ADMIN/STAFF/DOCTOR keep the same
   // access as every other clinical-documentation gate; LAB_TECH is the
-  // new addition, the Lab Worklist's whole reason to exist.
+  // new addition, the Lab Worklist's whole reason to exist. Phase 7's
+  // order.collect/order.verify/order.release (migrations/0054) share
+  // this exact same grant set (no distinct phlebotomist/pathologist
+  // role exists), so this one boolean also gates
+  // LabRadiologyWorklistPanel's collect/start-processing/verify/
+  // release actions, not just result entry -- the real safeguard for
+  // verification (a result's own enterer can't also verify it) is
+  // enforced server-side per-record, not by a narrower role split
+  // here.
   const canRecordOrderResults = isAdmin || staff.role === 'STAFF' || staff.role === 'DOCTOR' || staff.role === 'LAB_TECH'
   const visibleSections = ROLE_VISIBLE_SECTIONS[staff.role]
 

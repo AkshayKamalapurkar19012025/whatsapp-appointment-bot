@@ -1309,7 +1309,20 @@ export default function ConsultationWorkspace({
                   </thead>
                   <tbody>
                     {orders.map((order) => {
-                      const actionable = order.status === 'ORDERED' || order.status === 'IN_PROGRESS'
+                      // Phase 7 (migrations/0054_diagnostic_workflow.sql)
+                      // widened the set of "still open" statuses for
+                      // LAB/RADIOLOGY (COLLECTED/RESULT_ENTERED/
+                      // VERIFIED) -- Cancel stays available through all
+                      // of them, matching cancel_order_service's own
+                      // guard (blocked only once COMPLETED/CANCELLED).
+                      // Record result stays reachable pre-verification
+                      // (ORDERED/COLLECTED/IN_PROGRESS) -- verify/
+                      // release themselves are the Lab/Radiology
+                      // Worklist's job, not this doctor-scoped tab's.
+                      const cancellable = order.status !== 'COMPLETED' && order.status !== 'CANCELLED'
+                      const resultable =
+                        order.status === 'ORDERED' || order.status === 'COLLECTED' || order.status === 'IN_PROGRESS'
+                      const actionable = cancellable || resultable
                       return (
                         <Fragment key={order.id}>
                           <tr>
@@ -1369,23 +1382,27 @@ export default function ConsultationWorkspace({
                                   </div>
                                 ) : resultTargetId === order.id ? null : (
                                   <div className="queue-row-actions">
-                                    <button
-                                      type="button"
-                                      className="btn btn-sm"
-                                      onClick={() => startRecordResult(order.id)}
-                                    >
-                                      Record result
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="btn-danger btn btn-sm"
-                                      onClick={() => {
-                                        setCancelTargetId(order.id)
-                                        setCancelReason('')
-                                      }}
-                                    >
-                                      Cancel
-                                    </button>
+                                    {resultable && (
+                                      <button
+                                        type="button"
+                                        className="btn btn-sm"
+                                        onClick={() => startRecordResult(order.id)}
+                                      >
+                                        Record result
+                                      </button>
+                                    )}
+                                    {cancellable && (
+                                      <button
+                                        type="button"
+                                        className="btn-danger btn btn-sm"
+                                        onClick={() => {
+                                          setCancelTargetId(order.id)
+                                          setCancelReason('')
+                                        }}
+                                      >
+                                        Cancel
+                                      </button>
+                                    )}
                                   </div>
                                 ))}
                             </td>

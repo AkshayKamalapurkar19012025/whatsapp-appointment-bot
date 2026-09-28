@@ -74,9 +74,16 @@ def _create_order(client, appointment_id, admin_headers, **overrides):
 
 
 def test_recording_a_result_completes_the_order(client, db_connection):
+    # SERVICE, not LAB -- as of migrations/0054_diagnostic_workflow.sql,
+    # LAB/RADIOLOGY move to RESULT_ENTERED (awaiting verify + release)
+    # instead of completing immediately; see
+    # tests/test_lab_workflow.py::test_full_lab_lifecycle_ends_completed
+    # for that flow. PROCEDURE/SERVICE/EXTERNAL_REFERRAL are unaffected
+    # by Phase 7 and still complete in one call, which is what this
+    # test actually exercises.
     ctx = _checked_in_context(client, db_connection, "Dr. Results Lab")
     appointment_id = ctx["appointment"]["id"]
-    order = _create_order(client, appointment_id, ctx["admin_headers"])
+    order = _create_order(client, appointment_id, ctx["admin_headers"], order_type="SERVICE")
 
     response = client.post(
         f"/api/appointments/{appointment_id}/orders/{order['id']}/result",
@@ -250,10 +257,13 @@ def test_recording_a_result_requires_at_least_one_item(client, db_connection):
 def test_recording_a_result_is_not_gated_on_checked_in(client, db_connection):
     # Deliberately different from vitals/consultation/order-creation: a
     # result routinely arrives after the visit itself has closed out.
+    # SERVICE, not LAB -- this test is about the checked-in gate, which
+    # is orthogonal to the LAB/RADIOLOGY verify+release lifecycle (see
+    # test_recording_a_result_completes_the_order's own comment above).
     ctx = _checked_in_context(client, db_connection, "Dr. Results AfterComplete")
     appointment_id = ctx["appointment"]["id"]
     admin_headers = ctx["admin_headers"]
-    order = _create_order(client, appointment_id, admin_headers)
+    order = _create_order(client, appointment_id, admin_headers, order_type="SERVICE")
 
     client.post(f"/api/appointments/{appointment_id}/complete", headers=admin_headers)
 

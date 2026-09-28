@@ -141,6 +141,18 @@ def _full_patient_journey(client, db_connection, doctor_name: str) -> dict:
     ).json()
     result = order_after_result["results"][0]
 
+    # A LAB order's result now lands at RESULT_ENTERED, not COMPLETED --
+    # a real lifecycle change introduced by the (separately-landed)
+    # diagnostic-workflow migration this branch was rebased/merged onto
+    # (migrations/0054_diagnostic_workflow.sql). Drive it through the
+    # same verify -> release steps that lifecycle actually requires so
+    # this fixture's LAB order reaches the real terminal COMPLETED
+    # state the ServiceRequest tests below expect -- an ADMIN account
+    # may verify its own entered result (order_services.py's own
+    # documented ADMIN override), so no second staff account is needed.
+    client.post(f"/api/appointments/{appointment['id']}/orders/{order['id']}/verify", headers=admin_headers)
+    client.post(f"/api/appointments/{appointment['id']}/orders/{order['id']}/release", headers=admin_headers)
+
     medication = client.post(
         "/api/pharmacy/medications",
         json={"generic_name": f"{doctor_name} Metformin", "brand_name": "Glyciphage", "strength": "500mg"},

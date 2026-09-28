@@ -848,7 +848,28 @@ export interface ConsultationAmendment {
 // referral, not a separate interface per type.
 export type OrderType = 'LAB' | 'RADIOLOGY' | 'PROCEDURE' | 'SERVICE' | 'EXTERNAL_REFERRAL'
 export type OrderPriority = 'ROUTINE' | 'URGENT' | 'STAT'
-export type OrderStatus = 'ORDERED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED'
+// COLLECTED/RESULT_ENTERED/VERIFIED (Phase 7, migrations/
+// 0054_diagnostic_workflow.sql) only ever apply to LAB/RADIOLOGY --
+// every other order_type still only ever reaches ORDERED/IN_PROGRESS/
+// COMPLETED/CANCELLED, exactly as before this phase.
+export type OrderStatus = 'ORDERED' | 'COLLECTED' | 'IN_PROGRESS' | 'RESULT_ENTERED' | 'VERIFIED' | 'COMPLETED' | 'CANCELLED'
+
+// One specimen-collection attempt for a LAB order (migrations/0054).
+// A REJECTED row is never deleted -- see LabRadiologyWorklistPanel.tsx
+// for the collect/reject/recollect flow this shape drives.
+export interface LabSample {
+  id: number
+  order_id: number
+  sample_code: string
+  sample_type: string
+  status: 'COLLECTED' | 'REJECTED'
+  notes: string | null
+  collected_by: number
+  collected_at: string
+  rejected_by: number | null
+  rejected_reason: string | null
+  rejected_at: string | null
+}
 
 // OPD/HIMS master spec Phase 7 (migrations/0031_order_results.sql).
 // One shape for both a lab panel's individual values (parameter e.g.
@@ -908,7 +929,16 @@ export interface ClinicalOrder {
   ordered_at: string
   completed_at: string | null
   cancelled_at: string | null
+  // Phase 7 (migrations/0054_diagnostic_workflow.sql) -- null for
+  // every order_type except LAB/RADIOLOGY once each step happens.
+  result_entered_by: number | null
+  result_entered_at: string | null
+  verified_by: number | null
+  verified_at: string | null
+  released_by: number | null
+  released_at: string | null
   results: OrderResultItem[]
+  samples: LabSample[]
 }
 
 // One row of GET /orders/worklist -- the cross-patient Lab/Radiology
@@ -933,6 +963,16 @@ export interface WorklistOrder {
   patient_id: number
   patient_name: string
   uhid: string
+  // Phase 7 (migrations/0054_diagnostic_workflow.sql) -- the most
+  // recent collection attempt only (a rejected-then-recollected
+  // order's earlier attempts aren't shown here; see ClinicalOrder.
+  // samples for the full history via the per-appointment endpoint).
+  // Null until a LAB order's first collect-sample call; always null
+  // for every other order_type.
+  latest_sample_id: number | null
+  latest_sample_code: string | null
+  latest_sample_type: string | null
+  latest_sample_status: 'COLLECTED' | 'REJECTED' | null
 }
 
 export interface OrderInput {

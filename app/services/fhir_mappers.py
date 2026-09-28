@@ -690,6 +690,19 @@ def practitioner_role_to_fhir(doctor: dict) -> dict:
 _SERVICE_REQUEST_STATUS_MAP = {
     "ORDERED": "active",
     "IN_PROGRESS": "active",
+    # COLLECTED/RESULT_ENTERED/VERIFIED (the LAB/RADIOLOGY-only
+    # intermediate states added alongside this Phase 9 work by a
+    # separately-landed diagnostic-workflow migration, merged in here)
+    # are all still "the order is in progress, not yet released" --
+    # the same bucket IN_PROGRESS already maps to. FHIR's ServiceRequest.
+    # status has no dedicated "sample collected"/"result drafted"/
+    # "verified" concept to map each one to individually, and inventing
+    # a distinct status per internal sub-stage would assert a FHIR-side
+    # distinction the spec's own value set doesn't offer. Only COMPLETED
+    # (the released, doctor-visible result) and CANCELLED are distinct.
+    "COLLECTED": "active",
+    "RESULT_ENTERED": "active",
+    "VERIFIED": "active",
     "COMPLETED": "completed",
     "CANCELLED": "revoked",
 }
