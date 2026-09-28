@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from app.api.staff_auth import get_current_staff, require_permission
 from app.db.connection import get_connection
 from app.services import exceptions as svc_exc
+from app.services.audit_log import record_audit_log
 from app.services.billing_services import (
     get_invoice_summary_service,
     update_invoice_terms_service,
@@ -203,7 +204,14 @@ def void_charge(
 def record_payment(
     appointment_id: int,
     body: PaymentCreate,
-    staff: dict = Depends(get_current_staff),
+    # Phase 10 (Billing Ledger Unification): was bare get_current_staff --
+    # the one billing-mutating action in this router with no permission
+    # gate (bill.add_charge/void/void_payment/refund_payment all already
+    # had one). Not a narrowing: bill.record_payment (migrations/0058) is
+    # granted to every existing role, preserving exactly who could reach
+    # this endpoint before -- it makes that access explicit and
+    # revocable instead of implicit, it doesn't restrict it.
+    staff: dict = Depends(require_permission("bill.record_payment")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -220,6 +228,16 @@ def record_payment(
                     status_code=409,
                     detail="A payment with this transaction ID has already been recorded",
                 )
+
+            record_audit_log(
+                cur,
+                hospital_id=staff["hospital_id"],
+                staff_id=staff["id"],
+                action="bill.record_payment",
+                resource_type="invoice",
+                resource_id=result["id"],
+                details={"amount": body.amount, "method": body.method, "status": body.status},
+            )
     return result
 
 
