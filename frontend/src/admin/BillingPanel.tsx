@@ -81,6 +81,10 @@ export default function BillingPanel() {
               <div className="stat-body">
                 <span className="stat-value">₹{report.total_collected}</span>
                 <span className="stat-label">Collected (last {report.window_days} days)</span>
+                <span className="muted">
+                  ₹{report.ledger_breakdown.consultation_fee} consultation + ₹
+                  {report.ledger_breakdown.itemized_billing} itemized
+                </span>
               </div>
             </div>
             <div className="stat-card">
@@ -169,19 +173,25 @@ export default function BillingPanel() {
                 <tr>
                   <th>Patient</th>
                   <th>Doctor</th>
-                  <th>Status</th>
-                  <th>Checked in</th>
+                  <th>Source</th>
+                  <th>Status / balance</th>
+                  <th>Since</th>
                 </tr>
               </thead>
               <tbody>
                 {report.outstanding_unpaid.map((row) => (
-                  <tr key={row.appointment_id}>
+                  <tr key={`${row.source}-${row.appointment_id ?? row.encounter_id}`}>
                     <td>{row.patient_name}</td>
                     <td>{row.doctor_name}</td>
+                    <td>{row.source === 'CONSULTATION_FEE' ? 'Consultation fee' : 'Itemized bill'}</td>
                     <td>
-                      <span className={`pill payment-${row.payment_status.toLowerCase()}`}>{row.payment_status}</span>
+                      {row.payment_status ? (
+                        <span className={`pill payment-${row.payment_status.toLowerCase()}`}>{row.payment_status}</span>
+                      ) : (
+                        <>₹{row.balance}</>
+                      )}
                     </td>
-                    <td className="muted">{row.visited_at ? formatDateTime(row.visited_at) : '—'}</td>
+                    <td className="muted">{row.since ? formatDateTime(row.since) : '—'}</td>
                   </tr>
                 ))}
               </tbody>

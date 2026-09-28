@@ -275,6 +275,30 @@ def _billing_not_started(cur, hospital_id: int) -> list[dict]:
 
 
 def _payment_pending(cur, hospital_id: int) -> list[dict]:
+    """
+    Combines both billing ledgers into one "who still owes money" signal
+    (Phase 9, Option C -- unify the read side, leave both write paths
+    untouched; see docs/architecture/BILLING_LEDGERS.md). Before this,
+    this function only ever looked at the newer invoices/charges/
+    payments model (Ledger B) -- a visit whose *only* outstanding money
+    was its consultation fee (Ledger A: appointments.payment_status)
+    never had an `invoices` row at all (nothing but a lab/radiology/
+    pharmacy/package charge ever creates one), so it could sit
+    COMPLETED with payment_status IN ('UNPAID', 'FAILED') forever
+    without appearing here -- or anywhere else once its appointment
+    left CHECKED_IN, since GET /dashboard/billing's own
+    `outstanding_unpaid` query is scoped to CHECKED_IN rows only. That
+    is a real, reachable state: mark_completed_service (app/services/
+    appointment_services.py) never checks payment_status, only that the
+    appointment is CHECKED_IN.
+
+    Two independent queries, summed per encounter_id in Python (not a
+    SQL UNION/JOIN across the two ledgers -- they have materially
+    different shapes: Ledger A's tax/discount model doesn't exist,
+    Ledger B's doesn't have a consultation_fee column), so the same
+    encounter can owe money on one ledger, the other, or both without
+    being reported twice.
+    """
     cur.execute(
         """
         SELECT inv.encounter_id, e.patient_id, p.name, e.closed_at,
@@ -300,30 +324,81 @@ def _payment_pending(cur, hospital_id: int) -> list[dict]:
         """,
         (hospital_id, _PAYMENT_PENDING_MINUTES),
     )
-    results = []
+    by_encounter: dict[int, dict] = {}
     for encounter_id, patient_id, patient_name, closed_at, age, gross, discount, tax_rate, paid in cur.fetchall():
         taxable = max(gross - discount, 0)
         net_amount = taxable + round(taxable * tax_rate / 100, 2)
         balance = net_amount - paid
         if balance <= 0:
             continue
-        age = int(age)
+        by_encounter[encounter_id] = {
+            "patient_id": patient_id,
+            "patient_name": patient_name,
+            "closed_at": closed_at,
+            "age_minutes": int(age),
+            "balance": float(balance),
+        }
+
+    # Ledger A: the consultation fee itself, still UNPAID/FAILED on a
+    # visit whose encounter has already closed. amount owed is the same
+    # formula get_invoice_service (app/services/appointment_services.py)
+    # uses: consultation_fee + any ad-hoc invoice_line_items -- a FAILED
+    # attempt still owes the full amount (nothing was actually
+    # collected, see record_payment_service's own docstring).
+    cur.execute(
+        """
+        SELECT a.encounter_id, e.patient_id, p.name, e.closed_at,
+               EXTRACT(EPOCH FROM (NOW() - e.closed_at)) / 60,
+               dat.consultation_fee + COALESCE(li.total, 0) AS amount
+        FROM appointments a
+        JOIN encounters e ON e.id = a.encounter_id
+        JOIN patients p ON p.id = e.patient_id
+        JOIN doctor_appointment_types dat
+            ON dat.doctor_id = a.doctor_id AND dat.appointment_type_id = a.appointment_type_id
+        LEFT JOIN LATERAL (
+            SELECT SUM(amount) AS total FROM invoice_line_items WHERE appointment_id = a.id
+        ) li ON TRUE
+        WHERE e.hospital_id = %s
+          AND e.status = 'CLOSED'
+          AND a.payment_status IN ('UNPAID', 'FAILED')
+          AND e.closed_at <= NOW() - (%s || ' minutes')::INTERVAL
+        """,
+        (hospital_id, _PAYMENT_PENDING_MINUTES),
+    )
+    for encounter_id, patient_id, patient_name, closed_at, age, amount in cur.fetchall():
+        if amount <= 0:
+            continue
+        existing = by_encounter.get(encounter_id)
+        if existing is None:
+            by_encounter[encounter_id] = {
+                "patient_id": patient_id,
+                "patient_name": patient_name,
+                "closed_at": closed_at,
+                "age_minutes": int(age),
+                "balance": float(amount),
+            }
+        else:
+            existing["balance"] += float(amount)
+
+    results = []
+    for encounter_id, row in by_encounter.items():
         results.append(
             {
                 "type": "PAYMENT_PENDING",
-                "patient_id": patient_id,
-                "patient_name": patient_name,
+                "patient_id": row["patient_id"],
+                "patient_name": row["patient_name"],
                 "encounter_id": encounter_id,
-                "detected_at": closed_at.isoformat(),
-                "age_minutes": age,
-                "balance": float(balance),
-                "what_happened": f"{patient_name}'s visit ended {age} minutes ago with ₹{balance:.2f} still unpaid.",
+                "detected_at": row["closed_at"].isoformat(),
+                "age_minutes": row["age_minutes"],
+                "balance": row["balance"],
+                "what_happened": f"{row['patient_name']}'s visit ended {row['age_minutes']} minutes ago with ₹{row['balance']:.2f} still unpaid.",
                 "why_it_matters": "Outstanding balance left unsettled after the visit is closed.",
                 "who_should_act": "Billing / Front desk",
                 "recommended_action": "Collect the remaining payment or follow up with the patient.",
                 "current_status": "OPEN",
             }
         )
+    results.sort(key=lambda r: r["detected_at"])
     return results
 
 
