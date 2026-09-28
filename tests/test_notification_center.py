@@ -67,6 +67,11 @@ def test_checkin_emits_patient_arrived_notification(client, db_connection):
 
 
 def test_lab_result_emits_notification_radiology_and_lab_only(client, db_connection):
+    # As of migrations/0054_diagnostic_workflow.sql (Phase 7, resumed):
+    # a LAB/RADIOLOGY order only reaches COMPLETED (and only then does
+    # this notification fire) via verify + release -- recording the
+    # result alone now leaves it RESULT_ENTERED. PROCEDURE still
+    # completes, and still never notifies, in one call, unchanged.
     ctx = _pending_appointment(client, db_connection, "Dr. Notif Lab")
     appointment_id = ctx["appointment"]["id"]
     headers = ctx["admin_headers"]
@@ -93,6 +98,14 @@ def test_lab_result_emits_notification_radiology_and_lab_only(client, db_connect
         json={"items": [{"parameter": "Outcome", "result_value": "Done"}]},
         headers=headers,
     )
+
+    # No notification yet -- the LAB result is only drafted, not
+    # released.
+    notifications = client.get("/api/notifications", headers=headers).json()
+    assert [n["kind"] for n in notifications["items"]].count("LAB_RESULT_AVAILABLE") == 0
+
+    client.post(f"/api/appointments/{appointment_id}/orders/{lab_order['id']}/verify", headers=headers)
+    client.post(f"/api/appointments/{appointment_id}/orders/{lab_order['id']}/release", headers=headers)
 
     notifications = client.get("/api/notifications", headers=headers).json()
     kinds = [n["kind"] for n in notifications["items"]]

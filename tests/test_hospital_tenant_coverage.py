@@ -58,6 +58,7 @@ EXEMPT_TABLES = {
     "invoices",
     # Child of one of the above:
     "order_results",         # -> orders
+    "lab_samples",           # -> orders (migrations/0054_diagnostic_workflow.sql)
     "prescription_items",    # -> prescriptions
     "pharmacy_dispense_records",  # -> prescription_items -> prescriptions
     "charges",                # -> invoices

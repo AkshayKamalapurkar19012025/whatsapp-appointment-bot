@@ -221,7 +221,12 @@ def test_lab_tech_can_record_order_result_receptionist_cannot(client, db_connect
         headers=lab_tech_headers,
     )
     assert allowed.status_code == 200
-    assert allowed.json()["status"] == "COMPLETED"
+    # RESULT_ENTERED, not COMPLETED, as of migrations/
+    # 0054_diagnostic_workflow.sql -- see tests/test_lab_workflow.py
+    # for the full verify+release path to COMPLETED. This test's own
+    # point (LAB_TECH can call this endpoint, RECEPTIONIST can't) is
+    # unaffected by which status the call now lands on.
+    assert allowed.json()["status"] == "RESULT_ENTERED"
 
 
 def test_doctor_can_create_and_prescribe_prescription_billing_cannot(client, db_connection):

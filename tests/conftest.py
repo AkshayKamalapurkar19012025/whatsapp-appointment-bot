@@ -60,6 +60,7 @@ APP_TABLES = [
     "prescription_items",
     "prescriptions",
     "order_results",
+    "lab_samples",
     "orders",
     "vitals",
     "consultations",
