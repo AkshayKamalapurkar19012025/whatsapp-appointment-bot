@@ -107,6 +107,12 @@ Nothing about this phase requires a destructive rollback. The legacy `appointmen
 
 Only once: every reader is confirmed migrated (grep-verified — done in this phase for every reader that existed at the time), the coexistence period has run long enough to build confidence, and a decision is made on whether to also unify the legacy `/payment` endpoint away entirely or keep it as a permanent alias. Not attempted in this phase.
 
+## Post-launch correction: a separately-developed mirror collided with this write path
+
+A different, uncoordinated session (`migrations/0058_consultation_fee_ledger_mirror.sql`, "ADR-009 Option B" in `docs/OPD_HIMS_ARCHITECTURE_AUDIT.md`) independently built a dual-write mirror on top of what it believed was still the pre-Phase-10 write path (`appointments.payment_status` written directly). Once this phase's direct write superseded that premise, the mirror's own call sites in `record_payment_service`/`waive_consultation_fee_service`/`record_refund_service` were left calling a now-redundant second write path — both writes hit `charges_one_consultation_per_invoice` for the same invoice, and every real payment crashed with an uncaught `UniqueViolation`.
+
+Found via this repo's own CI-red protocol (a test failure reproduced identically on a clean `main` checkout, unrelated to the change being verified at the time) and fixed by removing the mirror entirely — `record_consultation_fee_payment_service` (this phase's own write path) already does everything the mirror existed for, and Payment History/Billing History (the screens the mirror targeted) were already reading Ledger B natively per the table above, with zero dependency on the mirror's tagged rows. `app/api/dashboard.py`'s and `app/services/exception_engine.py`'s Ledger B exclusion filters, written against the mirror's `legacy_appointment_id` tag, were also corrected to exclude what this phase's `consultation_payment_id` linkage actually covers instead — see `docs/architecture/BILLING_LEDGERS.md`'s Gap section and `docs/OPD_HIMS_ARCHITECTURE_AUDIT.md`'s Sixth Addendum for the full incident record. `migrations/0058_consultation_fee_ledger_mirror.sql` itself was left in place (already applied); its columns are simply unused now.
+
 ## Out of scope for this phase
 
 Internal referral, IPD, Emergency, `encounter_type` widening, Insurance/TPA/corporate billing, ABDM/FHIR/SMART/OAuth2/HL7/DICOM/IHE/NHCX, and any UI redesign — all explicitly deferred per the architecture audit's own ADRs and this phase's hard scope boundary.

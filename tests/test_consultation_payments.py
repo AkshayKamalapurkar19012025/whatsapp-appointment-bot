@@ -234,6 +234,58 @@ def test_record_payment_rejected_when_not_checked_in(client, db_connection):
     assert response.status_code == 409
 
 
+def test_record_payment_accepted_when_visit_already_completed(client, db_connection):
+    # The CHECKED_IN-payment gap: mark_completed_service never checks
+    # payment_status, so a visit can close with its consultation fee
+    # still UNPAID -- previously that fee could never be collected
+    # again (_lock_appointment_for_payment only accepted CHECKED_IN).
+    # Fixed: it now also accepts COMPLETED. No queue token is issued in
+    # this case -- there's no queue left to admit this patient to.
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Pay Completed",
+        department_name="Pay Completed Dept", appointment_type_name="Pay Completed Type",
+    )
+    _set_fee(client, admin_headers, seeded, 500)
+    patient = _create_patient(client, admin_headers, "Pay Completed Patient", "+919600000022")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+    complete_resp = client.post(f"/api/appointments/{appointment_id}/complete", headers=admin_headers)
+    assert complete_resp.status_code == 200
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/payment",
+        json={"method": "CASH", "outcome": "PAID"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["payment_status"] == "PAID"
+    assert float(body["payment_amount"]) == 500.0
+    assert body["token_number"] is None
+    assert body["token_just_issued"] is False
+
+
+def test_record_payment_still_rejected_before_check_in_even_after_this_fix(client, db_connection):
+    # Regression guard: only CHECKED_IN and COMPLETED are allowed now --
+    # PENDING/CONFIRMED (never checked in at all) must still 409.
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Pay NeverCheckedIn",
+        department_name="Pay NeverCheckedIn Dept", appointment_type_name="Pay NeverCheckedIn Type",
+    )
+    patient = _create_patient(client, admin_headers, "Pay NeverCheckedIn Patient", "+919600000023")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    # Still CONFIRMED -- never checked in, never completed.
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/payment",
+        json={"method": "CASH", "outcome": "PAID"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 409
+
+
 def test_record_payment_conflict_when_already_waived(client, db_connection):
     admin_headers = create_admin_and_get_headers(db_connection)
     seeded = seed_basic_doctor(
@@ -381,6 +433,41 @@ def test_waive_rejected_at_four_days(client, db_connection):
         headers=admin_headers,
     )
     assert response.status_code == 409
+
+
+def test_waive_accepted_when_visit_already_completed(client, db_connection):
+    # Same CHECKED_IN-payment gap fix as record_payment above, applied
+    # to the waiver sibling: a stale UNPAID fee on a COMPLETED visit
+    # can now be waived too, still subject to the same 3-day-revisit
+    # eligibility rule. No queue token issued.
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Waive Completed",
+        department_name="Waive Completed Dept", appointment_type_name="Waive Completed Type",
+    )
+    patient = _create_patient(client, admin_headers, "Waive Completed Patient", "+919600000024")
+
+    prior_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"], hour=9)
+    _check_in(client, admin_headers, prior_id)
+    client.post(f"/api/appointments/{prior_id}/complete", headers=admin_headers)
+    _set_visited_at_days_ago(db_connection, prior_id, 2)
+
+    current_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"], hour=10)
+    _check_in(client, admin_headers, current_id)
+    _set_visited_at_days_ago(db_connection, current_id, 0)
+    complete_resp = client.post(f"/api/appointments/{current_id}/complete", headers=admin_headers)
+    assert complete_resp.status_code == 200
+
+    response = client.post(
+        f"/api/appointments/{current_id}/waive-payment",
+        json={"reason": "Waived after the fact"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["payment_status"] == "WAIVED"
+    assert body["token_number"] is None
+    assert body["token_just_issued"] is False
 
 
 def test_waive_rejected_when_prior_visit_is_different_doctor(client, db_connection):
@@ -596,6 +683,30 @@ def test_settle_free_visit_rejected_when_not_checked_in(client, db_connection):
 
     response = client.post(f"/api/appointments/{appointment_id}/settle-free-visit", headers=admin_headers)
     assert response.status_code == 409
+
+
+def test_settle_free_visit_accepted_when_visit_already_completed(client, db_connection):
+    # Same CHECKED_IN-payment gap fix, applied to the third sibling: a
+    # stale UNPAID $0-fee visit that was never settled at check-in time
+    # can still be formally closed out afterward. No queue token
+    # issued.
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Free Completed",
+        department_name="Free Completed Dept", appointment_type_name="Free Completed Type",
+    )
+    patient = _create_patient(client, admin_headers, "Free Completed Patient", "+919600000025")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+    complete_resp = client.post(f"/api/appointments/{appointment_id}/complete", headers=admin_headers)
+    assert complete_resp.status_code == 200
+
+    response = client.post(f"/api/appointments/{appointment_id}/settle-free-visit", headers=admin_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["payment_status"] == "WAIVED"
+    assert body["token_number"] is None
+    assert body["token_just_issued"] is False
 
 
 def test_settle_free_visit_requires_authentication(client, db_connection):

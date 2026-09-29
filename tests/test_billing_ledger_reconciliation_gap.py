@@ -6,34 +6,43 @@ ledger -- "Ledger A", migrations/0018-0026) plus one lab charge billed
 and paid through the encounter invoice (the invoices/charges/payments
 model -- "Ledger B", migration 0033_billing_invoices.sql).
 
-Two independent, differently-mechanized fixes both had to land, and
-both are exercised here together:
+Two independent fixes both had to land, and both are exercised here
+together:
 
   * GET /api/billing/payments (app/api/billing_history.py,
-    app/services/billing_history_service.py:113) -- fixed by ADR-009
-    Option B (docs/OPD_HIMS_ARCHITECTURE_AUDIT.md,
-    migrations/0058_consultation_fee_ledger_mirror.sql): every Ledger A
-    payment event is mirrored into a Ledger B charge/payment
-    (app/services/billing_services.py's mirror_consultation_*
-    functions), so this Ledger-B-only endpoint now sees the
-    consultation fee too, alongside the lab charge it already saw.
-  * GET /api/dashboard/billing (app/api/dashboard.py) -- fixed
-    independently by Phase 9, Option C (docs/architecture/
-    BILLING_LEDGERS.md, merged to main as PR #120 before this branch's
-    Option B work landed): this endpoint combines Ledger A and Ledger B
-    at *read* time, querying each ledger's own original columns
-    directly rather than relying on Option B's mirror.
+    app/services/billing_history_service.py:113) -- sees the
+    consultation fee because Phase 10 (docs/architecture/
+    BILLING_LEDGER_UNIFICATION.md, migrations/0058_billing_ledger_
+    unification.sql) writes it directly into Ledger B
+    (billing_services.record_consultation_fee_payment_service), linked
+    via appointments.consultation_payment_id -- this Ledger-B-only,
+    already-ledger-2-native endpoint needed no code change at all to
+    see it, alongside the lab charge it already saw.
+  * GET /api/dashboard/billing (app/api/dashboard.py) -- fixed by
+    Phase 9, Option C (docs/architecture/BILLING_LEDGERS.md, merged to
+    main as PR #120): this endpoint combines Ledger A and Ledger B at
+    *read* time, with Ledger A's own side reading the shared
+    EFFECTIVE_PAYMENT_*_SQL fragment (which follows consultation_
+    payment_id to the real payment Phase 10 wrote).
 
-The two fixes were built independently and collided as a real merge
-conflict when this branch caught up with main (both touched
-get_billing_report). Reconciling them required patching Option C's
-Ledger B queries (_ledger_b_collections_by_method/_by_doctor/
-_outstanding) to exclude legacy_appointment_id IS NOT NULL rows --
-without that exclusion, a mirrored consultation-fee payment would be
-counted once via Ledger A's own direct query and again via Option C's
-unfiltered Ledger B query, inflating this visit's total to 2000 instead
-of 1700. This test's dashboard assertion exists specifically to catch
-that regression, not just to prove the original gap is closed.
+A separately-developed, uncoordinated dual-write mirror ("ADR-009
+Option B" in docs/OPD_HIMS_ARCHITECTURE_AUDIT.md, migrations/0058_
+consultation_fee_ledger_mirror.sql -- a different 0058 file from Phase
+10's) once also existed alongside Phase 10's direct write, and this
+endpoint's Ledger B exclusion filters (_ledger_b_collections_by_method/
+_by_doctor/_outstanding) were written against that mirror's
+legacy_appointment_id tag. The mirror collided with Phase 10's own
+write on charges_one_consultation_per_invoice and crashed every real
+payment, so it was removed -- and the exclusion filters were corrected
+to match what Phase 10 actually links (consultation_payment_id /
+source_type = 'CONSULTATION') instead of the removed mirror's tag,
+since without a correct exclusion this same double-counting bug
+resurfaces (the real, unmirrored payment counted once via the
+EFFECTIVE_PAYMENT_*_SQL fragment and again via an unfiltered Ledger B
+query, inflating this visit's total to 2000 instead of 1700). This
+test's dashboard assertion exists specifically to catch that class of
+regression, not just to prove the original gap is closed -- see
+docs/OPD_HIMS_ARCHITECTURE_AUDIT.md's Sixth Addendum for the incident.
 """
 
 from datetime import date, timedelta
