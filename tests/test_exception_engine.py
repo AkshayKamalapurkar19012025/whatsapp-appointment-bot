@@ -326,22 +326,24 @@ def test_payment_pending_exception_from_unpaid_consultation_fee_alone(client, db
     assert len(matches) == 1
     assert matches[0]["balance"] == 600.0
 
-    # NOTE: unlike the Ledger-B case above, there is currently no way to
-    # resolve this through the normal payment endpoint once the visit
-    # is COMPLETED -- record_payment_service (app/services/
-    # appointment_services.py's _lock_appointment_for_payment) requires
-    # status == 'CHECKED_IN'. This is a real, separate gap this phase's
-    # audit surfaced as a side effect of making the exception visible at
-    # all (it was previously invisible AND uncollectable; it is now
-    # visible and still uncollectable) -- a write-path change, out of
-    # scope for this phase's read-only ledger merge. See
-    # docs/architecture/BILLING_LEDGERS.md.
-    unresolvable = client.post(
+    # _lock_appointment_for_payment now accepts COMPLETED as well as
+    # CHECKED_IN (docs/architecture/BILLING_LEDGERS.md's "still
+    # genuinely unstarted" gap, now closed): the exact scenario above --
+    # visible via this exception but previously uncollectable -- is now
+    # payable through the normal endpoint, and doing so resolves the
+    # exception. No queue token is issued: the visit is already over.
+    late_payment = client.post(
         f"/api/appointments/{appointment_id}/payment",
         json={"method": "CASH", "outcome": "PAID"},
         headers=ctx["admin_headers"],
     )
-    assert unresolvable.status_code == 409
+    assert late_payment.status_code == 200
+    assert late_payment.json()["payment_status"] == "PAID"
+    assert late_payment.json()["token_just_issued"] is False
+
+    response_after = client.get("/api/exceptions", headers=ctx["admin_headers"])
+    matches_after = [e for e in response_after.json()["exceptions"] if e["type"] == "PAYMENT_PENDING"]
+    assert matches_after == []
 
 
 def test_payment_pending_exception_combines_both_ledgers_into_one_row(client, db_connection):

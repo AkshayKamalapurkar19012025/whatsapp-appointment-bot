@@ -805,9 +805,9 @@ def test_refund_requires_nonempty_reason(client, db_connection):
 
 def test_refund_allowed_after_visit_completed(client, db_connection):
     """A refund is a back-office correction, not a queue-entry action --
-    unlike payment/waive/settle-free-visit, it must still work once the
-    appointment has moved past CHECKED_IN to COMPLETED (e.g. a billing
-    error noticed after the patient has already seen the doctor)."""
+    it must still work once the appointment has moved past CHECKED_IN
+    to COMPLETED (e.g. a billing error noticed after the patient has
+    already seen the doctor)."""
     admin_headers = create_admin_and_get_headers(db_connection)
     seeded = seed_basic_doctor(
         client, db_connection, doctor_name="Dr. Refund AfterComplete",
@@ -829,6 +829,96 @@ def test_refund_allowed_after_visit_completed(client, db_connection):
     )
     assert response.status_code == 200
     assert response.json()["payment_status"] == "REFUNDED"
+
+
+def test_record_payment_allowed_after_visit_completed(client, db_connection):
+    """A visit closed with its consultation fee still unpaid
+    (mark_completed_service never checks payment_status) is now
+    collectible, not just visible via the Dashboard/Exception Engine's
+    combined-ledger view -- see docs/architecture/BILLING_LEDGERS.md.
+    No queue token is issued: the visit is already over."""
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Pay AfterComplete",
+        department_name="Pay AfterComplete Dept", appointment_type_name="Pay AfterComplete Type",
+    )
+    _set_fee(client, admin_headers, seeded, 500)
+    patient = _create_patient(client, admin_headers, "Pay AfterComplete Patient", "+919600000041")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+
+    completed = client.post(f"/api/appointments/{appointment_id}/complete", headers=admin_headers)
+    assert completed.status_code == 200
+
+    response = client.post(
+        f"/api/appointments/{appointment_id}/payment",
+        json={"method": "CASH", "outcome": "PAID"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["payment_status"] == "PAID"
+    assert float(body["payment_amount"]) == 500.0
+    assert body["token_number"] is None
+    assert body["token_just_issued"] is False
+
+
+def test_waive_allowed_after_visit_completed(client, db_connection):
+    """Same COMPLETED-appointment widening as record_payment_service,
+    for a waiver -- still gated on the usual 3-day-revisit eligibility,
+    just no longer gated on the current appointment still being
+    CHECKED_IN."""
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Waive AfterComplete",
+        department_name="Waive AfterComplete Dept", appointment_type_name="Waive AfterComplete Type",
+    )
+    patient = _create_patient(client, admin_headers, "Waive AfterComplete Patient", "+919600000042")
+
+    prior_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"], hour=9)
+    _check_in(client, admin_headers, prior_id)
+    client.post(f"/api/appointments/{prior_id}/complete", headers=admin_headers)
+    _set_visited_at_days_ago(db_connection, prior_id, 2)
+
+    current_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"], hour=10)
+    _check_in(client, admin_headers, current_id)
+    _set_visited_at_days_ago(db_connection, current_id, 0)
+    completed = client.post(f"/api/appointments/{current_id}/complete", headers=admin_headers)
+    assert completed.status_code == 200
+
+    response = client.post(
+        f"/api/appointments/{current_id}/waive-payment",
+        json={"reason": "Follow-up waiver, noticed after visit closed"},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["payment_status"] == "WAIVED"
+    assert body["token_number"] is None
+    assert body["token_just_issued"] is False
+
+
+def test_settle_free_visit_allowed_after_visit_completed(client, db_connection):
+    """Same COMPLETED-appointment widening as record_payment_service,
+    for settling a genuinely free ($0) visit."""
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Free AfterComplete",
+        department_name="Free AfterComplete Dept", appointment_type_name="Free AfterComplete Type",
+    )
+    patient = _create_patient(client, admin_headers, "Free AfterComplete Patient", "+919600000043")
+    appointment_id = _create_confirmed_started_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    _check_in(client, admin_headers, appointment_id)
+
+    completed = client.post(f"/api/appointments/{appointment_id}/complete", headers=admin_headers)
+    assert completed.status_code == 200
+
+    response = client.post(f"/api/appointments/{appointment_id}/settle-free-visit", headers=admin_headers)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["payment_status"] == "WAIVED"
+    assert body["token_number"] is None
+    assert body["token_just_issued"] is False
 
 
 def test_refund_requires_authentication(client, db_connection):
