@@ -65,7 +65,10 @@ export default function PaymentHistoryPanel() {
       <div className="admin-content-header">
         <div>
           <h2>Payment History</h2>
-          <p className="muted">Every payment across every invoice, newest first.</p>
+          <p className="muted">
+            Every invoice payment, newest first — lab, radiology, pharmacy, packages, other billed
+            charges, and consultation fees collected at check-in.
+          </p>
         </div>
       </div>
 

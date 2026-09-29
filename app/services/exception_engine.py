@@ -298,6 +298,19 @@ def _payment_pending(cur, hospital_id: int) -> list[dict]:
     Ledger B's doesn't have a consultation_fee column), so the same
     encounter can owe money on one ledger, the other, or both without
     being reported twice.
+
+    The first query's gross/paid LATERAL joins exclude
+    legacy_appointment_id IS NOT NULL rows -- ADR-009 Option B's
+    mirrored consultation-fee charges/payments (migrations/0058,
+    docs/OPD_HIMS_ARCHITECTURE_AUDIT.md). Without this exclusion, a
+    consultation fee mirrored as FAILED (an ACTIVE mirrored charge with
+    no matching COMPLETED payment, since a declined attempt mirrors to
+    a DECLINED payment row) would show up as outstanding *here* via the
+    generic invoice-balance calculation, on top of the second query
+    below already reporting the exact same unpaid fee directly from
+    Ledger A -- the same double-counting risk
+    app/api/dashboard.py:get_billing_report's own Ledger B helpers
+    guard against, for the same reason.
     """
     cur.execute(
         """
@@ -311,11 +324,11 @@ def _payment_pending(cur, hospital_id: int) -> list[dict]:
         JOIN patients p ON p.id = e.patient_id
         LEFT JOIN LATERAL (
             SELECT SUM(amount) AS amount FROM charges
-            WHERE invoice_id = inv.id AND status = 'ACTIVE'
+            WHERE invoice_id = inv.id AND status = 'ACTIVE' AND legacy_appointment_id IS NULL
         ) gross ON TRUE
         LEFT JOIN LATERAL (
             SELECT SUM(amount - refunded_amount) AS amount FROM payments
-            WHERE invoice_id = inv.id AND status = 'COMPLETED'
+            WHERE invoice_id = inv.id AND status = 'COMPLETED' AND legacy_appointment_id IS NULL
         ) paid ON TRUE
         WHERE e.hospital_id = %s
           AND inv.status = 'OPEN'

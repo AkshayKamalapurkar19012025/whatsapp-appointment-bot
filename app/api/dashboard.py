@@ -165,12 +165,23 @@ def _ledger_b_collections_by_method(cur, window_start):
     package payments, which Ledger A's own collections query never
     included (it only ever charges the consultation fee). Net of
     per-payment refunds (payments.refunded_amount), same convention
-    get_invoice_summary_service already uses."""
+    get_invoice_summary_service already uses.
+
+    Excludes legacy_appointment_id IS NOT NULL rows -- those are
+    ADR-009 Option B's mirrored consultation-fee payments
+    (migrations/0058), not genuine itemized billing. This function
+    exists to combine with Ledger A's own direct query below; counting
+    a mirrored row here too would double the consultation fee into
+    this report (it's already counted via appointments.payment_status
+    directly). The mirror exists for Payment History/Billing History
+    (which read Ledger B unconditionally, with no Ledger A query to
+    combine against), not for this endpoint."""
     cur.execute(
         """
         SELECT method, COUNT(*), COALESCE(SUM(amount - refunded_amount), 0)
         FROM payments
         WHERE status = 'COMPLETED'
+          AND legacy_appointment_id IS NULL
           AND recorded_at::date >= %s
         GROUP BY method
         ORDER BY method
@@ -184,7 +195,8 @@ def _ledger_b_collections_by_doctor(cur, window_start):
     """Same as above, attributed by encounters.doctor_id (every invoice
     belongs to exactly one encounter, and every encounter has a
     doctor_id directly -- migrations/0028_encounters.sql -- no need to
-    go through appointments)."""
+    go through appointments). Same legacy_appointment_id exclusion as
+    _ledger_b_collections_by_method, same reason."""
     cur.execute(
         """
         SELECT e.doctor_id, d.name, COUNT(*), COALESCE(SUM(pay.amount - pay.refunded_amount), 0)
@@ -193,6 +205,7 @@ def _ledger_b_collections_by_doctor(cur, window_start):
         JOIN encounters e ON e.id = inv.encounter_id
         JOIN doctors d ON d.id = e.doctor_id
         WHERE pay.status = 'COMPLETED'
+          AND pay.legacy_appointment_id IS NULL
           AND pay.recorded_at::date >= %s
         GROUP BY e.doctor_id, d.name
         ORDER BY d.name
@@ -212,7 +225,14 @@ def _ledger_b_outstanding(cur):
     duplicated rather than imported -- that function additionally
     requires the encounter to be CLOSED (a different question: "is this
     overdue enough to flag as an exception" vs. this endpoint's "what's
-    the current outstanding total"), so it isn't a drop-in reuse."""
+    the current outstanding total"), so it isn't a drop-in reuse.
+
+    Excludes legacy_appointment_id IS NOT NULL charges from the gross
+    sum, and legacy_appointment_id IS NOT NULL payments from the paid
+    sum -- same double-counting reason as the collections queries
+    above: this invoice's mirrored consultation-fee charge/payment (if
+    any) is already represented by Ledger A's own outstanding_rows
+    query, which reads appointments.payment_status directly."""
     cur.execute(
         """
         SELECT inv.encounter_id, p.name, d.name,
@@ -226,11 +246,11 @@ def _ledger_b_outstanding(cur):
         JOIN doctors d ON d.id = e.doctor_id
         LEFT JOIN LATERAL (
             SELECT SUM(amount) AS amount FROM charges
-            WHERE invoice_id = inv.id AND status = 'ACTIVE'
+            WHERE invoice_id = inv.id AND status = 'ACTIVE' AND legacy_appointment_id IS NULL
         ) gross ON TRUE
         LEFT JOIN LATERAL (
             SELECT SUM(amount - refunded_amount) AS amount FROM payments
-            WHERE invoice_id = inv.id AND status = 'COMPLETED'
+            WHERE invoice_id = inv.id AND status = 'COMPLETED' AND legacy_appointment_id IS NULL
         ) paid ON TRUE
         WHERE inv.status = 'OPEN'
         """
@@ -252,26 +272,35 @@ def get_billing_report(
     staff: dict = Depends(get_current_staff),
 ):
     """
-    OPD billing reconciliation view backing a future front-desk/admin
-    "Billing" panel (no frontend for this yet -- see DashboardPanel.tsx
-    for where /stats and /trends are consumed; this endpoint exists so
-    that panel has a real API to build against). Staff-readable, same
-    posture as /stats and /trends above: GET /appointments already
-    returns payment_status/payment_method/payment_amount per row to any
-    STAFF session, so an aggregate over the same columns isn't more
-    sensitive.
+    OPD billing reconciliation view backing the real, shipped "Billing"
+    panel (frontend/src/admin/BillingPanel.tsx -- see its own header
+    comment: wired up after this endpoint was built, this docstring's
+    older "no frontend for this yet" claim was stale).
 
-    Phase 9, Option C (docs/architecture/BILLING_LEDGERS.md): this
-    report used to read Ledger A (appointments.payment_status, the
-    consultation fee) exclusively -- "Total Collected" never included a
-    single rupee of lab/radiology/procedure/pharmacy/package revenue
-    (Ledger B: invoices/charges/payments, migrations/0033). collections_
-    by_method/collections_by_doctor/total_collected/outstanding_unpaid
-    now genuinely combine both ledgers; `ledger_breakdown` is added so
-    the two sources stay individually auditable rather than opaquely
-    merged. Both write paths are completely untouched by this -- this
-    is a read-only merge, nothing here changes how a payment gets
-    recorded on either ledger.
+    This endpoint and the Exception Engine's PAYMENT_PENDING check
+    (app/services/exception_engine.py) both close the billing-ledger
+    split (docs/architecture/BILLING_LEDGERS.md,
+    docs/OPD_HIMS_ARCHITECTURE_AUDIT.md ADR-009) the same way: by
+    combining Ledger A (appointments.payment_status, the consultation
+    fee) and Ledger B (invoices/charges/payments, migrations/0033,
+    everything else) at *read* time, reading each ledger's own
+    original columns directly -- Phase 9's "Option C". Neither write
+    path is touched by this endpoint.
+
+    This is deliberately NOT the same mechanism ADR-009's separately-
+    accepted Option B (migrations/0058_consultation_fee_ledger_mirror.
+    sql) uses for Payment History/Billing History, which read Ledger B
+    unconditionally with no Ledger A query to combine against, and so
+    need the consultation fee physically mirrored into Ledger B to see
+    it at all. This endpoint has no such need -- it already queries
+    Ledger A directly -- so every Ledger B query below explicitly
+    excludes `legacy_appointment_id IS NOT NULL` rows (the mirror's own
+    marker column): counting them here too would double the
+    consultation fee into this report, once from Ledger A's own direct
+    query and once from the mirror. The two mechanisms serve different
+    screens and do not need to agree on which one is "the" source --
+    they only need to not double-count each other, which the exclusion
+    filters below guarantee.
 
     Four independent pieces, not one combined query -- each answers a
     different front-desk question and has a different natural time
@@ -282,24 +311,25 @@ def get_billing_report(
         collected, not when the appointment was scheduled).
       * outstanding: what's currently owed right now, on either ledger --
         every CHECKED_IN appointment still UNPAID/FAILED on Ledger A,
-        plus every OPEN invoice with a positive balance on Ledger B.
+        plus every OPEN invoice with a positive balance on Ledger B
+        (excluding any mirrored consultation-fee charge, per above).
         Deliberately NOT time-scoped by `days`: "who owes money today"
         means everyone outstanding, not just the ones from this window.
-      * waivers: Ledger A only, unchanged -- Ledger B has no waiver
-        concept (see the audit's own note on why refund/waiver
-        semantics differ between the two ledgers; unifying that is a
-        bigger decision than Option C's read-only merge, left for a
-        later phase if wanted). No dollar total -- waive_consultation_
-        fee_service and settle_free_visit_service both record
-        payment_amount = 0 for a waived visit (see their docstrings),
-        so there is no real "amount waived" number to report;
-        fabricating one from doctor_appointment_types.consultation_
-        fee's *current* price would misrepresent what was actually
-        waived at the time.
-      * refunds: Ledger A only, unchanged, same reason as waivers --
-        count + total refund_amount for the trailing `days` days
-        (refund_amount is actually recorded, unlike waivers, so a real
-        total is reportable here).
+      * waivers: Ledger A only -- Ledger B has no waiver concept (a
+        waived fee mirrors as a VOIDED charge for Payment/Billing
+        History's benefit, migrations/0058, but that's excluded from
+        gross/outstanding sums by its own VOIDED status regardless of
+        the legacy_appointment_id filter, so there's nothing to combine
+        here anyway). No dollar total -- waive_consultation_fee_service
+        and settle_free_visit_service both record payment_amount = 0
+        for a waived visit (see their docstrings), so there is no real
+        "amount waived" number to report; fabricating one from
+        doctor_appointment_types.consultation_fee's *current* price
+        would misrepresent what was actually waived at the time.
+      * refunds: Ledger A only, same reason as waivers -- count + total
+        refund_amount for the trailing `days` days (refund_amount is
+        actually recorded, unlike waivers, so a real total is
+        reportable here).
     """
     window_start = date.today() - timedelta(days=days - 1)
 
@@ -363,6 +393,17 @@ def get_billing_report(
             outstanding_rows = cur.fetchall()
             ledger_b_outstanding_rows = _ledger_b_outstanding(cur)
 
+            # Deliberately NOT rewritten to Ledger B, unlike collections/
+            # refunds above: settle_free_visit_service (a genuinely free,
+            # $0 visit) has no mirrored charge at all -- charges.amount
+            # has CHECK (amount > 0), and there is nothing to bill for a
+            # free visit (see mirror_consultation_fee_waived's own
+            # docstring). A Ledger-B-only query would silently miss
+            # every free-visit waiver, undercounting this section the
+            # way outstanding_unpaid's own comment above explains for a
+            # different reason. appointments.payment_status = 'WAIVED'
+            # already correctly captures both waiver paths (a real fee
+            # waived, and a free visit settled) in one place.
             cur.execute(
                 """
                 SELECT a.id, p.name, d.name, a.waive_reason, a.payment_recorded_at

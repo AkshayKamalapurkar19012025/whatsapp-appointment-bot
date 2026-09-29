@@ -62,7 +62,10 @@ export default function BillingHistoryPanel() {
       <div className="admin-content-header">
         <div>
           <h2>Billing History</h2>
-          <p className="muted">Every invoice across every visit, newest first.</p>
+          <p className="muted">
+            Every invoice, newest first — lab, radiology, pharmacy, packages, other billed
+            charges, and (once paid or attempted) the consultation fee.
+          </p>
         </div>
       </div>
 
