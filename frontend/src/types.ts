@@ -450,7 +450,12 @@ export interface Invoice {
 // GET /dashboard/billing -- see app/api/dashboard.py's own docstring on
 // this endpoint for why each section has the scope it has (collections:
 // trailing window; outstanding: current state; waivers/refunds:
-// trailing window).
+// trailing window). Phase 10B (ADR-009 Option B, docs/architecture/
+// BILLING_LEDGER_COEXISTENCE.md): collections now read Ledger B
+// directly (unified across every charge type via the same-transaction
+// mirror) -- no separate ledger_breakdown/combined-outstanding shape;
+// see that doc for why the earlier Option C read-merge approach was
+// superseded rather than combined with this one.
 export interface BillingReport {
   window_days: number
   collections_by_method: { method: string | null; count: number; amount: number }[]

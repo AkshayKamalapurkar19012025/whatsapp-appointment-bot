@@ -42,7 +42,16 @@ The canonical phase sequence for HospitalOS going forward. Each phase below is m
 
 ## Phase 9 — Billing + Payment
 
-**Status: ✅ Done.** Clinical services → charges → invoice → payment → receipt, fully connected. Gap: no modeled "payment pending/failed" intermediate state beyond the `DECLINED` invoice-payment status added in migration `0050` — verify this is sufficient before assuming a full payment-failure journey exists. See `docs/workflows/BILLING.md`.
+**Status: ✅ Done for the itemized model; 🟡 write-path unification in progress as a same-transaction dual-write (below), full single-ledger cutover not started.** Clinical services → charges → invoice → payment → receipt, fully connected. Gap: no modeled "payment pending/failed" intermediate state beyond the `DECLINED` invoice-payment status added in migration `0050` — verify this is sufficient before assuming a full payment-failure journey exists. See `docs/workflows/BILLING.md`.
+
+**Billing ledger unification** (`docs/architecture/BILLING_LEDGERS.md`): the source-of-truth audit found two independently-maintained billing tables for the same visit (`appointments.payment_status`, the original consultation-fee mechanism, vs. `invoices`/`charges`/`payments`, the newer itemized model) with no connection between them — concretely, `GET /dashboard/billing`'s "Total Collected" never included a rupee of lab/radiology/pharmacy/package revenue, and the Exception Engine's `PAYMENT_PENDING` never caught an unpaid consultation fee. Three independent efforts have since addressed this, in order:
+1. **Option C** (read-side merge only, both write paths untouched) — done, then partially superseded by (3) below. The Exception Engine's combined read is still in effect and still correct.
+2. **A full write-path cutover** (`docs/decisions/ADR-009-BILLING-LEDGER-UNIFICATION.md`'s "Option A") — built, but left unmerged/shelved as a reference implementation; not the currently-active approach.
+3. **A same-transaction dual-write mirror** (ADR-009's "Option B", `docs/architecture/BILLING_LEDGER_COEXISTENCE.md`) — Ledger A stays the untouched operational/queue-token gate; every consultation-payment event also mirrors into Ledger B in the same transaction, which becomes the reporting source. This supersedes (1)'s `GET /dashboard/billing` combined-read specifically (summing both ledgers there would now double-count a mirrored payment), but not its Exception Engine fix. This is the currently-active, coexistence (not final) architecture — see ADR-009's own "Final target architecture" section for what completes the unification.
+
+Note: this doc's own prior "Option A (retire Ledger A) / Option B (retire Ledger B)" naming (from the original source-of-truth audit) is a different axis than ADR-009's "Option A/B" naming above — don't conflate them; ADR-009 is the more recent, actually-implemented decision.
+
+Option C's own work surfaced one more concrete gap, still open: a visit closed with its consultation fee unpaid is now visible but still not collectible through any existing endpoint (`record_payment_service` requires `CHECKED_IN`) — see `docs/architecture/BILLING_LEDGERS.md`'s own Recommended Implementation for the small, separately-scoped fix this implies.
 
 ## Phase 10 — Patient 360
 
@@ -74,4 +83,10 @@ The canonical phase sequence for HospitalOS going forward. Each phase below is m
 
 ## Recommended next step
 
-Phase 7 (Diagnostics granularity) was resumed and completed for its scoped items — see its entry above and `docs/workflows/LABORATORY.md`/`docs/workflows/RADIOLOGY.md`. Of what remains: **Phase 11 (Command Center KPI gaps)** stays the most concretely scoped, additive, non-risky next phase — it extends screens that already exist and requires no new architectural decision. **Phase 9 (billing ledger unification** — folding the consultation-fee `appointments.payment_status` mechanism into the `invoices`/`charges`/`payments` model so a visit has one invoice, not two) is the next phase this diagnostics work itself surfaced as still-deferred, per that migration's own documented reasoning; it is a real architectural decision (the most concurrency-sensitive path in the app), not a small increment, so it deserves its own dedicated phase rather than being folded into another one. **Do not start IPD or Emergency** until a phase is explicitly scoped for them with the questions in `docs/architecture/OPD_TO_IPD.md`'s Gap section answered first.
+Phase 7 (Diagnostics granularity) was resumed and completed for its scoped items — see its entry above and `docs/workflows/LABORATORY.md`/`docs/workflows/RADIOLOGY.md`. Phase 9's billing-ledger split was audited and its Option C (read-side merge) completed — see its entry above and `docs/architecture/BILLING_LEDGERS.md`. Of what remains:
+
+- **The small, well-scoped fix Option C itself surfaced**: allow the consultation-fee payment endpoints to apply to a `COMPLETED` appointment, not just `CHECKED_IN` — a visit closed with its fee unpaid is now visible (thanks to Option C) but still not collectible. This is a status-guard change, not a ledger merge, and is the most concretely scoped item available right now.
+- **Phase 11 (Command Center KPI gaps)** stays the next additive, non-risky phase after that — it extends screens that already exist and requires no new architectural decision.
+- **Billing ledger unification's final cutover** (ADR-009's "Final target architecture", `docs/architecture/BILLING_LEDGER_COEXISTENCE.md`) — the dual-write mirror (ADR-009 Option B) is in place; retiring Ledger A / moving `generate_queue_token_service`'s trigger to Ledger B is deliberately not attempted yet and needs its own explicit scoping and go-ahead before any code is written, per that ADR's own preconditions.
+
+**Do not start IPD or Emergency** until a phase is explicitly scoped for them with the questions in `docs/architecture/OPD_TO_IPD.md`'s Gap section answered first.

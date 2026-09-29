@@ -243,3 +243,19 @@ def test_billing_report_staff_can_read(client, db_connection):
     staff_headers = create_staff_and_get_headers(db_connection, role="STAFF")
     response = client.get("/api/dashboard/billing", headers=staff_headers)
     assert response.status_code == 200
+
+
+# Phase 9's "Option C" (docs/architecture/BILLING_LEDGERS.md) briefly
+# merged main with a read-only, sum-both-ledgers version of this
+# endpoint (a ledger_breakdown field, a combined-source outstanding_
+# unpaid shape) -- two tests previously lived here exercising that
+# shape. Phase 10B (this branch, ADR-009 Option B) supersedes it: with
+# a same-transaction Ledger A -> Ledger B mirror in place, summing both
+# ledgers the way Option C did would double-count every consultation
+# payment (it's now in both places). See docs/architecture/
+# BILLING_LEDGER_COEXISTENCE.md for the full reasoning and
+# tests/test_billing_ledger_reconciliation_gap.py::
+# test_dashboard_billing_total_unifies_consultation_and_other_charges
+# for this file's replacement coverage of the same underlying property
+# (a visit's total_collected reflects every charge type, not just the
+# consultation fee) under the mirror architecture instead.

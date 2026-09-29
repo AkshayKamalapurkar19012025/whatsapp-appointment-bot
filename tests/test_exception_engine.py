@@ -285,6 +285,103 @@ def test_payment_pending_exception(client, db_connection):
     assert matches == []
 
 
+# ---------------------------------------------------------------------
+# Phase 9, Option C (docs/architecture/BILLING_LEDGERS.md): before this,
+# PAYMENT_PENDING only ever looked at invoices/charges/payments (Ledger
+# B) -- a visit whose only outstanding money was its consultation fee
+# (Ledger A: appointments.payment_status) never had an `invoices` row
+# at all, so it could sit COMPLETED and UNPAID forever without ever
+# being flagged here. mark_completed_service doesn't check payment_
+# status, so this is a real, reachable state, not a hypothetical one.
+# ---------------------------------------------------------------------
+
+
+def test_payment_pending_exception_from_unpaid_consultation_fee_alone(client, db_connection):
+    ctx = _seed_checked_in_patient(client, db_connection, "Payment Wait Fee Only")
+    appointment_id = ctx["appointment"]["id"]
+
+    with db_connection.cursor() as cur:
+        cur.execute(
+            "UPDATE doctor_appointment_types SET consultation_fee = 600 "
+            "WHERE doctor_id = (SELECT doctor_id FROM appointments WHERE id = %s)",
+            (appointment_id,),
+        )
+    db_connection.commit()
+
+    # Never paid, waived, or settled -- staff completes the visit
+    # anyway (mark_completed_service has no payment_status gate).
+    complete_resp = client.post(f"/api/appointments/{appointment_id}/complete", headers=ctx["admin_headers"])
+    assert complete_resp.status_code == 200
+
+    with db_connection.cursor() as cur:
+        cur.execute(
+            "UPDATE encounters SET closed_at = NOW() - INTERVAL '11 minutes' "
+            "WHERE id = (SELECT encounter_id FROM appointments WHERE id = %s)",
+            (appointment_id,),
+        )
+    db_connection.commit()
+
+    response = client.get("/api/exceptions", headers=ctx["admin_headers"])
+    matches = [e for e in response.json()["exceptions"] if e["type"] == "PAYMENT_PENDING"]
+    assert len(matches) == 1
+    assert matches[0]["balance"] == 600.0
+
+    # NOTE: unlike the Ledger-B case above, there is currently no way to
+    # resolve this through the normal payment endpoint once the visit
+    # is COMPLETED -- record_payment_service (app/services/
+    # appointment_services.py's _lock_appointment_for_payment) requires
+    # status == 'CHECKED_IN'. This is a real, separate gap this phase's
+    # audit surfaced as a side effect of making the exception visible at
+    # all (it was previously invisible AND uncollectable; it is now
+    # visible and still uncollectable) -- a write-path change, out of
+    # scope for this phase's read-only ledger merge. See
+    # docs/architecture/BILLING_LEDGERS.md.
+    unresolvable = client.post(
+        f"/api/appointments/{appointment_id}/payment",
+        json={"method": "CASH", "outcome": "PAID"},
+        headers=ctx["admin_headers"],
+    )
+    assert unresolvable.status_code == 409
+
+
+def test_payment_pending_exception_combines_both_ledgers_into_one_row(client, db_connection):
+    ctx = _seed_checked_in_patient(client, db_connection, "Payment Wait Combined")
+    appointment_id = ctx["appointment"]["id"]
+
+    with db_connection.cursor() as cur:
+        cur.execute(
+            "UPDATE doctor_appointment_types SET consultation_fee = 400 "
+            "WHERE doctor_id = (SELECT doctor_id FROM appointments WHERE id = %s)",
+            (appointment_id,),
+        )
+    db_connection.commit()
+
+    # Ledger B: an unpaid lab charge.
+    client.post(
+        f"/api/appointments/{appointment_id}/bill/charges",
+        json={"description": "CBC", "amount": 250, "source_type": "LAB"},
+        headers=ctx["admin_headers"],
+    )
+    # Ledger A: the consultation fee, also never paid.
+    complete_resp = client.post(f"/api/appointments/{appointment_id}/complete", headers=ctx["admin_headers"])
+    assert complete_resp.status_code == 200
+
+    with db_connection.cursor() as cur:
+        cur.execute(
+            "UPDATE encounters SET closed_at = NOW() - INTERVAL '11 minutes' "
+            "WHERE id = (SELECT encounter_id FROM appointments WHERE id = %s)",
+            (appointment_id,),
+        )
+    db_connection.commit()
+
+    response = client.get("/api/exceptions", headers=ctx["admin_headers"])
+    matches = [e for e in response.json()["exceptions"] if e["type"] == "PAYMENT_PENDING"]
+    # One row for this encounter, not two -- balance is the sum of both
+    # ledgers' outstanding amounts.
+    assert len(matches) == 1
+    assert matches[0]["balance"] == 650.0
+
+
 def test_exceptions_sorted_most_overdue_first(client, db_connection):
     ctx_a = _seed_checked_in_patient(client, db_connection, "Sort Newer")
     ctx_b = _seed_checked_in_patient(client, db_connection, "Sort Older")
