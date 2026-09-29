@@ -658,6 +658,21 @@ def _ensure_mirrored_consultation_charge(cur, appointment_id: int, *, staff_id: 
     caller (e.g. a retried payment after an earlier FAILED attempt)
     gets back the same row's id.
 
+    Bugfix (found live: every real consultation payment was throwing
+    an unhandled UniqueViolation/500): this mirror is always called
+    from record_payment_service AFTER record_consultation_fee_payment_
+    service (above) has already ensured this invoice's ACTIVE
+    CONSULTATION charge exists -- charges_one_consultation_per_invoice
+    (migrations/0058_billing_ledger_unification.sql) allows at most one
+    per invoice regardless of legacy_appointment_id, which that earlier
+    charge doesn't have set. Blindly INSERTing a second one here always
+    collided with that constraint. Reusing it via _get_active_
+    consultation_charge (the same lookup record_consultation_fee_
+    payment_service itself uses) and backfilling legacy_appointment_id
+    onto it -- rather than creating a competing charge -- is what
+    "mirror" is actually supposed to mean here: one real charge, found
+    by whichever key the caller has.
+
     Known, accepted limitation: the charge's amount is fixed at
     whichever call happens first. If the configured consultation_fee
     (or invoice_line_items total) changes between a FAILED attempt and
@@ -667,6 +682,14 @@ def _ensure_mirrored_consultation_charge(cur, appointment_id: int, *, staff_id: 
     consistent with this codebase's own stance against building for a
     scenario with no concrete driving requirement."""
     invoice = _ensure_invoice(cur, appointment_id, staff_id)
+
+    existing = _get_active_consultation_charge(cur, invoice["id"])
+    if existing is not None:
+        cur.execute(
+            "UPDATE charges SET legacy_appointment_id = %s WHERE id = %s AND legacy_appointment_id IS NULL",
+            (appointment_id, existing["id"]),
+        )
+        return existing["id"]
 
     cur.execute(
         """
@@ -685,25 +708,27 @@ def _ensure_mirrored_consultation_charge(cur, appointment_id: int, *, staff_id: 
     return cur.fetchone()[0]
 
 
-def mirror_consultation_payment(cur, appointment_id: int, *, staff_id: int, amount, method: str, outcome: str):
-    """Mirrors record_payment_service's PAID or FAILED outcome as a
-    Ledger B payment (COMPLETED or DECLINED respectively) against the
-    mirrored CONSULTATION charge, creating that charge first if this is
-    the first mirrored event for this appointment. Called for both
-    outcomes -- a FAILED attempt still belongs in the audit trail
-    Payment History already gives every other declined Ledger B
-    payment (migrations/0050)."""
-    invoice_id = _ensure_invoice(cur, appointment_id, staff_id)["id"]
-    _ensure_mirrored_consultation_charge(cur, appointment_id, staff_id=staff_id, amount=amount)
+def mirror_consultation_payment(cur, appointment_id: int, *, staff_id: int, amount):
+    """Ensures this appointment's mirrored CONSULTATION charge exists
+    (and is correlated via legacy_appointment_id, for any reader that
+    looks it up that way), without inserting a payment of its own.
 
-    status = "COMPLETED" if outcome == "PAID" else "DECLINED"
-    cur.execute(
-        """
-        INSERT INTO payments (invoice_id, amount, method, status, legacy_appointment_id, recorded_by)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        """,
-        (invoice_id, amount, method, status, appointment_id, staff_id),
-    )
+    Bugfix: this used to also INSERT its own payments row (COMPLETED/
+    DECLINED, correlated via legacy_appointment_id) here -- but by the
+    time this runs, record_payment_service has already called
+    record_consultation_fee_payment_service (above), which inserts the
+    real payment row for both PAID and FAILED outcomes via
+    record_invoice_payment_service, and links it back via appointments.
+    consultation_payment_id. This function's own payment insert was
+    therefore a second, unguarded row for the exact same event -- no
+    ON CONFLICT, no reuse check, unlike the charge-ensure call below --
+    confirmed live: a single ₹500 payment produced two ₹500 COMPLETED
+    payments, doubling get_invoice_summary_service's paid_amount and
+    driving balance negative. Removed rather than made idempotent,
+    since a second payment row conveys no information the first
+    (canonical, consultation_payment_id-linked) one doesn't already
+    have -- there was never a real second event to record."""
+    _ensure_mirrored_consultation_charge(cur, appointment_id, staff_id=staff_id, amount=amount)
 
 
 def mirror_consultation_fee_waived(cur, appointment_id: int, *, staff_id: int, amount, reason: str):

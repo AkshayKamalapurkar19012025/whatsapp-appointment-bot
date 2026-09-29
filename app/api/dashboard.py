@@ -167,24 +167,36 @@ def _ledger_b_collections_by_method(cur, window_start):
     per-payment refunds (payments.refunded_amount), same convention
     get_invoice_summary_service already uses.
 
-    Excludes legacy_appointment_id IS NOT NULL rows -- those are
-    ADR-009 Option B's mirrored consultation-fee payments
-    (migrations/0058), not genuine itemized billing. This function
-    exists to combine with Ledger A's own direct query below; counting
-    a mirrored row here too would double the consultation fee into
-    this report (it's already counted via appointments.payment_status
-    directly). The mirror exists for Payment History/Billing History
-    (which read Ledger B unconditionally, with no Ledger A query to
-    combine against), not for this endpoint."""
+    Excludes any payment already counted via Ledger A's own EFFECTIVE_
+    PAYMENT_*_SQL read below -- appointments.consultation_payment_id
+    (migrations/0058_billing_ledger_unification.sql) links an
+    appointment straight to the real ledger-2 payment
+    record_consultation_fee_payment_service creates for it, and that
+    same row is exactly what EFFECTIVE_PAYMENT_AMOUNT_SQL's COALESCE
+    picks up as "Ledger A"'s amount for that appointment -- counting it
+    here too would double it into this report. (legacy_appointment_id
+    IS NOT NULL was the original exclusion signal here, back when
+    mirror_consultation_payment -- ADR-009 Option B, migrations/
+    0058_consultation_fee_ledger_mirror.sql -- inserted its own tagged
+    payment row for every consultation fee; that insert was removed as
+    a duplicate of this same real payment, and consultation_payment_id
+    is the signal that was actually needed all along. Kept as a
+    belt-and-suspenders second filter: legacy_appointment_id still gets
+    backfilled onto the mirrored *charge* by _ensure_mirrored_
+    consultation_charge, and nothing currently tags a payment with it,
+    but excluding it costs nothing if that ever changes.)"""
     cur.execute(
         """
-        SELECT method, COUNT(*), COALESCE(SUM(amount - refunded_amount), 0)
-        FROM payments
-        WHERE status = 'COMPLETED'
-          AND legacy_appointment_id IS NULL
-          AND recorded_at::date >= %s
-        GROUP BY method
-        ORDER BY method
+        SELECT p.method, COUNT(*), COALESCE(SUM(p.amount - p.refunded_amount), 0)
+        FROM payments p
+        WHERE p.status = 'COMPLETED'
+          AND p.legacy_appointment_id IS NULL
+          AND p.recorded_at::date >= %s
+          AND NOT EXISTS (
+              SELECT 1 FROM appointments a WHERE a.consultation_payment_id = p.id
+          )
+        GROUP BY p.method
+        ORDER BY p.method
         """,
         (window_start,),
     )
@@ -195,7 +207,7 @@ def _ledger_b_collections_by_doctor(cur, window_start):
     """Same as above, attributed by encounters.doctor_id (every invoice
     belongs to exactly one encounter, and every encounter has a
     doctor_id directly -- migrations/0028_encounters.sql -- no need to
-    go through appointments). Same legacy_appointment_id exclusion as
+    go through appointments). Same consultation_payment_id exclusion as
     _ledger_b_collections_by_method, same reason."""
     cur.execute(
         """
@@ -207,6 +219,9 @@ def _ledger_b_collections_by_doctor(cur, window_start):
         WHERE pay.status = 'COMPLETED'
           AND pay.legacy_appointment_id IS NULL
           AND pay.recorded_at::date >= %s
+          AND NOT EXISTS (
+              SELECT 1 FROM appointments a WHERE a.consultation_payment_id = pay.id
+          )
         GROUP BY e.doctor_id, d.name
         ORDER BY d.name
         """,
@@ -227,12 +242,15 @@ def _ledger_b_outstanding(cur):
     overdue enough to flag as an exception" vs. this endpoint's "what's
     the current outstanding total"), so it isn't a drop-in reuse.
 
-    Excludes legacy_appointment_id IS NOT NULL charges from the gross
-    sum, and legacy_appointment_id IS NOT NULL payments from the paid
+    Excludes legacy_appointment_id IS NOT NULL charges (the mirrored
+    consultation-fee charge, backfilled with that column by _ensure_
+    mirrored_consultation_charge) from the gross sum, and any payment
+    referenced by appointments.consultation_payment_id from the paid
     sum -- same double-counting reason as the collections queries
-    above: this invoice's mirrored consultation-fee charge/payment (if
-    any) is already represented by Ledger A's own outstanding_rows
-    query, which reads appointments.payment_status directly."""
+    above: this invoice's real consultation-fee charge/payment is
+    already represented by Ledger A's own outstanding_rows query, which
+    reads appointments.payment_status/EFFECTIVE_PAYMENT_*_SQL
+    directly."""
     cur.execute(
         """
         SELECT inv.encounter_id, p.name, d.name,
@@ -249,8 +267,9 @@ def _ledger_b_outstanding(cur):
             WHERE invoice_id = inv.id AND status = 'ACTIVE' AND legacy_appointment_id IS NULL
         ) gross ON TRUE
         LEFT JOIN LATERAL (
-            SELECT SUM(amount - refunded_amount) AS amount FROM payments
-            WHERE invoice_id = inv.id AND status = 'COMPLETED' AND legacy_appointment_id IS NULL
+            SELECT SUM(amount - refunded_amount) AS amount FROM payments pay
+            WHERE pay.invoice_id = inv.id AND pay.status = 'COMPLETED' AND pay.legacy_appointment_id IS NULL
+              AND NOT EXISTS (SELECT 1 FROM appointments a WHERE a.consultation_payment_id = pay.id)
         ) paid ON TRUE
         WHERE inv.status = 'OPEN'
         """
@@ -290,17 +309,22 @@ def get_billing_report(
     This is deliberately NOT the same mechanism ADR-009's separately-
     accepted Option B (migrations/0058_consultation_fee_ledger_mirror.
     sql) uses for Payment History/Billing History, which read Ledger B
-    unconditionally with no Ledger A query to combine against, and so
-    need the consultation fee physically mirrored into Ledger B to see
-    it at all. This endpoint has no such need -- it already queries
-    Ledger A directly -- so every Ledger B query below explicitly
-    excludes `legacy_appointment_id IS NOT NULL` rows (the mirror's own
-    marker column): counting them here too would double the
-    consultation fee into this report, once from Ledger A's own direct
-    query and once from the mirror. The two mechanisms serve different
-    screens and do not need to agree on which one is "the" source --
-    they only need to not double-count each other, which the exclusion
-    filters below guarantee.
+    unconditionally. This endpoint has no such need -- it already
+    queries Ledger A directly, via EFFECTIVE_PAYMENT_*_SQL, which
+    itself transparently follows appointments.consultation_payment_id
+    (migrations/0058_billing_ledger_unification.sql) to the real
+    ledger-2 payment for every appointment paid after that phase -- so
+    "Ledger A" and "Ledger B" overlap on every such payment, not just
+    conceptually adjacent. Every Ledger B query below therefore
+    excludes any payment referenced by consultation_payment_id (plus
+    legacy_appointment_id IS NOT NULL, belt-and-suspenders for the
+    mirror's own charge-level tagging): counting one of those here too
+    would double the consultation fee into this report, once from
+    Ledger A's own direct/effective query and once from Ledger B
+    directly. The two mechanisms serve different screens and do not
+    need to agree on which one is "the" source -- they only need to not
+    double-count each other, which the exclusion filters below
+    guarantee.
 
     Four independent pieces, not one combined query -- each answers a
     different front-desk question and has a different natural time

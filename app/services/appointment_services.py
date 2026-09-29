@@ -1811,9 +1811,7 @@ def record_payment_service(cur, appointment_id: int, *, method: str, outcome: st
     # reconfigured to 0 after check-in), so this guards defensively
     # rather than assuming it can't happen.
     if amount > 0:
-        mirror_consultation_payment(
-            cur, appointment_id, staff_id=staff_id, amount=amount, method=method, outcome=outcome
-        )
+        mirror_consultation_payment(cur, appointment_id, staff_id=staff_id, amount=amount)
 
     token_just_issued = False
     if outcome == "PAID":
