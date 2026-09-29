@@ -4,6 +4,15 @@ Primary instruction file for Claude Code sessions working in this repository. Re
 
 ## Project
 
+Implement ONLY criterion #2 from CLAUDE.md. Touch only files required for it.
+Rules:
+- No placeholder comments like "rest unchanged". Complete code only.
+- Before finishing: run `git diff --stat`, run the test suite, and run the
+  Playwright test for this flow. Paste the actual output.
+- You may not say "done" unless the tests pass.
+- End with a NOT DONE section listing anything incomplete or skipped.
+  An empty NOT DONE section must be justified.
+
 HospitalOS is a production-grade Hospital Information Management System (HIMS) for 100+ bed multi-speciality hospitals. **This repository already contains a substantial, working implementation** — OPD scheduling, walk-in registration, check-in/queue, triage, consultation, orders (lab/radiology/procedure/external-referral), prescriptions, pharmacy dispensing, billing/payments/receipts, patient timeline, role-based access, and module licensing all exist and are exercised by 683 backend tests as of this writing.
 
 **HospitalOS evolves from the existing system. It is not rebuilt.** Every future phase starts by reading `docs/`, inspecting what's already there, and extending it. See `docs/product/PRODUCT_VISION.md` for the full current-state summary and `docs/OPD_HIMS_MASTER_SPEC_AUDIT.md` for the most recent line-by-line audit against the master spec (as of PR #112 — read it alongside the "what changed since" notes in `docs/product/PRODUCT_VISION.md`, since several of its gaps have since closed).
