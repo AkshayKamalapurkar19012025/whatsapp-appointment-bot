@@ -203,7 +203,7 @@ def void_charge(
 def record_payment(
     appointment_id: int,
     body: PaymentCreate,
-    staff: dict = Depends(get_current_staff),
+    staff: dict = Depends(require_permission("bill.record_payment")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:

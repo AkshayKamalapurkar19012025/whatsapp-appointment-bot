@@ -224,6 +224,14 @@ def test_billing_report_window_days_excludes_older_collections(client, db_connec
             "UPDATE appointments SET payment_recorded_at = %s WHERE id = %s",
             (old_recorded_at, appointment_id),
         )
+        # Phase 10B: collections now read Ledger B (payments.recorded_at)
+        # via mirror_legacy_consultation_payment_service, not Ledger A's
+        # own payment_recorded_at -- both need backdating for this test
+        # to still exercise the window filter it's named for.
+        cur.execute(
+            "UPDATE payments SET recorded_at = %s WHERE legacy_appointment_id = %s",
+            (old_recorded_at, appointment_id),
+        )
     db_connection.commit()
 
     response = client.get("/api/dashboard/billing?days=14", headers=admin_headers)

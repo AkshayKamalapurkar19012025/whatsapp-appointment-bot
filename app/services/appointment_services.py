@@ -46,6 +46,7 @@ from zoneinfo import ZoneInfo
 
 import psycopg
 
+from app.services.billing_services import mirror_legacy_consultation_payment_service
 from app.utils.timezone import overlaps, convert_to_timezone, validate_timezone
 from app.services.availability_engine import (
     get_appointment_type_for_doctor,
@@ -1599,6 +1600,123 @@ def add_invoice_line_item_service(cur, appointment_id: int, *, description: str,
     return get_invoice_service(cur, appointment_id)
 
 
+def _write_consultation_payment_status(
+    cur,
+    appointment_id: int,
+    *,
+    status: str,
+    staff_id: int | None,
+    method: str | None = None,
+    amount=None,
+    payment_recorded_by: int | None = None,
+    waive_reason: str | None = None,
+    refund_amount=None,
+    refund_reason: str | None = None,
+    refunded_by: int | None = None,
+):
+    """
+    Phase 10B (Billing Ledger Coexistence, ADR-009 Option B): THE single
+    chokepoint for every write to appointments.payment_status (and its
+    sibling payment_method/payment_amount/payment_recorded_by/
+    payment_recorded_at/waive_reason/refund_* columns). record_payment_
+    service, waive_consultation_fee_service, settle_free_visit_service,
+    and record_refund_service all call this instead of writing
+    appointments directly -- see tests/test_ledger_a_chokepoint.py, the
+    structural guard that fails the build if any other `UPDATE
+    appointments ... SET payment_status = ...` appears anywhere in app/.
+
+    Each branch below runs EXACTLY the same UPDATE its call site used to
+    run inline before this phase -- byte-identical SQL per status, only
+    relocated here. Ledger A's operational behavior (what gets written,
+    when, and what payment_recorded_by ends up NULL vs. attributed) is
+    completely unchanged by this phase; this function is a relocation,
+    not a redesign.
+
+    staff_id is Ledger B mirror attribution (charges.created_by/
+    payments.recorded_by, both NOT NULL) -- always required, even for
+    settle_free_visit_service's system-settled case, where it's simply
+    never used (that call's mirror is always the amount==0 no-op branch
+    in billing_services.mirror_legacy_consultation_payment_service, per
+    that function's own docstring). payment_recorded_by is Ledger A's
+    own column specifically, which legitimately stays NULL for settle_
+    free_visit_service (see its docstring: "no one waived anything,
+    there was nothing to waive") while every other caller sets it equal
+    to staff_id -- kept as a distinct parameter rather than always
+    reusing staff_id so that NULL-vs-attributed choice stays explicit at
+    each call site instead of implicit here.
+
+    Immediately after the Ledger A UPDATE, mirrors the same event into
+    Ledger B on this SAME cursor -- never a separate connection or
+    commit, so a mirror failure (an unhandled exception) propagates out
+    of this function and rolls the Ledger A UPDATE back too, via
+    get_connection()'s own exception-means-rollback contract (app/db/
+    connection.py) -- the same guarantee every other multi-statement
+    write in this codebase already relies on. This is what "same
+    transaction" means concretely here: no explicit BEGIN/COMMIT of its
+    own, just never opening a second cursor/connection for the mirror.
+    """
+    if status in ("PAID", "FAILED"):
+        cur.execute(
+            """
+            UPDATE appointments
+            SET payment_status = %s,
+                payment_method = %s,
+                payment_amount = %s,
+                payment_recorded_by = %s,
+                payment_recorded_at = NOW(),
+                updated_at = NOW()
+            WHERE id = %s
+            """,
+            (status, method, amount, payment_recorded_by, appointment_id),
+        )
+        mirror_legacy_consultation_payment_service(
+            cur, appointment_id, event=status, staff_id=staff_id, amount=amount, method=method,
+        )
+    elif status == "WAIVED":
+        cur.execute(
+            """
+            UPDATE appointments
+            SET payment_status = 'WAIVED',
+                payment_method = NULL,
+                payment_amount = 0,
+                waive_reason = %s,
+                payment_recorded_by = %s,
+                payment_recorded_at = NOW(),
+                updated_at = NOW()
+            WHERE id = %s
+            """,
+            (waive_reason, payment_recorded_by, appointment_id),
+        )
+        mirror_legacy_consultation_payment_service(
+            cur, appointment_id, event="WAIVED", staff_id=staff_id, amount=amount,
+        )
+    elif status == "REFUNDED":
+        cur.execute(
+            """
+            UPDATE appointments
+            SET payment_status = 'REFUNDED',
+                refund_amount = %s,
+                refund_reason = %s,
+                refunded_by = %s,
+                refunded_at = NOW(),
+                updated_at = NOW()
+            WHERE id = %s
+            """,
+            (refund_amount, refund_reason, refunded_by, appointment_id),
+        )
+        mirror_legacy_consultation_payment_service(
+            cur,
+            appointment_id,
+            event="REFUNDED",
+            staff_id=staff_id,
+            refund_amount=refund_amount,
+            refund_reason=refund_reason,
+            refunded_by=refunded_by,
+        )
+    else:
+        raise ValueError(f"Unknown consultation payment status: {status!r}")
+
+
 def _lock_appointment_for_payment(cur, appointment_id: int):
     """Shared row lookup/lock for record_payment_service and
     waive_consultation_fee_service -- both gate on the same two things
@@ -1676,18 +1794,9 @@ def record_payment_service(cur, appointment_id: int, *, method: str, outcome: st
     charge = get_consultation_charge_service(cur, appointment_id)
     amount = charge["consultation_fee"] + _invoice_extra_charges_total(cur, appointment_id)
 
-    cur.execute(
-        """
-        UPDATE appointments
-        SET payment_status = %s,
-            payment_method = %s,
-            payment_amount = %s,
-            payment_recorded_by = %s,
-            payment_recorded_at = NOW(),
-            updated_at = NOW()
-        WHERE id = %s
-        """,
-        (outcome, method, amount, staff_id, appointment_id),
+    _write_consultation_payment_status(
+        cur, appointment_id, status=outcome, staff_id=staff_id,
+        method=method, amount=amount, payment_recorded_by=staff_id,
     )
 
     token_just_issued = False
@@ -1749,19 +1858,12 @@ def waive_consultation_fee_service(cur, appointment_id: int, *, reason: str, sta
     if cur.fetchone() is None:
         raise WaiverNotEligible()
 
-    cur.execute(
-        """
-        UPDATE appointments
-        SET payment_status = 'WAIVED',
-            payment_method = NULL,
-            payment_amount = 0,
-            waive_reason = %s,
-            payment_recorded_by = %s,
-            payment_recorded_at = NOW(),
-            updated_at = NOW()
-        WHERE id = %s
-        """,
-        (reason, staff_id, appointment_id),
+    charge = get_consultation_charge_service(cur, appointment_id)
+    amount = charge["consultation_fee"] + _invoice_extra_charges_total(cur, appointment_id)
+
+    _write_consultation_payment_status(
+        cur, appointment_id, status="WAIVED", staff_id=staff_id,
+        amount=amount, payment_recorded_by=staff_id, waive_reason=reason,
     )
 
     token_result = generate_queue_token_service(cur, appointment_id, doctor_id=doctor_id, doctor_tz=doctor_tz)
@@ -1769,7 +1871,7 @@ def waive_consultation_fee_service(cur, appointment_id: int, *, reason: str, sta
     return {**_current_payment_record(cur, appointment_id), "token_just_issued": token_result["newly_generated"]}
 
 
-def settle_free_visit_service(cur, appointment_id: int):
+def settle_free_visit_service(cur, appointment_id: int, *, staff_id: int | None = None):
     """
     System-settles a CHECKED_IN visit that has no consultation fee
     configured (consultation_fee = 0) -- the OPD front-desk flow's
@@ -1817,19 +1919,14 @@ def settle_free_visit_service(cur, appointment_id: int):
     if charge["consultation_fee"] != 0 or _invoice_extra_charges_total(cur, appointment_id) != 0:
         raise FreeVisitNotEligible()
 
-    cur.execute(
-        """
-        UPDATE appointments
-        SET payment_status = 'WAIVED',
-            payment_method = NULL,
-            payment_amount = 0,
-            waive_reason = 'No consultation fee configured for this visit',
-            payment_recorded_by = NULL,
-            payment_recorded_at = NOW(),
-            updated_at = NOW()
-        WHERE id = %s
-        """,
-        (appointment_id,),
+    _write_consultation_payment_status(
+        cur,
+        appointment_id,
+        status="WAIVED",
+        staff_id=staff_id,
+        amount=0,
+        payment_recorded_by=None,
+        waive_reason="No consultation fee configured for this visit",
     )
 
     token_result = generate_queue_token_service(cur, appointment_id, doctor_id=doctor_id, doctor_tz=doctor_tz)
@@ -1887,18 +1984,9 @@ def record_refund_service(cur, appointment_id: int, *, amount, reason: str, staf
     if amount > payment_amount:
         raise RefundExceedsPayment()
 
-    cur.execute(
-        """
-        UPDATE appointments
-        SET payment_status = 'REFUNDED',
-            refund_amount = %s,
-            refund_reason = %s,
-            refunded_by = %s,
-            refunded_at = NOW(),
-            updated_at = NOW()
-        WHERE id = %s
-        """,
-        (amount, reason, staff_id, appointment_id),
+    _write_consultation_payment_status(
+        cur, appointment_id, status="REFUNDED", staff_id=staff_id,
+        refund_amount=amount, refund_reason=reason, refunded_by=staff_id,
     )
 
     return _current_payment_record(cur, appointment_id)

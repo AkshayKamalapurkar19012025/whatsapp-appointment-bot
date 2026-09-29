@@ -158,36 +158,80 @@ def get_billing_report(
     staff: dict = Depends(get_current_staff),
 ):
     """
-    OPD billing reconciliation view backing a future front-desk/admin
-    "Billing" panel (no frontend for this yet -- see DashboardPanel.tsx
-    for where /stats and /trends are consumed; this endpoint exists so
-    that panel has a real API to build against). Staff-readable, same
-    posture as /stats and /trends above: GET /appointments already
-    returns payment_status/payment_method/payment_amount per row to any
-    STAFF session, so an aggregate over the same columns isn't more
-    sensitive.
+    OPD billing reconciliation view backing the admin "Billing" panel
+    (frontend/src/admin/BillingPanel.tsx). Staff-readable, same posture
+    as /stats and /trends above: GET /appointments already returns
+    payment_status/payment_method/payment_amount per row to any STAFF
+    session, and GET /api/billing/* already exposes invoice/charge/
+    payment detail to any STAFF session, so an aggregate over the same
+    data isn't more sensitive.
+
+    Phase 10B (Billing Ledger Coexistence, ADR-009 Option B): collections
+    now read Ledger B (invoices/charges/payments, migrations/0033)
+    instead of Ledger A (appointments.payment_status and siblings).
+    Before this phase, "collected" meant only the consultation fee --
+    a visit with a paid Consultation charge AND a paid Lab charge showed
+    just the consultation amount, understating real collections (see
+    tests/test_billing_ledger_reconciliation_gap.py and
+    docs/architecture/BILLING_LEDGER_COEXISTENCE.md for the concrete
+    Consultation ₹500 + Lab ₹1200 example this fixes). Ledger B's
+    payments table is the union of every charge type (CONSULTATION --
+    mirrored from Ledger A by app/services/billing_services.py's
+    mirror_legacy_consultation_payment_service -- plus LAB/RADIOLOGY/
+    PROCEDURE/PHARMACY/SERVICE/OTHER, which only ever existed in Ledger
+    B), so summing it gives the real unified total directly, with no
+    separate merge step.
 
     Four independent pieces, not one combined query -- each answers a
-    different front-desk question and has a different natural time
-    scope:
-      * collections: money actually collected (PAID), bucketed by
-        payment_method and by doctor, over the trailing `days` days
-        (payment_recorded_at-scoped -- when it was collected, not when
-        the appointment was scheduled).
-      * outstanding: what's currently owed right now -- every CHECKED_IN
-        appointment still UNPAID or FAILED. Deliberately NOT time-scoped
-        by `days`: "who owes money today" means everyone outstanding,
-        not just the ones from this window.
-      * waivers: count + reasons for the trailing `days` days. No dollar
-        total -- waive_consultation_fee_service and settle_free_visit_
-        service both record payment_amount = 0 for a waived visit (see
-        their docstrings), so there is no real "amount waived" number to
-        report; fabricating one from doctor_appointment_types.
-        consultation_fee's *current* price would misrepresent what was
-        actually waived at the time.
-      * refunds: count + total refund_amount for the trailing `days`
-        days (refund_amount is actually recorded, unlike waivers, so a
-        real total is reportable here).
+    different front-desk question, has a different natural time scope,
+    and -- now that the two ledgers coexist -- a different authoritative
+    source:
+      * collections (Ledger B, unified across every charge type): money
+        actually collected, bucketed by payment method and by doctor,
+        over the trailing `days` days (payments.recorded_at-scoped --
+        when it was collected, not when the appointment was scheduled).
+        "Effective" amount (amount - refunded_amount) per payment row,
+        the same convention billing_services.py's _compute_totals and
+        get_invoice_summary_service already use for a single invoice --
+        a payment that's since been partially refunded shouldn't still
+        read as fully collected here either.
+      * outstanding (Ledger A, documented exception): what's currently
+        owed right now -- every CHECKED_IN appointment still UNPAID or
+        FAILED on its *consultation* fee specifically. Deliberately NOT
+        time-scoped by `days`: "who owes money today" means everyone
+        outstanding, not just the ones from this window. Not moved to
+        Ledger B in this phase: UNPAID/FAILED is a discrete Ledger-A
+        state with no equivalent Ledger-B concept (an invoice simply has
+        a balance, not a status word), and the front-desk question this
+        answers -- "who hasn't paid to be seen" -- is specifically about
+        the consultation-fee gate, not the visit's full invoice balance
+        (which may still be open on lab/pharmacy charges ordered during
+        the consultation, and isn't collectible until the encounter is
+        further along). Unifying this into a balance-based view is
+        follow-up work, not this phase's -- see
+        docs/architecture/BILLING_LEDGER_COEXISTENCE.md.
+      * waivers (Ledger A, documented exception): count + reasons for
+        the trailing `days` days. No dollar total -- Ledger A's own
+        WAIVED write always records payment_amount = 0 for both
+        waive_consultation_fee_service and settle_free_visit_service
+        (see _write_consultation_payment_status in
+        app/services/appointment_services.py), regardless of what fee
+        was actually forgiven, so there's still no real "amount waived"
+        number on the Ledger A side of this phase either. (Ledger B's
+        mirror of a real, nonzero waiver -- unlike Ledger A -- does
+        record the true forgiven amount as a WAIVED-method payment; a
+        future phase could read a real waived total from there. Left
+        alone here to keep this phase's diff to what Step 13 actually
+        asked for.)
+      * refunds (Ledger A, documented exception): count + total
+        refund_amount for the trailing `days` days. Consultation-fee
+        refunds only (record_refund_service) -- Ledger B has its own,
+        separate void/refund mechanism for invoice payments
+        (void_invoice_payment_service) that isn't necessarily the same
+        shape (void vs. partial refund), so merging the two into one
+        list risks misrepresenting what actually happened; left as a
+        documented Ledger-A-only view rather than guessing at a unified
+        semantic no spec has defined yet.
     """
     window_start = date.today() - timedelta(days=days - 1)
 
@@ -195,12 +239,12 @@ def get_billing_report(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT payment_method, COUNT(*), COALESCE(SUM(payment_amount), 0)
-                FROM appointments
-                WHERE payment_status = 'PAID'
-                  AND payment_recorded_at::date >= %s
-                GROUP BY payment_method
-                ORDER BY payment_method
+                SELECT p.method, COUNT(*), COALESCE(SUM(p.amount - p.refunded_amount), 0)
+                FROM payments p
+                WHERE p.status = 'COMPLETED'
+                  AND p.recorded_at::date >= %s
+                GROUP BY p.method
+                ORDER BY p.method
                 """,
                 (window_start,),
             )
@@ -208,12 +252,14 @@ def get_billing_report(
 
             cur.execute(
                 """
-                SELECT d.id, d.name, COUNT(*), COALESCE(SUM(a.payment_amount), 0)
-                FROM appointments a
-                JOIN doctors d ON d.id = a.doctor_id
-                WHERE a.payment_status = 'PAID'
-                  AND a.payment_recorded_at::date >= %s
-                GROUP BY d.id, d.name
+                SELECT e.doctor_id, d.name, COUNT(*), COALESCE(SUM(p.amount - p.refunded_amount), 0)
+                FROM payments p
+                JOIN invoices i ON i.id = p.invoice_id
+                JOIN encounters e ON e.id = i.encounter_id
+                JOIN doctors d ON d.id = e.doctor_id
+                WHERE p.status = 'COMPLETED'
+                  AND p.recorded_at::date >= %s
+                GROUP BY e.doctor_id, d.name
                 ORDER BY d.name
                 """,
                 (window_start,),

@@ -912,7 +912,7 @@ def _notify_queue_token(cur, appointment_id: int, token_number: int) -> None:
 def record_appointment_payment(
     appointment_id: int,
     payment: PaymentRecord,
-    staff: dict = Depends(get_current_staff),
+    staff: dict = Depends(require_permission("bill.record_payment")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -940,6 +940,16 @@ def record_appointment_payment(
                 raise HTTPException(
                     status_code=409,
                     detail="This doctor/appointment-type combination no longer has a configured fee",
+                )
+            except svc_exc.InvoiceVoided:
+                # Phase 10B: this appointment's consultation payment now
+                # mirrors into the same Ledger B invoice /bill/void can
+                # void independently of Ledger A -- a genuinely new
+                # failure mode this endpoint didn't have before, since
+                # it never touched invoices at all pre-coexistence.
+                raise HTTPException(
+                    status_code=409,
+                    detail="This visit's bill has been voided; payment cannot be recorded",
                 )
 
             if result["token_just_issued"]:
@@ -980,6 +990,21 @@ def waive_appointment_payment(
                     status_code=409,
                     detail="Waiver requires a completed visit with this doctor in the last 3 days",
                 )
+            except svc_exc.AppointmentTypeNotAssigned:
+                # Phase 10B: waive_consultation_fee_service now looks up
+                # the configured fee (get_consultation_charge_service),
+                # same as record_payment_service always has, so it can
+                # size the Ledger B mirror -- same exception, same
+                # handling as the sibling /payment endpoint already uses.
+                raise HTTPException(
+                    status_code=409,
+                    detail="This doctor/appointment-type combination no longer has a configured fee",
+                )
+            except svc_exc.InvoiceVoided:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This visit's bill has been voided; the consultation fee cannot be waived",
+                )
 
             record_audit_log(
                 cur,
@@ -1016,7 +1041,7 @@ def settle_free_appointment_visit(
     with get_connection() as conn:
         with conn.cursor() as cur:
             try:
-                result = settle_free_visit_service(cur, appointment_id)
+                result = settle_free_visit_service(cur, appointment_id, staff_id=staff["id"])
             except svc_exc.AppointmentNotFound:
                 raise HTTPException(status_code=404, detail="Appointment not found")
             except svc_exc.InvalidStatusTransition:

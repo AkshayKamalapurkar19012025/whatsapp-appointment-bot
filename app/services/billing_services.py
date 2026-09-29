@@ -457,6 +457,185 @@ def record_invoice_payment_service(
     return get_invoice_summary_service(cur, appointment_id, staff_id=staff_id)
 
 
+def _get_active_legacy_consultation_charge(cur, legacy_appointment_id: int):
+    cur.execute(
+        """
+        SELECT id, invoice_id, amount FROM charges
+        WHERE legacy_appointment_id = %s AND source_type = 'CONSULTATION' AND status = 'ACTIVE'
+        """,
+        (legacy_appointment_id,),
+    )
+    row = cur.fetchone()
+    return {"id": row[0], "invoice_id": row[1], "amount": row[2]} if row is not None else None
+
+
+def mirror_legacy_consultation_payment_service(
+    cur,
+    appointment_id: int,
+    *,
+    event: str,
+    staff_id: int,
+    amount=None,
+    method: str | None = None,
+    refund_amount=None,
+    refund_reason: str | None = None,
+    refunded_by: int | None = None,
+):
+    """
+    Phase 10B (Billing Ledger Coexistence, ADR-009 Option B): the
+    same-transaction Ledger B mirror for a Ledger A consultation-payment
+    event. Called ONLY from app/services/appointment_services.py's
+    _write_consultation_payment_status chokepoint, on the same cursor/
+    transaction as the Ledger A UPDATE it mirrors -- never a separate
+    connection, never a separate commit, so a mirror failure rolls the
+    Ledger A write back too (the same-transaction guarantee ADR-009
+    requires). Ledger A itself is never read or written here; this
+    function only ever writes invoices/charges/payments.
+
+    event is one of PAID/FAILED/WAIVED/REFUNDED, matching Ledger A's own
+    payment_status vocabulary exactly -- deliberately not translated to
+    some new mirror-specific vocabulary at this boundary.
+
+    PAID/FAILED: ensures this encounter's invoice and its (at most one,
+    DB-enforced -- charges_one_consultation_per_legacy_appointment) ACTIVE
+    CONSULTATION charge exist, then inserts a payment (COMPLETED/
+    DECLINED respectively) for `amount` via `method`. A FAILED-then-PAID
+    retry (Ledger A's only "edit" path -- record_payment_service's own
+    UPDATE simply overwrites payment_status on each call, see its
+    docstring) correctly reuses the SAME charge across both mirror calls
+    and inserts a SECOND payment row for the successful retry, exactly
+    mirroring Ledger B's own existing declined-then-retried pattern
+    (migrations/0050) rather than inventing a new one.
+
+    WAIVED: amount == 0 (settle_free_visit_service's only possible case,
+    by its own precondition) mirrors nothing -- charges.amount and
+    payments.amount both CHECK (amount > 0), so a genuinely zero-cost
+    visit cannot be represented as any ledger-2 row, waived or
+    otherwise; this is a resolved "there is nothing to mirror" case, not
+    a silently-dropped one. A nonzero amount (waive_consultation_fee_
+    service -- always a real, configured fee being forgiven) mirrors as
+    a real ACTIVE charge plus a COMPLETED payment for the same amount
+    with method='WAIVED' (migrations/0058 widened payments.method to
+    allow this, the same way migrations/0050 widened payments.status for
+    DECLINED) -- so the invoice balance correctly zeroes to 0 without
+    implying real cash moved under an existing method.
+
+    REFUNDED: finds the ONE payment row that mirrors this appointment's
+    consultation fee via legacy_appointment_id (not just any COMPLETED
+    payment on the invoice, which might also carry an unrelated paid lab
+    charge) and applies the SAME refunded_amount/reason/by/at Ledger A
+    just recorded -- a single, one-shot application, matching Ledger A's
+    own one-shot refund semantics exactly (record_refund_service raises
+    PaymentStateConflict on a second refund attempt; ledger 2's own
+    refund_invoice_payment_service supports genuine multiple partial
+    refunds, but that superset capability is deliberately not exposed
+    through this mirror, since Ledger A -- the source of truth this
+    phase mirrors FROM -- has no equivalent to expose).
+
+    Returns None for the "nothing to mirror" WAIVED/₹0 case, otherwise
+    the charge/payment ids touched (for the caller's own bookkeeping/
+    audit-log details -- appointments itself stores no ledger-2
+    reference, per this phase's "no new Ledger A column" scope).
+    """
+    if event == "REFUNDED":
+        cur.execute(
+            """
+            SELECT id, invoice_id, amount, refunded_amount, status
+            FROM payments
+            WHERE legacy_appointment_id = %s AND status = 'COMPLETED'
+            ORDER BY recorded_at DESC
+            LIMIT 1
+            FOR UPDATE
+            """,
+            (appointment_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            # Ledger A's own PAID precondition on record_refund_service
+            # guarantees a completed payment exists there; if nothing
+            # was ever mirrored for it (e.g. a pre-coexistence historical
+            # row not yet backfilled), there is nothing here to update.
+            # The caller decides whether that's acceptable -- this
+            # function does not silently invent a payment to refund.
+            return None
+        payment_id, invoice_id, payment_amount, already_refunded, status = row
+        cur.execute(
+            """
+            UPDATE payments
+            SET refunded_amount = %s, refund_reason = %s, refunded_by = %s, refunded_at = NOW()
+            WHERE id = %s
+            """,
+            (refund_amount, refund_reason, refunded_by, payment_id),
+        )
+        return {"payment_id": payment_id, "invoice_id": invoice_id}
+
+    if amount is None or amount == 0:
+        # charges.amount and payments.amount both CHECK (amount > 0) --
+        # this applies regardless of which event triggered the mirror,
+        # not just WAIVED. A genuinely ₹0 consultation fee explicitly
+        # recorded PAID/FAILED (rather than routed through the dedicated
+        # settle_free_visit_service) hits the exact same structural
+        # wall: nothing can be mirrored, because there is nothing a
+        # ledger-2 row could represent that wouldn't violate the
+        # constraint. Ledger A's own write already handles this case
+        # correctly on its own (a plain UPDATE has no such constraint);
+        # this mirror simply has nothing to do.
+        return None
+
+    invoice = _ensure_invoice(cur, appointment_id, staff_id)
+
+    if invoice["status"] == "VOID":
+        raise InvoiceVoided()
+
+    charge = _get_active_legacy_consultation_charge(cur, appointment_id)
+    if charge is None:
+        # ON CONFLICT ... DO NOTHING, not a bare INSERT wrapped in
+        # `except psycopg.errors.UniqueViolation` -- a caught
+        # UniqueViolation still leaves the surrounding transaction
+        # aborted (Postgres requires a ROLLBACK or SAVEPOINT to recover,
+        # neither of which this function's caller-owned cursor/
+        # transaction gets), so every statement after the except block,
+        # including the very next SELECT, would fail with
+        # InFailedSqlTransaction and take Ledger A's own just-executed
+        # UPDATE down with it on commit. ON CONFLICT never raises in the
+        # first place, so there is nothing to recover from. Same idiom
+        # _ensure_invoice above already uses for its own race. In
+        # practice this is defense-in-depth either way: Ledger A's own
+        # _lock_appointment_for_payment (FOR UPDATE OF a) already
+        # serializes concurrent calls for the same appointment before
+        # either ever reaches this function.
+        cur.execute(
+            """
+            INSERT INTO charges (invoice_id, description, amount, source_type, legacy_appointment_id, created_by)
+            VALUES (%s, %s, %s, 'CONSULTATION', %s, %s)
+            ON CONFLICT (legacy_appointment_id) WHERE source_type = 'CONSULTATION' AND status = 'ACTIVE'
+            DO NOTHING
+            RETURNING id, invoice_id, amount
+            """,
+            (invoice["id"], "Consultation fee", amount, appointment_id, staff_id),
+        )
+        row = cur.fetchone()
+        if row is None:
+            charge = _get_active_legacy_consultation_charge(cur, appointment_id)
+        else:
+            charge = {"id": row[0], "invoice_id": row[1], "amount": row[2]}
+
+    payment_status = {"PAID": "COMPLETED", "FAILED": "DECLINED", "WAIVED": "COMPLETED"}[event]
+    payment_method = "WAIVED" if event == "WAIVED" else method
+
+    cur.execute(
+        """
+        INSERT INTO payments (invoice_id, amount, method, status, legacy_appointment_id, recorded_by)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (charge["invoice_id"], amount, payment_method, payment_status, appointment_id, staff_id),
+    )
+    (payment_id,) = cur.fetchone()
+
+    return {"charge_id": charge["id"], "payment_id": payment_id}
+
+
 def void_invoice_payment_service(cur, appointment_id: int, payment_id: int, *, staff_id: int, reason: str):
     invoice = _get_invoice_for_appointment(cur, appointment_id)
 
