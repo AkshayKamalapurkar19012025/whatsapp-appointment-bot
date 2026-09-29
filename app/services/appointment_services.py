@@ -73,6 +73,11 @@ from app.services.exceptions import (
     FreeVisitNotEligible,
     RefundExceedsPayment,
 )
+from app.services.billing_services import (
+    mirror_consultation_payment,
+    mirror_consultation_fee_waived,
+    mirror_consultation_payment_refunded,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1690,6 +1695,21 @@ def record_payment_service(cur, appointment_id: int, *, method: str, outcome: st
         (outcome, method, amount, staff_id, appointment_id),
     )
 
+    # ADR-009 (docs/OPD_HIMS_ARCHITECTURE_AUDIT.md), Option B: mirror
+    # into the invoices/charges/payments model so Dashboard/Payment
+    # History/the Exception Engine see this too -- additive only,
+    # doesn't change anything above. Guarded on amount > 0 since
+    # charges.amount has CHECK (amount > 0) and a genuinely free visit
+    # (amount == 0) has nothing to mirror -- that case is
+    # settle_free_visit_service's, not this function's, but nothing
+    # stops a caller reaching amount == 0 here too (e.g. a fee
+    # reconfigured to 0 after check-in), so this guards defensively
+    # rather than assuming it can't happen.
+    if amount > 0:
+        mirror_consultation_payment(
+            cur, appointment_id, staff_id=staff_id, amount=amount, method=method, outcome=outcome
+        )
+
     token_just_issued = False
     if outcome == "PAID":
         token_result = generate_queue_token_service(cur, appointment_id, doctor_id=doctor_id, doctor_tz=doctor_tz)
@@ -1763,6 +1783,21 @@ def waive_consultation_fee_service(cur, appointment_id: int, *, reason: str, sta
         """,
         (reason, staff_id, appointment_id),
     )
+
+    # ADR-009 (docs/OPD_HIMS_ARCHITECTURE_AUDIT.md), Option B: mirror
+    # the waived fee as a VOIDED Ledger B charge -- see
+    # mirror_consultation_fee_waived's own docstring for why VOIDED
+    # rather than a $0 payment. The fee amount is recomputed here the
+    # same way record_payment_service does (this function's own
+    # payment_amount column is always 0 for a waiver, which isn't the
+    # amount that was actually waived). Guarded on > 0 for the same
+    # reason record_payment_service's mirror call is: nothing stops a
+    # $0-configured fee from reaching this function too, and that case
+    # has nothing to mirror.
+    waived_charge = get_consultation_charge_service(cur, appointment_id)
+    waived_amount = waived_charge["consultation_fee"] + _invoice_extra_charges_total(cur, appointment_id)
+    if waived_amount > 0:
+        mirror_consultation_fee_waived(cur, appointment_id, staff_id=staff_id, amount=waived_amount, reason=reason)
 
     token_result = generate_queue_token_service(cur, appointment_id, doctor_id=doctor_id, doctor_tz=doctor_tz)
 
@@ -1900,6 +1935,12 @@ def record_refund_service(cur, appointment_id: int, *, amount, reason: str, staf
         """,
         (amount, reason, staff_id, appointment_id),
     )
+
+    # ADR-009 (docs/OPD_HIMS_ARCHITECTURE_AUDIT.md), Option B: mirror
+    # onto the already-mirrored COMPLETED payment (guaranteed to exist,
+    # since this function only ever runs from payment_status = PAID,
+    # which is exactly when mirror_consultation_payment created it).
+    mirror_consultation_payment_refunded(cur, appointment_id, staff_id=staff_id, amount=amount, reason=reason)
 
     return _current_payment_record(cur, appointment_id)
 

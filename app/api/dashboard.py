@@ -158,36 +158,71 @@ def get_billing_report(
     staff: dict = Depends(get_current_staff),
 ):
     """
-    OPD billing reconciliation view backing a future front-desk/admin
-    "Billing" panel (no frontend for this yet -- see DashboardPanel.tsx
-    for where /stats and /trends are consumed; this endpoint exists so
-    that panel has a real API to build against). Staff-readable, same
-    posture as /stats and /trends above: GET /appointments already
-    returns payment_status/payment_method/payment_amount per row to any
-    STAFF session, so an aggregate over the same columns isn't more
-    sensitive.
+    OPD billing reconciliation view backing the real, shipped "Billing"
+    panel (frontend/src/admin/BillingPanel.tsx -- see its own header
+    comment: wired up after this endpoint was built, this docstring's
+    older "no frontend for this yet" claim was stale).
+
+    ADR-009 (docs/OPD_HIMS_ARCHITECTURE_AUDIT.md), Option B: as of
+    migrations/0058_consultation_fee_ledger_mirror.sql, every write to
+    appointments.payment_status (app/services/appointment_services.py's
+    record_payment_service/waive_consultation_fee_service/
+    record_refund_service) also mirrors into a CONSULTATION charge +
+    payment on the encounter's Ledger B invoice
+    (app/services/billing_services.py's mirror_consultation_*
+    functions). collections (by method and by doctor) and refunds below
+    now read that mirror instead of appointments.payment_status
+    directly, closing the proven gap (tests/
+    test_billing_ledger_reconciliation_gap.py) where this report and
+    Payment History disagreed on one visit's total.
+
+    outstanding_unpaid and waivers are the deliberate exceptions, both
+    still reading appointments.payment_status directly, for two
+    different reasons:
+      * outstanding_unpaid: this phase mirrors PAID/FAILED/WAIVED/
+        REFUNDED *events*, not an eagerly-created *unpaid* charge at
+        check-in time (see migration 0058's own "scope note"), so a
+        checked-in appointment that has never had a payment attempt yet
+        has no mirrored charge to read from Ledger B at all -- rewriting
+        this query now would silently make it under-report. This is a
+        temporary scope gap, closeable by a later, separately-scoped
+        phase (creating the charge eagerly at check-in).
+      * waivers: settle_free_visit_service (a genuinely free, $0 visit)
+        has nothing to mirror at all -- charges.amount has CHECK
+        (amount > 0), so there is no Ledger B row a $0 waiver could
+        ever produce. This is not a scope gap to close later; Ledger B
+        structurally cannot represent a $0 charge, so
+        appointments.payment_status stays the permanent source for
+        this one section.
+    Both are real-time-correct for their own questions by construction
+    (payment_status is the queue-token gate itself), so reading it
+    directly here is not a workaround, just the right source.
 
     Four independent pieces, not one combined query -- each answers a
     different front-desk question and has a different natural time
     scope:
-      * collections: money actually collected (PAID), bucketed by
-        payment_method and by doctor, over the trailing `days` days
-        (payment_recorded_at-scoped -- when it was collected, not when
-        the appointment was scheduled).
+      * collections: money actually collected (COMPLETED, net of any
+        refund), bucketed by payment_method and by doctor, over the
+        trailing `days` days (recorded_at-scoped -- when it was
+        collected, not when the appointment was scheduled). Net-of-
+        refund is a deliberate small refinement over the old Ledger-A
+        query's behavior (which excluded a visit from this report
+        entirely, for its *whole* collected amount, the moment *any*
+        refund against it was recorded, however partial) -- the same
+        "effective paid" pattern already used elsewhere in this
+        codebase (app/services/billing_history_service.py).
       * outstanding: what's currently owed right now -- every CHECKED_IN
         appointment still UNPAID or FAILED. Deliberately NOT time-scoped
         by `days`: "who owes money today" means everyone outstanding,
-        not just the ones from this window.
-      * waivers: count + reasons for the trailing `days` days. No dollar
-        total -- waive_consultation_fee_service and settle_free_visit_
-        service both record payment_amount = 0 for a waived visit (see
-        their docstrings), so there is no real "amount waived" number to
-        report; fabricating one from doctor_appointment_types.
-        consultation_fee's *current* price would misrepresent what was
-        actually waived at the time.
-      * refunds: count + total refund_amount for the trailing `days`
-        days (refund_amount is actually recorded, unlike waivers, so a
-        real total is reportable here).
+        not just the ones from this window. See the exception noted
+        above.
+      * waivers: count + reasons for the trailing `days` days, read from
+        appointments.waive_reason/payment_recorded_at directly (see the
+        exception noted above -- covers both a real fee waived and a
+        free visit settled).
+      * refunds: count + total refunded_amount for the trailing `days`
+        days, read from the mirrored payment's own refunded_amount/
+        refund_reason/refunded_at.
     """
     window_start = date.today() - timedelta(days=days - 1)
 
@@ -195,12 +230,13 @@ def get_billing_report(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT payment_method, COUNT(*), COALESCE(SUM(payment_amount), 0)
-                FROM appointments
-                WHERE payment_status = 'PAID'
-                  AND payment_recorded_at::date >= %s
-                GROUP BY payment_method
-                ORDER BY payment_method
+                SELECT pay.method, COUNT(*), COALESCE(SUM(pay.amount - pay.refunded_amount), 0)
+                FROM payments pay
+                WHERE pay.legacy_appointment_id IS NOT NULL
+                  AND pay.status = 'COMPLETED'
+                  AND pay.recorded_at::date >= %s
+                GROUP BY pay.method
+                ORDER BY pay.method
                 """,
                 (window_start,),
             )
@@ -208,11 +244,12 @@ def get_billing_report(
 
             cur.execute(
                 """
-                SELECT d.id, d.name, COUNT(*), COALESCE(SUM(a.payment_amount), 0)
-                FROM appointments a
+                SELECT d.id, d.name, COUNT(*), COALESCE(SUM(pay.amount - pay.refunded_amount), 0)
+                FROM payments pay
+                JOIN appointments a ON a.id = pay.legacy_appointment_id
                 JOIN doctors d ON d.id = a.doctor_id
-                WHERE a.payment_status = 'PAID'
-                  AND a.payment_recorded_at::date >= %s
+                WHERE pay.status = 'COMPLETED'
+                  AND pay.recorded_at::date >= %s
                 GROUP BY d.id, d.name
                 ORDER BY d.name
                 """,
@@ -233,6 +270,17 @@ def get_billing_report(
             )
             outstanding_rows = cur.fetchall()
 
+            # Deliberately NOT rewritten to Ledger B, unlike collections/
+            # refunds above: settle_free_visit_service (a genuinely free,
+            # $0 visit) has no mirrored charge at all -- charges.amount
+            # has CHECK (amount > 0), and there is nothing to bill for a
+            # free visit (see mirror_consultation_fee_waived's own
+            # docstring). A Ledger-B-only query would silently miss
+            # every free-visit waiver, undercounting this section the
+            # way outstanding_unpaid's own comment above explains for a
+            # different reason. appointments.payment_status = 'WAIVED'
+            # already correctly captures both waiver paths (a real fee
+            # waived, and a free visit settled) in one place.
             cur.execute(
                 """
                 SELECT a.id, p.name, d.name, a.waive_reason, a.payment_recorded_at
@@ -249,10 +297,11 @@ def get_billing_report(
 
             cur.execute(
                 """
-                SELECT COUNT(*), COALESCE(SUM(refund_amount), 0)
-                FROM appointments
-                WHERE payment_status = 'REFUNDED'
-                  AND refunded_at::date >= %s
+                SELECT COUNT(*), COALESCE(SUM(pay.refunded_amount), 0)
+                FROM payments pay
+                WHERE pay.legacy_appointment_id IS NOT NULL
+                  AND pay.refunded_amount > 0
+                  AND pay.refunded_at::date >= %s
                 """,
                 (window_start,),
             )
@@ -260,13 +309,14 @@ def get_billing_report(
 
             cur.execute(
                 """
-                SELECT a.id, p.name, d.name, a.refund_amount, a.refund_reason, a.refunded_at
-                FROM appointments a
+                SELECT a.id, p.name, d.name, pay.refunded_amount, pay.refund_reason, pay.refunded_at
+                FROM payments pay
+                JOIN appointments a ON a.id = pay.legacy_appointment_id
                 JOIN patients p ON p.id = a.patient_id
                 JOIN doctors d ON d.id = a.doctor_id
-                WHERE a.payment_status = 'REFUNDED'
-                  AND a.refunded_at::date >= %s
-                ORDER BY a.refunded_at DESC
+                WHERE pay.refunded_amount > 0
+                  AND pay.refunded_at::date >= %s
+                ORDER BY pay.refunded_at DESC
                 """,
                 (window_start,),
             )

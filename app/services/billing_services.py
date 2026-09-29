@@ -516,6 +516,132 @@ def refund_invoice_payment_service(
 
 
 # ---------------------------------------------------------------------
+# Consultation-fee mirroring (ADR-009, docs/OPD_HIMS_ARCHITECTURE_AUDIT.md,
+# Option B, Phase 1)
+#
+# These four functions are called from app/services/appointment_
+# services.py's record_payment_service/waive_consultation_fee_service/
+# record_refund_service -- never from an API route directly -- one
+# additive call per function, in the same transaction as that
+# function's own appointments.payment_status write, so a mirror can
+# never exist without (or disagree with) the Ledger A row it mirrors.
+# settle_free_visit_service (consultation_fee = 0) deliberately has no
+# mirror call at all: charges.amount has a CHECK (amount > 0), and
+# there is genuinely nothing to bill for a free visit.
+#
+# Idempotency key: charges.legacy_appointment_id (migrations/0058),
+# UNIQUE -- at most one mirrored CONSULTATION charge per appointment,
+# ever. payments.legacy_appointment_id is NOT unique: a FAILED-then-
+# retried-PAID sequence mirrors to two payment rows sharing one
+# appointment id (matching payments.status's own DECLINED support,
+# migrations/0050), which is why the PAID/DECLINED mirror always calls
+# _ensure_mirrored_consultation_charge first rather than assuming the
+# charge already exists.
+# ---------------------------------------------------------------------
+
+
+def _ensure_mirrored_consultation_charge(cur, appointment_id: int, *, staff_id: int, amount) -> int:
+    """Idempotently ensure a CONSULTATION charge mirroring this
+    appointment's consultation fee exists on its encounter's invoice,
+    returning its id. Safe to call every time -- ON CONFLICT DO NOTHING
+    against the unique legacy_appointment_id index means only the
+    first caller for a given appointment actually inserts; every later
+    caller (e.g. a retried payment after an earlier FAILED attempt)
+    gets back the same row's id.
+
+    Known, accepted limitation: the charge's amount is fixed at
+    whichever call happens first. If the configured consultation_fee
+    (or invoice_line_items total) changes between a FAILED attempt and
+    its retry, the mirrored charge keeps the first attempt's amount,
+    not the retry's -- a real but narrow edge case (no evidence this
+    has ever happened in practice), accepted rather than reconciled,
+    consistent with this codebase's own stance against building for a
+    scenario with no concrete driving requirement."""
+    invoice = _ensure_invoice(cur, appointment_id, staff_id)
+
+    cur.execute(
+        """
+        INSERT INTO charges (invoice_id, description, amount, source_type, legacy_appointment_id, created_by)
+        VALUES (%s, 'Consultation fee', %s, 'CONSULTATION', %s, %s)
+        ON CONFLICT (legacy_appointment_id) WHERE legacy_appointment_id IS NOT NULL DO NOTHING
+        RETURNING id
+        """,
+        (invoice["id"], amount, appointment_id, staff_id),
+    )
+    row = cur.fetchone()
+    if row is not None:
+        return row[0]
+
+    cur.execute("SELECT id FROM charges WHERE legacy_appointment_id = %s", (appointment_id,))
+    return cur.fetchone()[0]
+
+
+def mirror_consultation_payment(cur, appointment_id: int, *, staff_id: int, amount, method: str, outcome: str):
+    """Mirrors record_payment_service's PAID or FAILED outcome as a
+    Ledger B payment (COMPLETED or DECLINED respectively) against the
+    mirrored CONSULTATION charge, creating that charge first if this is
+    the first mirrored event for this appointment. Called for both
+    outcomes -- a FAILED attempt still belongs in the audit trail
+    Payment History already gives every other declined Ledger B
+    payment (migrations/0050)."""
+    invoice_id = _ensure_invoice(cur, appointment_id, staff_id)["id"]
+    _ensure_mirrored_consultation_charge(cur, appointment_id, staff_id=staff_id, amount=amount)
+
+    status = "COMPLETED" if outcome == "PAID" else "DECLINED"
+    cur.execute(
+        """
+        INSERT INTO payments (invoice_id, amount, method, status, legacy_appointment_id, recorded_by)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """,
+        (invoice_id, amount, method, status, appointment_id, staff_id),
+    )
+
+
+def mirror_consultation_fee_waived(cur, appointment_id: int, *, staff_id: int, amount, reason: str):
+    """Mirrors waive_consultation_fee_service's transition as a
+    CONSULTATION charge created already-VOIDED -- a waived fee was
+    never billed, not "billed and paid by nobody," which is the
+    honest representation given payments.amount has a CHECK (amount >
+    0) and there is no non-cash 'method' this could pretend to be.
+    Voiding the charge (rather than not creating one) still records
+    that a fee existed and was waived, with the reason, for the audit
+    trail -- and correctly drops the invoice's net_amount to 0 for
+    this charge, so the Exception Engine's PAYMENT_PENDING check never
+    mistakes a waived visit for an outstanding one."""
+    invoice_id = _ensure_invoice(cur, appointment_id, staff_id)["id"]
+    cur.execute(
+        """
+        INSERT INTO charges (
+            invoice_id, description, amount, source_type, legacy_appointment_id,
+            status, voided_by, void_reason, voided_at, created_by
+        )
+        VALUES (%s, 'Consultation fee', %s, 'CONSULTATION', %s, 'VOIDED', %s, %s, NOW(), %s)
+        ON CONFLICT (legacy_appointment_id) WHERE legacy_appointment_id IS NOT NULL DO NOTHING
+        """,
+        (invoice_id, amount, appointment_id, staff_id, reason, staff_id),
+    )
+
+
+def mirror_consultation_payment_refunded(cur, appointment_id: int, *, staff_id: int, amount, reason: str):
+    """Mirrors record_refund_service's transition by updating the
+    already-mirrored COMPLETED payment's refunded_amount -- never a new
+    payment row, matching refund_invoice_payment_service's own pattern
+    for a real Ledger B refund. Only ever reachable after a mirrored
+    PAID event exists (record_refund_service itself only runs from
+    payment_status = PAID), so exactly one COMPLETED row with this
+    legacy_appointment_id is guaranteed to exist."""
+    cur.execute(
+        """
+        UPDATE payments
+        SET refunded_amount = refunded_amount + %s, refund_reason = %s,
+            refunded_by = %s, refunded_at = NOW()
+        WHERE legacy_appointment_id = %s AND status = 'COMPLETED'
+        """,
+        (amount, reason, staff_id, appointment_id),
+    )
+
+
+# ---------------------------------------------------------------------
 # Receipt (master spec section 42)
 # ---------------------------------------------------------------------
 

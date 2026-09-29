@@ -224,6 +224,16 @@ def test_billing_report_window_days_excludes_older_collections(client, db_connec
             "UPDATE appointments SET payment_recorded_at = %s WHERE id = %s",
             (old_recorded_at, appointment_id),
         )
+        # ADR-009 Option B (migrations/0058): get_billing_report's
+        # collections figures now read the mirrored Ledger B payment's
+        # own recorded_at, not appointments.payment_recorded_at
+        # directly -- backdate the mirror too, or this test would be
+        # asserting window-filtering against a column the endpoint no
+        # longer reads.
+        cur.execute(
+            "UPDATE payments SET recorded_at = %s WHERE legacy_appointment_id = %s",
+            (old_recorded_at, appointment_id),
+        )
     db_connection.commit()
 
     response = client.get("/api/dashboard/billing?days=14", headers=admin_headers)

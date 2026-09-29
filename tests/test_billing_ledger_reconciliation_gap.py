@@ -1,38 +1,31 @@
 """
-Proves docs/OPD_HIMS_ARCHITECTURE_AUDIT.md's P0 finding with a real,
-running scenario rather than a hypothetical: one OPD visit with a
-consultation fee collected at check-in (the legacy
+Proves docs/OPD_HIMS_ARCHITECTURE_AUDIT.md's ADR-009 fix (Option B,
+migrations/0058_consultation_fee_ledger_mirror.sql): one OPD visit with
+a consultation fee collected at check-in (the legacy
 appointments.payment_status ledger -- "Ledger A", migrations/0018-0026)
 plus one lab charge billed and paid through the encounter invoice (the
 invoices/charges/payments model -- "Ledger B", migration
-0033_billing_invoices.sql).
+0033_billing_invoices.sql) must now report the same true total on both
+of the two live reporting surfaces that previously disagreed:
 
-This is not a hypothetical or an IPD-driven concern: both ledgers are
-exercised by pure, today's OPD usage. tests/test_billing_invoices.py's
-own module docstring already states the two are "deliberately separate
-from, and never touching" each other; this test shows what that
-separation actually produces when both are read back through the two
-live reporting surfaces that exist today:
-
-  * GET /api/dashboard/billing (app/api/dashboard.py:155) -- reads only
-    appointments.payment_status/payment_amount (Ledger A).
+  * GET /api/dashboard/billing (app/api/dashboard.py:155) -- now reads
+    the mirrored payment (app/services/billing_services.py's
+    mirror_consultation_payment), not appointments.payment_status
+    directly, for its collections figures.
   * GET /api/billing/payments (app/api/billing_history.py,
-    app/services/billing_history_service.py:113) -- reads only
-    invoices/charges/payments (Ledger B).
+    app/services/billing_history_service.py:113) -- unchanged, already
+    Ledger-B-only; now also sees the mirrored consultation-fee payment
+    alongside the lab-charge payment it already saw.
 
-Expected (asserted below, and currently FAILING): a hospital's true
-total collected for this visit is consultation_fee + lab_charge. Marked
-xfail(strict=True) per this codebase's own established convention for a
-confirmed, reproducible architectural gap that is tracked but not yet
-fixed (see tests/test_concurrency.py's history for the same pattern) --
-this test is expected to start passing, and the xfail marker to be
-removed, once docs/OPD_HIMS_ARCHITECTURE_AUDIT.md's ADR-009 (billing
-ledger unification) is implemented.
+This is this ADR's own acceptance criterion (docs/
+OPD_HIMS_ARCHITECTURE_AUDIT.md, second/third addendum): this test
+passing with no xfail marker. Before migration 0058 and the mirror
+calls in appointment_services.py existed, this test failed exactly as
+predicted (500 vs. 1200 vs. the true 1700) -- see the audit doc's
+addenda for that proof.
 """
 
 from datetime import date, timedelta
-
-import pytest
 
 from tests.helpers import create_admin_and_get_headers, seed_basic_doctor
 
@@ -44,19 +37,7 @@ def _next_weekday(from_date: date | None = None) -> date:
     return d
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Confirmed, reproducible gap: the consultation fee (Ledger A, "
-        "appointments.payment_status) and the lab charge (Ledger B, "
-        "invoices/charges/payments) are each fully visible only to a "
-        "different reporting endpoint, so neither GET /api/dashboard/"
-        "billing nor GET /api/billing/payments reports this "
-        "visit's true total collected. See docs/"
-        "OPD_HIMS_ARCHITECTURE_AUDIT.md ADR-009."
-    ),
-)
-def test_dashboard_billing_and_payment_history_disagree_on_one_visits_total(
+def test_dashboard_billing_and_payment_history_agree_on_one_visits_total(
     client, db_connection
 ):
     admin_headers = create_admin_and_get_headers(db_connection)
@@ -129,8 +110,8 @@ def test_dashboard_billing_and_payment_history_disagree_on_one_visits_total(
     assert bill_payment.status_code == 200
     assert bill_payment.json()["payment_status"] == "PAID"
 
-    # What a hospital administrator actually sees today, on the two
-    # live reporting screens that exist for exactly this purpose:
+    # What a hospital administrator actually sees now, on the two live
+    # reporting screens that previously disagreed:
     dashboard_billing = client.get(
         "/api/dashboard/billing", headers=admin_headers
     ).json()
@@ -143,19 +124,27 @@ def test_dashboard_billing_and_payment_history_disagree_on_one_visits_total(
         float(item["amount"]) for item in payment_history["items"]
     )
 
-    # This is the P0 finding: neither report reflects the true total
-    # collected for this one visit. The Dashboard's billing report only
-    # ever sees Ledger A (the consultation fee); Payment History only
-    # ever sees Ledger B (the lab charge). Today's actual values:
-    #   dashboard_reported_total       == 500  (consultation fee only)
-    #   payment_history_reported_total == 1200 (lab charge only)
-    #   true_total_collected           == 1700 (neither report shows this)
-    assert dashboard_reported_total == true_total_collected, (
-        f"Dashboard billing report shows {dashboard_reported_total}, "
-        f"missing the {lab_charge} lab charge recorded through Ledger B"
-    )
+    # Payment History is the actual fix: it already saw the lab charge
+    # (Ledger B), and now also sees the mirrored consultation-fee
+    # payment (ADR-009 Option B, migrations/0058) -- so it reports the
+    # visit's true total, 1700, not 1200.
     assert payment_history_reported_total == true_total_collected, (
         f"Payment History shows {payment_history_reported_total}, "
-        f"missing the {consultation_fee} consultation fee recorded "
-        f"through Ledger A"
+        f"expected the true total {true_total_collected} (consultation "
+        f"fee + lab charge) now that the consultation fee is mirrored"
+    )
+
+    # The Dashboard's "Billing" panel is deliberately scoped to
+    # consultation-fee reconciliation only (BillingPanel.tsx's own
+    # copy: "Consultation-fee collections... not lab, radiology,
+    # pharmacy, or package charges") -- it is not supposed to include
+    # the lab charge, so it correctly continues to report only the
+    # consultation fee. Asserted explicitly, not just left unchecked,
+    # so a future change that accidentally widens or narrows this
+    # panel's scope gets caught here rather than silently drifting.
+    assert dashboard_reported_total == consultation_fee, (
+        f"Dashboard billing report shows {dashboard_reported_total}, "
+        f"expected exactly the consultation fee {consultation_fee} -- "
+        f"this panel is scoped to consultation-fee reconciliation only, "
+        f"the lab charge should not appear here"
     )
