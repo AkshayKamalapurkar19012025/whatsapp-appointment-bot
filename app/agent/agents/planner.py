@@ -100,14 +100,24 @@ def validate_plan(plan: Plan, registry: ToolRegistry, ctx: AuthContext, *, max_s
                 if dep is None or body["step"] not in step.depends_on:
                     raise PlanRejected(f"step {step.id}: {name!r} references step {body['step']}, which is not a dependency")
                 dep_tool = registry.get(dep.tool)
-                item_fields = _item_fields(dep_tool.output_model, body["list"])
-                if item_fields is None or body["field"] not in item_fields:
-                    raise PlanRejected(
-                        f"step {step.id}: {dep.tool} output has no list {body['list']!r} with field {body['field']!r}"
-                    )
+                if "list" in body:
+                    item_fields = _item_fields(dep_tool.output_model, body["list"])
+                    if item_fields is None or body["field"] not in item_fields:
+                        raise PlanRejected(
+                            f"step {step.id}: {dep.tool} output has no list {body['list']!r} with field {body['field']!r}"
+                        )
+                elif body["field"] not in dep_tool.output_model.model_fields:
+                    raise PlanRejected(f"step {step.id}: {dep.tool} output has no field {body['field']!r}")
                 ref_steps.add(body["step"])
             elif isinstance(value, list):
                 raise PlanRejected(f"step {step.id}: list arguments are not supported in Phase 1")
+
+        for name in tool.reference_only_args:
+            if name in step.args and not refs.is_ref(step.args[name]):
+                raise PlanRejected(
+                    f"step {step.id}: {step.tool} argument {name!r} must be a $from reference to a read step, "
+                    "never a typed value"
+                )
 
         missing = required - set(step.args)
         if missing:

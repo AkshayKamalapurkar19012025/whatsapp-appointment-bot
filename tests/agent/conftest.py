@@ -95,3 +95,30 @@ def world(client, db_connection):
     for table in ("patients", "appointments", "staff", "doctors", "departments", "appointment_types"):
         w.rows(f"UPDATE {table} SET hospital_id = 1 WHERE hospital_id <> 1")
     w.rows("DELETE FROM hospitals WHERE code = 'OTHER'")
+
+
+def _set_fee(world, amount):
+    world.rows("UPDATE doctor_appointment_types SET consultation_fee = %s WHERE doctor_id = %s",
+               (amount, world.seeded["doctor_id"]))
+
+
+World.set_fee = _set_fee
+
+
+def _checked_in(world, name="Ravi Kumar", *, hour=10, minute=30):
+    appt = world.appointment(world.patient(name), hour=hour, minute=minute)
+    assert world.client.post(f"/api/appointments/{appt}/visit", headers=world.admin_headers).status_code == 200
+    return appt
+
+
+World.checked_in = _checked_in
+
+
+def _appt(world, appt):
+    items = world.client.get("/api/appointments", params={"date_from": world.day.isoformat(),
+                                                          "date_to": world.day.isoformat()},
+                             headers=world.admin_headers).json()["items"]
+    return next(i for i in items if i["id"] == appt)
+
+
+World.appt = _appt

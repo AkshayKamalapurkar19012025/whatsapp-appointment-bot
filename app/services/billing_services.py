@@ -453,8 +453,117 @@ def record_invoice_payment_service(
     except psycopg.errors.UniqueViolation:
         raise DuplicateTransactionId()
 
-    cur.fetchone()
-    return get_invoice_summary_service(cur, appointment_id, staff_id=staff_id)
+    (new_payment_id,) = cur.fetchone()[:1]
+    return {**get_invoice_summary_service(cur, appointment_id, staff_id=staff_id), "last_payment_id": new_payment_id}
+
+
+def _get_active_consultation_charge(cur, invoice_id: int):
+    cur.execute(
+        "SELECT id, amount FROM charges WHERE invoice_id = %s AND source_type = 'CONSULTATION' AND status = 'ACTIVE'",
+        (invoice_id,),
+    )
+    row = cur.fetchone()
+    return {"id": row[0], "amount": row[1]} if row is not None else None
+
+
+def get_payment_by_id_service(cur, payment_id: int):
+    """Plumbing helper for appointment_services.py's consultation-payment
+    idempotency/refund checks (appointments.consultation_payment_id) --
+    a payment on its own, no invoice/appointment context, the smallest
+    read that answers "what's the current state of this specific
+    payment"."""
+    cur.execute(f"SELECT {', '.join(_PAYMENT_COLUMNS)} FROM payments WHERE id = %s", (payment_id,))
+    row = cur.fetchone()
+    return _payment_row_to_dict(row) if row is not None else None
+
+
+def record_consultation_fee_payment_service(
+    cur,
+    appointment_id: int,
+    *,
+    staff_id: int,
+    amount,
+    method: str,
+    outcome: str,
+):
+    """
+    Phase 10 (Billing Ledger Unification): the ledger-2-backed
+    replacement for what used to be a plain UPDATE appointments SET
+    payment_status=... -- ensures this encounter's invoice and its
+    (at most one, DB-enforced -- charges_one_consultation_per_invoice)
+    ACTIVE CONSULTATION charge exist, then records the payment against
+    it by calling record_invoice_payment_service directly rather than
+    re-implementing payment insertion here (the "no second payment
+    business logic" rule this phase is built around).
+
+    outcome is PAID or FAILED, the same vocabulary appointment_services.
+    record_payment_service's caller already uses -- translated to
+    record_invoice_payment_service's own COMPLETED/DECLINED status
+    vocabulary at this one boundary, so neither side has to learn the
+    other's words.
+
+    amount is computed by the caller (appointment_services.py already
+    owns "what does this consultation cost", via get_consultation_
+    charge_service/_invoice_extra_charges_total -- not duplicated here).
+    The charge, once created, is never re-priced by a later call: like
+    every other charge in this ledger, its amount is fixed at creation,
+    consistent with charges having no "amend the amount" operation
+    anywhere else in this schema either.
+
+    Returns the invoice summary plus payment_id/charge_id so the caller
+    can record appointments.consultation_payment_id.
+
+    amount == 0 is a real, reachable case (a doctor/appointment-type
+    configured with no consultation fee, paid rather than routed
+    through the dedicated settle_free_visit_service) -- unlike ledger
+    1's plain UPDATE, both charges.amount and payments.amount have a
+    CHECK (amount > 0), so a zero-amount "payment" is represented here
+    by creating neither: nothing was owed, nothing was collected,
+    exactly the same "no charge" shape a waiver already has (see
+    migrations/0059's reasoning for why a waiver never gets a ledger-2
+    charge either). The caller still gets a normal-shaped response with
+    consultation_charge_id/consultation_payment_id as None, and still
+    proceeds to issue a queue token on PAID -- unaffected by this.
+    """
+    if amount == 0:
+        summary = get_invoice_summary_service(cur, appointment_id, staff_id=staff_id)
+        return {**summary, "consultation_charge_id": None, "consultation_payment_id": None}
+
+    invoice = _ensure_invoice(cur, appointment_id, staff_id)
+
+    if invoice["status"] == "VOID":
+        raise InvoiceVoided()
+
+    charge = _get_active_consultation_charge(cur, invoice["id"])
+    if charge is None:
+        try:
+            cur.execute(
+                """
+                INSERT INTO charges (invoice_id, description, amount, source_type, created_by)
+                VALUES (%s, %s, %s, 'CONSULTATION', %s)
+                RETURNING id, amount
+                """,
+                (invoice["id"], "Consultation fee", amount, staff_id),
+            )
+        except psycopg.errors.UniqueViolation:
+            # Lost a race against a concurrent first payment attempt for
+            # the same appointment -- charges_one_consultation_per_
+            # invoice already let the other one through; use it.
+            charge = _get_active_consultation_charge(cur, invoice["id"])
+        else:
+            row = cur.fetchone()
+            charge = {"id": row[0], "amount": row[1]}
+
+    payment_status = "COMPLETED" if outcome == "PAID" else "DECLINED"
+    summary = record_invoice_payment_service(
+        cur, appointment_id, staff_id=staff_id, amount=amount, method=method, status=payment_status
+    )
+
+    return {
+        **summary,
+        "consultation_charge_id": charge["id"],
+        "consultation_payment_id": summary["last_payment_id"],
+    }
 
 
 def void_invoice_payment_service(cur, appointment_id: int, payment_id: int, *, staff_id: int, reason: str):

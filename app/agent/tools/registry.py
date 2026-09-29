@@ -82,6 +82,12 @@ class Tool:
     precheck: Callable[[Any, AuthContext, BaseModel], Precheck] | None = None
     postchecks: Callable[[Any, AuthContext, BaseModel, dict], list[CheckResult]] | None = None
     audit_resource: Callable[[BaseModel, dict], tuple[str, int | None]] | None = None
+    # What the human approver is shown besides the raw arguments (patient,
+    # doctor, amount...). Read-only; stored with the approval request.
+    approval_preview: Callable[[Any, AuthContext, BaseModel], dict] | None = None
+    # Arguments the model may never type: they must be $from references to a
+    # read step (e.g. the amount a payment is expected to be for).
+    reference_only_args: tuple[str, ...] = ()
 
     @property
     def is_write(self) -> bool:
@@ -147,6 +153,11 @@ class ToolRegistry:
             raise ValueError(f"{tool.name}: every write tool needs a deterministic precheck")
         if tool.is_write and tool.postchecks is None:
             raise ValueError(f"{tool.name}: every write tool needs deterministic postchecks")
+        if tool.requires_approval and tool.approval_preview is None:
+            raise ValueError(f"{tool.name}: an approval-gated tool must say what the approver is shown")
+        unknown = set(tool.reference_only_args) - set(tool.input_model.model_fields)
+        if unknown:
+            raise ValueError(f"{tool.name}: reference_only_args names unknown field(s) {sorted(unknown)}")
         self._tools[tool.name] = tool
         return tool
 

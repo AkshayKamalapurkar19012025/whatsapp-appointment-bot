@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Phase 1 implemented (`migrations/0058_agent_layer.sql`, `app/agent/`).
+Accepted. Phase 1 implemented (`migrations/0060_agent_layer.sql`, `app/agent/`).
 
 ## Context
 
@@ -31,3 +31,11 @@ Staff perform repetitive OPD tasks (e.g. "check in Ravi's 10:30"). We want langu
 - Patient data reaches a model provider, in minimized form (id/name/UHID/gender/last-4 phone, plus staff-typed raw input). Enabling `AGENT_LLM_PROVIDER` in production requires confirming the provider agreement covers this.
 - Existing endpoints that authorize with `get_current_staff` only, or lack tenant filters, remain as they are; the tool layer enforces permission and tenant itself.
 - Each task costs several model calls and runs synchronously in Phase 1.
+
+## Addendum -- Phase 2 (fee settlement)
+
+- The three actions that put a patient in the queue (record payment, waive fee, settle free visit) are tools, but the token itself still is not: it is only ever the effect of settling the fee, so the payment-before-queue rule is untouched.
+- All three are `financial`/high risk, so the registry requires approval and a preview of what the approver is authorizing. An approval is bound to the exact arguments including the expected amount; if the amount due changes while the task waits, the task stops (`BLOCKED`) rather than charging a different figure than was approved.
+- Models may not type money: financial tools can declare `reference_only_args`, which must be `$from` references to a read step.
+- `record_payment` records a payment a human received; the agent never moves money. Only outcome `PAID` is exposed (a failed attempt has no queue effect and needs no automation).
+- Refunds, line-item edits and other financial reversals remain out of scope.

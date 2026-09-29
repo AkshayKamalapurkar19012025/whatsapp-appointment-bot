@@ -78,7 +78,7 @@ app/api/agent.py    # POST /agent/tasks, GET /agent/tasks/{id}, POST /agent/task
 Rules: tool wrappers take `(cur, AuthContext, validated_args)` and call `app/services/*` only; nothing under `app/agent/` imports `psycopg` or issues SQL except `store.py` (own tables). A test will enforce this by AST-scanning `app/agent/` for SQL/`get_connection` outside `store.py` and the tool modules' injected `cur`.
 Orchestrator runs **synchronously in the request** in Phase 1 (one short task); a background worker is deferred. Approval = a second HTTP call by a *different authenticated human* (see K).
 
-## H. Proposed data model (migration `0058_agent_layer.sql`)
+## H. Proposed data model (migration `0060_agent_layer.sql`)
 
 Names follow existing snake_case, `BIGSERIAL`, `hospital_id NOT NULL REFERENCES hospitals(id)`, append-only where possible. Consolidated from the prompt's nine tables to keep Phase 1 small:
 
@@ -104,7 +104,7 @@ Names follow existing snake_case, `BIGSERIAL`, `hospital_id NOT NULL REFERENCES 
 
 ## J. Files
 
-**Create:** `docs/implementation/AI_AGENT_IMPLEMENTATION_AUDIT.md` (this), `app/agent/**` (above), `app/api/agent.py`, `migrations/0058_agent_layer.sql`, `tests/agent/**` (per-agent, orchestrator, security suites), `docs/architecture/AI_AGENT_LAYER.md`, `docs/decisions/ADR-006-AI-AGENT-LAYER.md`.
+**Create:** `docs/implementation/AI_AGENT_IMPLEMENTATION_AUDIT.md` (this), `app/agent/**` (above), `app/api/agent.py`, `migrations/0060_agent_layer.sql`, `tests/agent/**` (per-agent, orchestrator, security suites), `docs/architecture/AI_AGENT_LAYER.md`, `docs/decisions/ADR-006-AI-AGENT-LAYER.md`.
 **Modify (minimal):** `app/main.py` (register router), `app/api/staff_auth.py` (extract permission check into a reusable function; behavior-preserving, covered by existing `tests/test_rbac_permissions.py`), `tests/conftest.py` (`APP_TABLES`), `app/config.py` (LLM flag/model/key env), `requirements.txt` (LLM SDK, only when the real client lands), `docs/product/PRODUCT_VISION.md` and `docs/implementation/PHASES.md`.
 **Do not modify:** `app/services/appointment_services.py`, `clinical_services.py`, `billing_services.py`, `patient_*`, `availability_engine.py`, existing migrations, `app/api/scheduling.py`, frontend, `ipd-service/`.
 Optional, separately approved: add `require_permission` + `audit_log` to `POST /appointments/{id}/visit` (finding 4) — a behavior change to existing endpoints, out of the AI layer's scope.
@@ -121,11 +121,11 @@ Optional, separately approved: add `require_permission` + `audit_log` to `POST /
 8. **Synchronous execution** ties LLM latency (multiple calls) to an HTTP request. Acceptable for Phase 1; revisit before write-heavy flows.
 9. **Prompt injection.** Free-text fields returned by tools (patient names, notes) flow back into model context. Mitigation: tool outputs are passed as data fields with a strict schema, the Executor can call only its one named tool, and all writes pass deterministic pre/post-checks. Residual risk remains and is why approval gates exist.
 10. **Verifier independence.** Verifier uses the same model family as Executor in Phase 1; deterministic checks are the real gate.
-11. `0054` migration number is duplicated in the repo (`0054_diagnostic_workflow`, `0054_medication_master`); confirm `scripts/migrate.py` handles it before I add `0058`.
+11. `0054` migration number is duplicated in the repo (`0054_diagnostic_workflow`, `0054_medication_master`); confirm `scripts/migrate.py` handles it before I add the agent migration.
 
 ## L. Recommended Phase 1 (read-only foundation + one guarded write)
 
-1. Migration `0058` + `store.py` + permissions seed.
+1. Migration `0060` + `store.py` + permissions seed.
 2. Tool registry + read-only tools: `patient.search`, `patient.get`, `appointment.search`, `appointment.get`, `encounter.get`, `invoice.get`, `queue.get`, `doctor.get`, `doctor_schedule.get`, `department.get` (schema-validated, tenant-scoped, output minimized).
 3. `AuthContext` + shared permission function; authz tests.
 4. Intake/Planner/Executor/Verifier prompts + strict parsers + `FakeLLM`; per-agent tests.
@@ -155,6 +155,6 @@ Approved with the audit's recommendations. Delivered: everything in section L it
 | 8 Synchronous | Yes. |
 | 9 Prompt injection | Tool output is data under strict schemas; the Executor can't choose tools or arguments; writes are gated by prechecks/postchecks. Residual risk remains. |
 | 10 Verifier independence | Same model family; deterministic checks and the evidence-substring rule are the real gate. |
-| 11 Duplicate `0054` | `scripts/migrate.py` handles it (files are keyed by full filename); `0058` applied cleanly. |
+| 11 Duplicate `0054` | `scripts/migrate.py` handles it (files are keyed by full filename); `0060_agent_layer` applied cleanly (renumbered from 0058 after merging main, which took 0058-0059). |
 
 Deviations from the audit's section J: `app/agent/agents/improver.py` was **not** created (the Improver is deferred); `tests/agent/` holds the suites; the new services above were added; `requirements.txt` now pins `anthropic` (imported lazily).

@@ -30,7 +30,8 @@ def _write(**over):
 
 def test_registry_lists_the_phase_1_tools_and_omits_the_ones_that_would_bypass_business_rules():
     names = build_default_registry().names()
-    assert names == sorted(["patient.search", "patient.get", "appointment.search", "appointment.get", "doctor.get",
+    assert names == sorted(["appointment.record_payment", "appointment.waive_consultation_fee",
+                            "appointment.settle_free_visit", "patient.search", "patient.get", "appointment.search", "appointment.get", "doctor.get",
                             "department.get", "doctor_schedule.get", "queue.get", "encounter.get", "invoice.get",
                             "appointment.check_in"])
     assert "encounter.create" not in names and "queue.generate_token" not in names
@@ -45,12 +46,17 @@ def test_every_tool_declares_the_prompts_registry_fields():
         assert tool["input_schema"]["additionalProperties"] is False
 
 
-def test_only_check_in_is_a_write_and_it_is_medium_risk_with_no_approval():
+def test_writes_are_check_in_plus_three_approval_gated_financial_tools():
     reg = build_default_registry()
     writes = [n for n in reg.names() if reg.get(n).is_write]
-    assert writes == ["appointment.check_in"]
+    assert writes == ["appointment.check_in", "appointment.record_payment", "appointment.settle_free_visit",
+                      "appointment.waive_consultation_fee"]
     t = reg.get("appointment.check_in")
     assert (t.operation, t.risk, t.requires_approval, t.idempotency_required) == ("write", "medium", False, True)
+    for name in writes[1:]:
+        t = reg.get(name)
+        assert (t.operation, t.risk, t.requires_approval, t.irreversible, t.idempotency_required) == (
+            "financial", "high", True, True, True), name
 
 
 @pytest.mark.parametrize("tool,msg", [
@@ -58,6 +64,8 @@ def test_only_check_in_is_a_write_and_it_is_medium_risk_with_no_approval():
     (_write(risk="high", requires_approval=False), "approval"),
     (_write(operation="financial", risk="medium"), "high"),
     (_tool(irreversible=True), "read tool"),
+    (_write(risk="high", requires_approval=True), "what the approver is shown"),
+    (_write(reference_only_args=("nope",)), "unknown field"),
     (_tool(operation="write", idempotency_required=True, postchecks=lambda *a: []), "precheck"),
     (_tool(operation="write", idempotency_required=True, precheck=lambda *a: Precheck("ok")), "postchecks"),
 ])

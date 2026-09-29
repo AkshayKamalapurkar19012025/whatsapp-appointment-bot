@@ -1,5 +1,7 @@
 # Workflow: Billing
 
+**Phase 10 update (Billing Ledger Unification)**: the consultation fee described in section 5 below as one of the `source_type` charges was, until Phase 10, actually recorded through a completely separate mechanism (`appointments.payment_status`/`payment_amount`) — two independent financial ledgers for one visit. Phase 10 made this doc's description real: the consultation fee is now a genuine `CONSULTATION`-source_type charge on the same invoice as everything else. See `docs/architecture/BILLING_LEDGER_UNIFICATION.md` for the full before/after, the historical backfill, and what's deliberately still legacy-only (waivers, and the ₹0-fee edge case).
+
 ## 1. Purpose
 
 Aggregate every billable event on an encounter (consultation fee, lab/radiology, procedures, pharmacy, packages) into an invoice, take payment, and issue a receipt — without ever letting a charge exist disconnected from its encounter.
@@ -60,7 +62,7 @@ Void actions require a typed reason (AlertDialog-style prompt), never a bare con
 
 ## 13. Permissions
 
-`BILLING`, `ADMIN` for void/refund actions (`canManageBilling`); front-desk payment collection also available to `RECEPTIONIST`/`STAFF` at check-in.
+`BILLING`, `ADMIN` for void/refund actions (`canManageBilling`); front-desk payment collection also available to `RECEPTIONIST`/`STAFF` at check-in. Recording a payment (either `/appointments/{id}/payment` or `/appointments/{id}/bill/payments`) requires `bill.record_payment` (Phase 10) — granted to every role, preserving the pre-Phase-10 bare-authenticated-staff behavior explicitly rather than narrowing it.
 
 ## 14. Audit requirements
 

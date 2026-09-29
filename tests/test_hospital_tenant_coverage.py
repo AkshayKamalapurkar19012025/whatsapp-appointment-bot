@@ -72,7 +72,7 @@ EXEMPT_TABLES = {
     # already carries hospital_id directly (migrations/0027) -- tenant
     # derivable through it, same category as doctor_education.
     "patient_allergies",
-    # AI agent layer (migrations/0058_agent_layer.sql): agent_tasks carries
+    # AI agent layer (migrations/0060_agent_layer.sql): agent_tasks carries
     # hospital_id directly; every other agent_* table has a NOT NULL FK
     # to it (directly, or via agent_plans/agent_steps) -- tenant derivable
     # through the chain, same category as the encounter children above.

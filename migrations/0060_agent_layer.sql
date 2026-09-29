@@ -114,6 +114,7 @@ CREATE TABLE agent_approvals (
     step_id           BIGINT NOT NULL REFERENCES agent_steps(id),
     args              JSONB NOT NULL,
     args_hash         TEXT NOT NULL,
+    preview           JSONB,
     requested_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     decision          TEXT CHECK (decision IN ('approved', 'rejected')),
     approver_staff_id BIGINT REFERENCES staff(id),
@@ -123,6 +124,9 @@ CREATE TABLE agent_approvals (
     consumed_at       TIMESTAMPTZ,
     UNIQUE (step_id)
 );
+
+COMMENT ON COLUMN agent_approvals.preview IS
+    'What the approver was shown besides the raw arguments (patient, doctor, amount due...), captured when approval was requested.';
 
 COMMENT ON COLUMN agent_approvals.args_hash IS
     'SHA-256 of the exact resolved tool arguments the human was shown. The step only executes with arguments that hash to this: an approval for one action can never be spent on a different one.';

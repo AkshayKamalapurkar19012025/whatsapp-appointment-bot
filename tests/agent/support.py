@@ -129,6 +129,7 @@ def dangerous_registry(executions: list):
         handler=handler, precheck=lambda cur, ctx, a: Precheck("ok"),
         postchecks=lambda cur, ctx, a, out: [CheckResult("done_flag", out["done"], f"done={out['done']}")],
         audit_resource=lambda a, out: ("appointment", out["appointment_id"]),
+        approval_preview=lambda cur, ctx, a: {"action": "test-only dangerous write", "appointment": a.appointment_id},
     ))
     return r
 
@@ -156,3 +157,67 @@ def failing_handler(counter: list, *, fail_times: int, retryable: bool, inner):
             raise ToolError("backend_down", "the hospital service is unavailable", retryable=retryable)
         return inner(cur, ctx, args)
     return handler
+
+
+# ---------------------------------------------------------------------
+# Phase 2: fee-settlement scripts
+# ---------------------------------------------------------------------
+
+def _task_inputs(patient, day, at, **extra):
+    return {"patient_reference": patient, "appointment_date": day.isoformat(), "appointment_time": at, **extra}
+
+
+def phase2_intake(task_type: str, *, day: date, patient="Ravi", at="10:30", **extra) -> dict:
+    return {"status": "ok", "task_type": task_type, "goal": f"{task_type} for {patient}",
+            "inputs": _task_inputs(patient, day, at, **extra), "missing_fields": [],
+            "acceptance_criteria": [f"{task_type} completed for {patient}'s {at} appointment"],
+            "risk_tier": "high", "deadline": None}
+
+
+def _find_steps(patient, day, at):
+    return [
+        {"id": 1, "action": "Find the patient", "tool": "patient.search", "args": {"query": patient},
+         "success_check": "Exactly one patient matching the reference was returned", "depends_on": []},
+        {"id": 2, "action": "Find the appointment", "tool": "appointment.search",
+         "args": {"patient_id": ref(1, "patients"), "date": day.isoformat(), "time": at},
+         "success_check": "Exactly one appointment was returned", "depends_on": [1]},
+    ]
+
+
+def payment_plan(*, day: date, patient="Ravi", at="10:30", method="CASH", amount_arg=None) -> dict:
+    steps = _find_steps(patient, day, at) + [
+        {"id": 3, "action": "Read the invoice", "tool": "invoice.get",
+         "args": {"appointment_id": ref(2, "appointments")},
+         "success_check": "The invoice's total_due was returned", "depends_on": [2]},
+        {"id": 4, "action": "Record the payment", "tool": "appointment.record_payment",
+         "args": {"appointment_id": ref(2, "appointments"), "method": method,
+                  "expected_amount": amount_arg or {"$from": {"step": 3, "field": "total_due"}}},
+         "success_check": "The payment status is PAID and a queue token exists", "irreversible": True,
+         "depends_on": [2, 3]},
+    ]
+    return {"status": "ok", "steps": steps, "change_from_previous": None, "reason": None}
+
+
+def waive_plan(*, day: date, reason="revisit within 3 days", patient="Ravi", at="10:30") -> dict:
+    steps = _find_steps(patient, day, at) + [
+        {"id": 3, "action": "Waive the fee", "tool": "appointment.waive_consultation_fee",
+         "args": {"appointment_id": ref(2, "appointments"), "reason": reason},
+         "success_check": "The payment status is WAIVED and a queue token exists", "irreversible": True,
+         "depends_on": [2]},
+    ]
+    return {"status": "ok", "steps": steps, "change_from_previous": None, "reason": None}
+
+
+def free_plan(*, day: date, patient="Ravi", at="10:30") -> dict:
+    steps = _find_steps(patient, day, at) + [
+        {"id": 3, "action": "Settle the free visit", "tool": "appointment.settle_free_visit",
+         "args": {"appointment_id": ref(2, "appointments")},
+         "success_check": "The payment status is WAIVED with no money recorded and a queue token exists",
+         "irreversible": True, "depends_on": [2]},
+    ]
+    return {"status": "ok", "steps": steps, "change_from_previous": None, "reason": None}
+
+
+def phase2_script(task_type: str, plan: dict, *, day: date, **extra) -> dict:
+    return {"intake": [phase2_intake(task_type, day=day, **extra)], "planner": [plan],
+            "executor": [executor_proceeds], "verifier": [verifier_passes]}

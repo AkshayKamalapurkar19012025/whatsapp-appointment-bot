@@ -200,7 +200,7 @@ class Orchestrator:
             )
             store.add_event(cur, task_id, "approval_decided", actor_id=approver.actor_id,
                             details={"approved": approve, "step_id": pending["step_id"], "tool": pending["tool"],
-                                     "args": pending["args"]})
+                                     "args": pending["args"], "preview": pending["preview"]})
             if not approve:
                 store.transition(cur, task_id, states.APPROVAL_REQUIRED, states.CANCELLED,
                                  reason="approval rejected", actor_id=approver.actor_id)
@@ -237,7 +237,8 @@ class Orchestrator:
             "reason": task["final_reason"],
             "result": task["result"],
             "pending_approval": (
-                {"step": pending["step_no"], "tool": pending["tool"], "args": pending["args"]} if pending else None
+                {"step": pending["step_no"], "tool": pending["tool"], "args": pending["args"],
+                 "preview": pending["preview"]} if pending else None
             ),
         }
 
@@ -440,7 +441,8 @@ class Orchestrator:
             if needs_approval:
                 if approval_token is None:
                     with self._tx() as (_, cur):
-                        store.request_approval(cur, run.task_id, step_id, args)
+                        preview = tool.approval_preview(cur, run.ctx, parsed) if tool.approval_preview else None
+                        store.request_approval(cur, run.task_id, step_id, args, preview)
                         store.set_step_state(cur, step_id, "AWAITING_APPROVAL")
                     self._set_state(run, states.APPROVAL_REQUIRED, reason=f"approval required for {step.tool}")
                     raise _Pause()

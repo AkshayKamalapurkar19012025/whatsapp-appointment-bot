@@ -123,7 +123,8 @@ def test_high_risk_step_waits_for_approval_and_does_not_execute(world):
     executions, script, registry = _dangerous(world)
     _, _, view = _submit(world, script, registry=registry)
     assert view["state"] == states.APPROVAL_REQUIRED
-    assert view["pending_approval"] == {"step": 3, "tool": "test.dangerous_write", "args": {"appointment_id": appt}}
+    assert view["pending_approval"] == {"step": 3, "tool": "test.dangerous_write", "args": {"appointment_id": appt},
+                                        "preview": {"action": "test-only dangerous write", "appointment": appt}}
     assert executions == []
     assert world.rows("SELECT token_hash, decision FROM agent_approvals") == [(None, None)]
 

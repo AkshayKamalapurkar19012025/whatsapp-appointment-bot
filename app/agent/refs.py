@@ -3,15 +3,16 @@ Deterministic argument references.
 
 A Planner plans before anything runs, so it can't know the ids a search
 will return -- and it must not be allowed to *type* them either (that is
-how a model invents or mis-copies a patient id). A step argument may
-instead be a reference:
+how a model invents or mis-copies a patient id or an amount). A step
+argument may instead be a reference:
 
-    {"$from": {"step": 1, "list": "patients", "field": "id"}}
+    {"$from": {"step": 1, "list": "patients", "field": "id"}}   # from a list
+    {"$from": {"step": 3, "field": "total_due"}}                # from a single-object output
 
-The orchestrator substitutes it from the captured raw output of step 1,
-and only if that list has EXACTLY ONE item. Zero or several items stops
-the task with NEEDS_INPUT and the candidates listed -- the system never
-picks "the first Ravi".
+The orchestrator substitutes it from the captured raw output of that
+step; for a list, only if it has EXACTLY ONE item. Zero or several items
+stops the task with NEEDS_INPUT and the candidates listed -- the system
+never picks "the first Ravi".
 """
 
 from typing import Any
@@ -46,10 +47,10 @@ def well_formed(ref: Any) -> bool:
     body = ref[REF_KEY]
     return (
         isinstance(body, dict)
-        and set(body) == {"step", "list", "field"}
+        and set(body) in ({"step", "list", "field"}, {"step", "field"})
         and isinstance(body["step"], int)
         and not isinstance(body["step"], bool)
-        and isinstance(body["list"], str)
+        and isinstance(body.get("list", ""), str)
         and isinstance(body["field"], str)
     )
 
@@ -72,6 +73,11 @@ def resolve_args(args: dict, outputs: dict[int, dict]) -> dict:
         output = outputs.get(body["step"])
         if output is None:
             raise RefError(f"argument {name!r} references step {body['step']}, which has no recorded output")
+        if "list" not in body:
+            if body["field"] not in output:
+                raise RefError(f"step {body['step']} output has no field {body['field']!r}")
+            resolved[name] = output[body["field"]]
+            continue
         items = output.get(body["list"])
         if not isinstance(items, list):
             raise RefError(f"step {body['step']} output has no list {body['list']!r}")

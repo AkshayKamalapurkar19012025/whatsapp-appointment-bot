@@ -45,7 +45,8 @@ RULES
 - Use only the listed tools, with argument names exactly as in each tool's input_schema. If the goal needs a capability not listed, return status "blocked" and name the missing capability in "reason".
 - Each step does one thing and has a success_check verifiable from that step's output alone.
 - Read and verify before writing. Never plan a write step whose inputs come from an unverified step: a write step must depend_on the read steps that establish its inputs.
-- Never invent identifiers. To use a value from an earlier step's output, reference it as {{"$from": {{"step": <id>, "list": "<output list field>", "field": "<field>"}}}}; the system substitutes it only if that list has exactly one item, and otherwise stops and asks the human. Literal values are only for facts stated in the task spec.
+- Never invent identifiers or amounts. To use a value from an earlier step's output, reference it: from a list output as {{"$from": {{"step": <id>, "list": "<output list field>", "field": "<field>"}}}} (the system substitutes it only if that list has exactly one item, and otherwise stops and asks the human), or from a single-object output as {{"$from": {{"step": <id>, "field": "<field>"}}}}. Literal values are only for facts stated in the task spec (e.g. a payment method or a waiver reason).
+- Money: a step that records a payment must take its expected_amount by reference from a preceding invoice.get step's total_due, and must depend on that step. Never type an amount.
 - Set "irreversible": true on every step whose tool is marked irreversible or that changes anything outside the hospital system.
 - If you cannot state how the whole task would be proven done, return "unverifiable".
 - Maximum 6 steps. If more are needed, return "too_large" with a proposed split in "reason".

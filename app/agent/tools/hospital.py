@@ -9,6 +9,9 @@ the patient-scope check, and the output whitelist. No hospital SQL lives
 in this file; that is what keeps the database off the model's reachable
 surface and the business rules where they already are.
 
+Phase 2 adds three approval-gated financial tools that settle the
+consultation fee (and thereby issue the queue token) in tools/billing.py.
+
 Not registered, deliberately (see the audit): encounter.create (an OPD
 encounter is created inside appointment booking; a standalone creator
 would be a second encounter path) and queue.generate_token (the token is
@@ -595,4 +598,8 @@ def build_default_registry() -> ToolRegistry:
         precheck=_check_in_precheck, postchecks=_check_in_postchecks,
         audit_resource=lambda args, out: ("appointment", out.get("appointment_id")),
     ))
+
+    from app.agent.tools.billing import register_billing_tools  # noqa: PLC0415 (billing imports helpers from here)
+
+    register_billing_tools(r)
     return r

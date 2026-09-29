@@ -220,6 +220,20 @@ def test_billing_report_window_days_excludes_older_collections(client, db_connec
     )
     old_recorded_at = datetime.now(dt_timezone.utc) - timedelta(days=30)
     with db_connection.cursor() as cur:
+        # Phase 10 (Billing Ledger Unification): the payment this test
+        # just recorded lives in the ledger-2 payments table, linked via
+        # appointments.consultation_payment_id -- app/api/dashboard.py's
+        # billing report now reads its recorded_at from there (see
+        # app/services/appointment_services.py's EFFECTIVE_PAYMENT_
+        # RECORDED_AT_SQL), not from the legacy column alone, so both
+        # need aging to reproduce "a payment from 30 days ago."
+        cur.execute(
+            """
+            UPDATE payments SET recorded_at = %s
+            WHERE id = (SELECT consultation_payment_id FROM appointments WHERE id = %s)
+            """,
+            (old_recorded_at, appointment_id),
+        )
         cur.execute(
             "UPDATE appointments SET payment_recorded_at = %s WHERE id = %s",
             (old_recorded_at, appointment_id),

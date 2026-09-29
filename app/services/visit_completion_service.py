@@ -23,6 +23,10 @@ from app.services.clinical_services import (
     get_appointment_status_and_doctor,
     get_encounter_id_for_appointment,
 )
+from app.services.appointment_services import (
+    EFFECTIVE_PAYMENT_JOIN_SQL,
+    EFFECTIVE_PAYMENT_STATUS_SQL,
+)
 
 
 def get_visit_completion_checklist_service(cur, appointment_id: int) -> dict:
@@ -72,7 +76,21 @@ def get_visit_completion_checklist_service(cur, appointment_id: int) -> dict:
     )
     (billing_completed,) = cur.fetchone()
 
-    cur.execute("SELECT payment_status FROM appointments WHERE id = %s", (appointment_id,))
+    # Phase 10 (Billing Ledger Unification): payment_status alone no
+    # longer tells the whole story -- a payment recorded after this
+    # phase never sets it to PAID (see app/services/appointment_
+    # services.py's record_payment_service/EFFECTIVE_PAYMENT_STATUS_SQL
+    # docstrings). WAIVED is unaffected (never moves to ledger 2), so
+    # the bare column stays correct for that half of this check.
+    cur.execute(
+        f"""
+        SELECT {EFFECTIVE_PAYMENT_STATUS_SQL}
+        FROM appointments a
+        {EFFECTIVE_PAYMENT_JOIN_SQL}
+        WHERE a.id = %s
+        """,
+        (appointment_id,),
+    )
     (payment_status,) = cur.fetchone()
     payment_completed = payment_status in ("PAID", "WAIVED")
 

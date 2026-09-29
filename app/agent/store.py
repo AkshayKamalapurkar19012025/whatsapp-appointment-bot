@@ -1,5 +1,5 @@
 """
-Persistence for the agent_* tables (migrations/0058). Every function takes
+Persistence for the agent_* tables (migrations/0060). Every function takes
 an open cursor and runs inside the caller's transaction, like the rest of
 app/services. This module (and metrics.py) is the ONLY place under
 app/agent that executes SQL, and it only ever touches agent_* tables --
@@ -292,16 +292,18 @@ def latest_deterministic_checks(cur, task_id: int, plan_id: int) -> list[dict]:
 # Approvals
 # ---------------------------------------------------------------------
 
-def request_approval(cur, task_id: int, step_id: int, args: dict) -> int:
+def request_approval(cur, task_id: int, step_id: int, args: dict, preview: dict | None = None) -> int:
     cur.execute(
         """
-        INSERT INTO agent_approvals (task_id, step_id, args, args_hash)
-        VALUES (%s, %s, %s, %s)
-        ON CONFLICT (step_id) DO UPDATE SET args = EXCLUDED.args, args_hash = EXCLUDED.args_hash
+        INSERT INTO agent_approvals (task_id, step_id, args, args_hash, preview)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT (step_id) DO UPDATE
+            SET args = EXCLUDED.args, args_hash = EXCLUDED.args_hash, preview = EXCLUDED.preview
             WHERE agent_approvals.decision IS NULL
         RETURNING id
         """,
-        (task_id, step_id, Jsonb(args), args_hash(args)),
+        (task_id, step_id, Jsonb(args), args_hash(args),
+         Jsonb(preview, dumps=lambda o: json.dumps(o, default=str)) if preview is not None else None),
     )
     row = cur.fetchone()
     if row is None:
@@ -313,7 +315,7 @@ def request_approval(cur, task_id: int, step_id: int, args: dict) -> int:
 def pending_approval(cur, task_id: int) -> dict | None:
     cur.execute(
         """
-        SELECT a.id, a.step_id, s.tool, a.args, s.step_no
+        SELECT a.id, a.step_id, s.tool, a.args, s.step_no, a.preview
         FROM agent_approvals a JOIN agent_steps s ON s.id = a.step_id
         WHERE a.task_id = %s AND a.decision IS NULL
         ORDER BY a.id DESC LIMIT 1
@@ -321,23 +323,23 @@ def pending_approval(cur, task_id: int) -> dict | None:
         (task_id,),
     )
     row = cur.fetchone()
-    return ({"approval_id": row[0], "step_id": row[1], "tool": row[2], "args": row[3], "step_no": row[4]}
-            if row else None)
+    return ({"approval_id": row[0], "step_id": row[1], "tool": row[2], "args": row[3], "step_no": row[4],
+             "preview": row[5]} if row else None)
 
 
 def latest_approval(cur, task_id: int) -> dict | None:
     """The task's most recent approval request, decided or not."""
     cur.execute(
         """
-        SELECT a.id, a.step_id, s.tool, a.args, s.step_no
+        SELECT a.id, a.step_id, s.tool, a.args, s.step_no, a.preview
         FROM agent_approvals a JOIN agent_steps s ON s.id = a.step_id
         WHERE a.task_id = %s ORDER BY a.id DESC LIMIT 1
         """,
         (task_id,),
     )
     row = cur.fetchone()
-    return ({"approval_id": row[0], "step_id": row[1], "tool": row[2], "args": row[3], "step_no": row[4]}
-            if row else None)
+    return ({"approval_id": row[0], "step_id": row[1], "tool": row[2], "args": row[3], "step_no": row[4],
+             "preview": row[5]} if row else None)
 
 
 def decide_approval(cur, approval_id: int, *, approver_staff_id: int, initiator_staff_id: int,
@@ -430,9 +432,9 @@ def get_task_trace(cur, task_id: int, *, hospital_id: int) -> dict | None:
                            "duration_ms, created_at FROM agent_tool_calls WHERE task_id = %s ORDER BY id",
                            ("id", "step_id", "attempt", "tool", "args", "idempotency_key", "status",
                             "raw_response", "error", "duration_ms", "created_at")),
-        "approvals": rows("SELECT id, step_id, args, args_hash, requested_at, decision, approver_staff_id, "
+        "approvals": rows("SELECT id, step_id, args, args_hash, preview, requested_at, decision, approver_staff_id, "
                           "decided_at, expires_at, consumed_at FROM agent_approvals WHERE task_id = %s ORDER BY id",
-                          ("id", "step_id", "args", "args_hash", "requested_at", "decision", "approver_staff_id",
+                          ("id", "step_id", "args", "args_hash", "preview", "requested_at", "decision", "approver_staff_id",
                            "decided_at", "expires_at", "consumed_at")),
         "verifications": rows("SELECT id, step_id, kind, verdict, criteria, detail, created_at "
                               "FROM agent_verifications WHERE task_id = %s ORDER BY id",

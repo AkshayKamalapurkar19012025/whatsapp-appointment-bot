@@ -33,6 +33,14 @@ def _non_blank(value) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+def _payment_method(value) -> bool:
+    return value in ("CASH", "UPI", "CARD", "OTHER")
+
+
+def _reason(value) -> bool:
+    return isinstance(value, str) and 0 < len(value.strip()) <= 500
+
+
 @dataclass(frozen=True)
 class TaskType:
     name: str
@@ -66,6 +74,65 @@ TASK_TYPES: dict[str, TaskType] = {
         ),
     ),
 }
+
+
+_APPOINTMENT_FIELDS = {
+    "patient_reference": "who the patient is, as written in the request (name, UHID or phone fragment)",
+    "appointment_date": "the appointment's calendar date, ISO YYYY-MM-DD (resolve 'today' from context.today)",
+    "appointment_time": "the appointment's scheduled start time, 24h HH:MM",
+}
+_APPOINTMENT_VALIDATORS = {
+    "patient_reference": _non_blank,
+    "appointment_date": _iso_date,
+    "appointment_time": _hhmm,
+}
+_IDENTIFIED = ("Exactly one appointment was acted on, and it is the appointment for the identified patient on the "
+               "requested date and time.")
+_TOKEN = "The patient now has a queue token, confirmed by re-reading the appointment from the appointment service."
+
+TASK_TYPES["appointment_record_payment"] = TaskType(
+    name="appointment_record_payment",
+    description="Record that ONE checked-in patient paid the consultation fee at the front desk (issues their queue token).",
+    required_fields={**_APPOINTMENT_FIELDS,
+                     "payment_method": "how the patient paid: exactly one of CASH, UPI, CARD, OTHER"},
+    validators={**_APPOINTMENT_VALIDATORS, "payment_method": _payment_method},
+    risk_floor="high",
+    required_permissions=("bill.record_payment",),
+    mandatory_criteria=(
+        _IDENTIFIED,
+        "The appointment's consultation-fee payment status is PAID, for exactly the amount that was due and approved.",
+        _TOKEN,
+    ),
+)
+
+TASK_TYPES["appointment_waive_fee"] = TaskType(
+    name="appointment_waive_fee",
+    description="Waive the consultation fee of ONE checked-in appointment under the 3-day revisit policy (issues the queue token).",
+    required_fields={**_APPOINTMENT_FIELDS,
+                     "waiver_reason": "the reason for the waiver, in the requester's words (1-500 characters)"},
+    validators={**_APPOINTMENT_VALIDATORS, "waiver_reason": _reason},
+    risk_floor="high",
+    required_permissions=("appointment.waive_payment",),
+    mandatory_criteria=(
+        _IDENTIFIED,
+        "The appointment's consultation-fee payment status is WAIVED.",
+        _TOKEN,
+    ),
+)
+
+TASK_TYPES["appointment_settle_free_visit"] = TaskType(
+    name="appointment_settle_free_visit",
+    description="Settle ONE checked-in visit that has no consultation fee and add the patient to the queue.",
+    required_fields=dict(_APPOINTMENT_FIELDS),
+    validators=dict(_APPOINTMENT_VALIDATORS),
+    risk_floor="high",
+    required_permissions=("bill.record_payment",),
+    mandatory_criteria=(
+        _IDENTIFIED,
+        "No money was recorded (payment amount 0) and the visit's payment status is WAIVED.",
+        _TOKEN,
+    ),
+)
 
 
 def describe_for_intake() -> list[dict]:

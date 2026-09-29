@@ -27,7 +27,8 @@ def test_valid_task():
     # the model was given today's date and the task types in scope, and nothing else about the hospital
     payload = llm.calls[0]["payload"]
     assert payload["context"] == {"today": "2030-01-07", "timezone": "Asia/Kolkata"}
-    assert [t["task_type"] for t in payload["task_types"]] == ["appointment_check_in"]
+    assert [t["task_type"] for t in payload["task_types"]] == [
+        "appointment_check_in", "appointment_record_payment", "appointment_waive_fee", "appointment_settle_free_visit"]
 
 
 def test_unknown_task_is_out_of_scope():

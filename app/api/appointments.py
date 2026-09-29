@@ -45,9 +45,6 @@ from app.services.appointment_services import (
     mark_completed_service,
     mark_no_show_service,
     get_consultation_charge_service,
-    record_payment_service,
-    waive_consultation_fee_service,
-    settle_free_visit_service,
     record_refund_service,
     get_invoice_service,
     get_appointment_slip_service,
@@ -58,9 +55,14 @@ from app.services.appointment_services import (
 )
 from app.services.availability_engine import list_available_dates_in_range
 from app.services.check_in_service import front_desk_check_in_service
+from app.services.front_desk_billing_service import (
+    front_desk_record_payment_service,
+    front_desk_settle_free_visit_service,
+    front_desk_waive_fee_service,
+)
 from app.services.visit_completion_service import get_visit_completion_checklist_service
 from app.services.notification_center_service import create_notification
-from app.services.notifications import KIND_CHECK_IN, KIND_QUEUE_TOKEN, send_mock_notification
+from app.services.notifications import KIND_CHECK_IN, send_mock_notification
 from app.utils.timezone import convert_to_timezone, validate_timezone
 
 logger = logging.getLogger(__name__)
@@ -721,47 +723,29 @@ def add_appointment_invoice_line_item(
     return result
 
 
-def _notify_queue_token(cur, appointment_id: int, token_number: int) -> None:
-    """Fires once, exactly when a token is newly issued (record_payment_
-    service/waive_consultation_fee_service's token_just_issued flag) --
-    the Phase 4 replacement for the old check-in-time token
-    announcement (see visit_appointment's own note above)."""
-    cur.execute(
-        """
-        SELECT p.whatsapp_number, p.name, d.name
-        FROM appointments a
-        JOIN patients p ON p.id = a.patient_id
-        JOIN doctors d ON d.id = a.doctor_id
-        WHERE a.id = %s
-        """,
-        (appointment_id,),
-    )
-    patient_number, patient_name, doctor_name = cur.fetchone()
-    send_mock_notification(
-        cur,
-        patient_number,
-        KIND_QUEUE_TOKEN,
-        f"Hi {patient_name}, you're checked in successfully. "
-        f"Queue Token: {token_number}. Status: Waiting for Doctor "
-        f"({doctor_name}).",
-    )
-
-
 @router.post("/{appointment_id}/payment")
 def record_appointment_payment(
     appointment_id: int,
     payment: PaymentRecord,
-    staff: dict = Depends(get_current_staff),
+    # Phase 10 (Billing Ledger Unification): record_payment_service now
+    # writes the consultation fee onto this encounter's ledger-2 invoice
+    # (app/services/billing_services.py) instead of appointments.
+    # payment_*, so this endpoint is now a thin compatibility wrapper --
+    # same request/response shape as before, same bill.record_payment
+    # gate as its newer /bill/payments sibling (migrations/0058 grants
+    # it to every existing role, so this isn't a narrowing).
+    staff: dict = Depends(require_permission("bill.record_payment")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
             try:
-                result = record_payment_service(
+                result = front_desk_record_payment_service(
                     cur,
                     appointment_id,
                     method=payment.method,
                     outcome=payment.outcome,
                     staff_id=staff["id"],
+                    hospital_id=staff["hospital_id"],
                 )
             except svc_exc.AppointmentNotFound:
                 raise HTTPException(status_code=404, detail="Appointment not found")
@@ -781,9 +765,6 @@ def record_appointment_payment(
                     detail="This doctor/appointment-type combination no longer has a configured fee",
                 )
 
-            if result["token_just_issued"]:
-                _notify_queue_token(cur, appointment_id, result["token_number"])
-
     return result
 
 
@@ -796,11 +777,12 @@ def waive_appointment_payment(
     with get_connection() as conn:
         with conn.cursor() as cur:
             try:
-                result = waive_consultation_fee_service(
+                result = front_desk_waive_fee_service(
                     cur,
                     appointment_id,
                     reason=waiver.reason,
                     staff_id=admin["id"],
+                    hospital_id=admin["hospital_id"],
                 )
             except svc_exc.AppointmentNotFound:
                 raise HTTPException(status_code=404, detail="Appointment not found")
@@ -819,19 +801,6 @@ def waive_appointment_payment(
                     status_code=409,
                     detail="Waiver requires a completed visit with this doctor in the last 3 days",
                 )
-
-            record_audit_log(
-                cur,
-                hospital_id=admin["hospital_id"],
-                staff_id=admin["id"],
-                action="appointment.waive_payment",
-                resource_type="appointment",
-                resource_id=appointment_id,
-                details={"reason": waiver.reason},
-            )
-
-            if result["token_just_issued"]:
-                _notify_queue_token(cur, appointment_id, result["token_number"])
 
     return result
 
@@ -855,7 +824,7 @@ def settle_free_appointment_visit(
     with get_connection() as conn:
         with conn.cursor() as cur:
             try:
-                result = settle_free_visit_service(cur, appointment_id)
+                result = front_desk_settle_free_visit_service(cur, appointment_id)
             except svc_exc.AppointmentNotFound:
                 raise HTTPException(status_code=404, detail="Appointment not found")
             except svc_exc.InvalidStatusTransition:
@@ -878,9 +847,6 @@ def settle_free_appointment_visit(
                     status_code=409,
                     detail="This doctor/appointment-type combination no longer has a configured fee",
                 )
-
-            if result["token_just_issued"]:
-                _notify_queue_token(cur, appointment_id, result["token_number"])
 
     return result
 
