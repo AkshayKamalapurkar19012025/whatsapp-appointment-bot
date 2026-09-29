@@ -451,17 +451,29 @@ export interface Invoice {
 // this endpoint for why each section has the scope it has (collections:
 // trailing window; outstanding: current state; waivers/refunds:
 // trailing window).
+// Phase 9, Option C (docs/architecture/BILLING_LEDGERS.md): collections/
+// outstanding now combine Ledger A (appointments.payment_status, the
+// consultation fee) and Ledger B (invoices/charges/payments, everything
+// else) -- ledger_breakdown keeps the two sources individually visible.
+// An outstanding_unpaid row is either source: CONSULTATION_FEE
+// (appointment_id set, payment_status set, balance null -- Ledger A
+// never stored a partial-payment amount) or ITEMIZED_BILL (encounter_id
+// set, balance set, payment_status null).
 export interface BillingReport {
   window_days: number
   collections_by_method: { method: string | null; count: number; amount: number }[]
   collections_by_doctor: { doctor_id: number; doctor_name: string; count: number; amount: number }[]
   total_collected: number
+  ledger_breakdown: { consultation_fee: number; itemized_billing: number }
   outstanding_unpaid: {
-    appointment_id: number
+    encounter_id: number | null
+    appointment_id: number | null
     patient_name: string
     doctor_name: string
-    payment_status: string
-    visited_at: string | null
+    source: 'CONSULTATION_FEE' | 'ITEMIZED_BILL'
+    payment_status: string | null
+    balance: number | null
+    since: string | null
   }[]
   waivers: {
     count: number

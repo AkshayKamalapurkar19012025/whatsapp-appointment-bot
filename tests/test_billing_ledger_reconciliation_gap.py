@@ -1,28 +1,39 @@
 """
-Proves docs/OPD_HIMS_ARCHITECTURE_AUDIT.md's ADR-009 fix (Option B,
-migrations/0058_consultation_fee_ledger_mirror.sql): one OPD visit with
-a consultation fee collected at check-in (the legacy
-appointments.payment_status ledger -- "Ledger A", migrations/0018-0026)
-plus one lab charge billed and paid through the encounter invoice (the
-invoices/charges/payments model -- "Ledger B", migration
-0033_billing_invoices.sql) must now report the same true total on both
-of the two live reporting surfaces that previously disagreed:
+Proves the billing-ledger split is closed on both of the live reporting
+surfaces that originally disagreed on one visit's total: a consultation
+fee collected at check-in (the legacy appointments.payment_status
+ledger -- "Ledger A", migrations/0018-0026) plus one lab charge billed
+and paid through the encounter invoice (the invoices/charges/payments
+model -- "Ledger B", migration 0033_billing_invoices.sql).
 
-  * GET /api/dashboard/billing (app/api/dashboard.py:155) -- now reads
-    the mirrored payment (app/services/billing_services.py's
-    mirror_consultation_payment), not appointments.payment_status
-    directly, for its collections figures.
+Two independent, differently-mechanized fixes both had to land, and
+both are exercised here together:
+
   * GET /api/billing/payments (app/api/billing_history.py,
-    app/services/billing_history_service.py:113) -- unchanged, already
-    Ledger-B-only; now also sees the mirrored consultation-fee payment
-    alongside the lab-charge payment it already saw.
+    app/services/billing_history_service.py:113) -- fixed by ADR-009
+    Option B (docs/OPD_HIMS_ARCHITECTURE_AUDIT.md,
+    migrations/0058_consultation_fee_ledger_mirror.sql): every Ledger A
+    payment event is mirrored into a Ledger B charge/payment
+    (app/services/billing_services.py's mirror_consultation_*
+    functions), so this Ledger-B-only endpoint now sees the
+    consultation fee too, alongside the lab charge it already saw.
+  * GET /api/dashboard/billing (app/api/dashboard.py) -- fixed
+    independently by Phase 9, Option C (docs/architecture/
+    BILLING_LEDGERS.md, merged to main as PR #120 before this branch's
+    Option B work landed): this endpoint combines Ledger A and Ledger B
+    at *read* time, querying each ledger's own original columns
+    directly rather than relying on Option B's mirror.
 
-This is this ADR's own acceptance criterion (docs/
-OPD_HIMS_ARCHITECTURE_AUDIT.md, second/third addendum): this test
-passing with no xfail marker. Before migration 0058 and the mirror
-calls in appointment_services.py existed, this test failed exactly as
-predicted (500 vs. 1200 vs. the true 1700) -- see the audit doc's
-addenda for that proof.
+The two fixes were built independently and collided as a real merge
+conflict when this branch caught up with main (both touched
+get_billing_report). Reconciling them required patching Option C's
+Ledger B queries (_ledger_b_collections_by_method/_by_doctor/
+_outstanding) to exclude legacy_appointment_id IS NOT NULL rows --
+without that exclusion, a mirrored consultation-fee payment would be
+counted once via Ledger A's own direct query and again via Option C's
+unfiltered Ledger B query, inflating this visit's total to 2000 instead
+of 1700. This test's dashboard assertion exists specifically to catch
+that regression, not just to prove the original gap is closed.
 """
 
 from datetime import date, timedelta
@@ -124,27 +135,40 @@ def test_dashboard_billing_and_payment_history_agree_on_one_visits_total(
         float(item["amount"]) for item in payment_history["items"]
     )
 
-    # Payment History is the actual fix: it already saw the lab charge
-    # (Ledger B), and now also sees the mirrored consultation-fee
-    # payment (ADR-009 Option B, migrations/0058) -- so it reports the
-    # visit's true total, 1700, not 1200.
+    # Payment History: sees the lab charge (Ledger B) directly, and now
+    # also sees the mirrored consultation-fee payment (ADR-009 Option B,
+    # migrations/0058) -- so it reports the visit's true total, 1700,
+    # not 1200.
     assert payment_history_reported_total == true_total_collected, (
         f"Payment History shows {payment_history_reported_total}, "
         f"expected the true total {true_total_collected} (consultation "
         f"fee + lab charge) now that the consultation fee is mirrored"
     )
 
-    # The Dashboard's "Billing" panel is deliberately scoped to
-    # consultation-fee reconciliation only (BillingPanel.tsx's own
-    # copy: "Consultation-fee collections... not lab, radiology,
-    # pharmacy, or package charges") -- it is not supposed to include
-    # the lab charge, so it correctly continues to report only the
-    # consultation fee. Asserted explicitly, not just left unchecked,
-    # so a future change that accidentally widens or narrows this
-    # panel's scope gets caught here rather than silently drifting.
-    assert dashboard_reported_total == consultation_fee, (
+    # Dashboard: a completely independent fix (Phase 9, Option C,
+    # docs/architecture/BILLING_LEDGERS.md, already merged to main as
+    # PR #120 before this branch's Option B work landed) combines
+    # Ledger A and Ledger B at *read* time for this specific endpoint --
+    # so it also reports the true total, 1700, via its own mechanism,
+    # not via Option B's mirror. Asserted equal to true_total_collected,
+    # not to consultation_fee alone, specifically to catch the
+    # double-counting bug this reconciliation had to fix: without the
+    # legacy_appointment_id exclusion filters in
+    # app/api/dashboard.py's _ledger_b_* helpers, this would read 2000
+    # (500 counted twice + 1200), not 1700.
+    assert dashboard_reported_total == true_total_collected, (
         f"Dashboard billing report shows {dashboard_reported_total}, "
-        f"expected exactly the consultation fee {consultation_fee} -- "
-        f"this panel is scoped to consultation-fee reconciliation only, "
-        f"the lab charge should not appear here"
+        f"expected the true total {true_total_collected} -- either "
+        f"Option C's read-time ledger combination or the "
+        f"legacy_appointment_id double-counting guard has regressed"
     )
+
+    # Stronger guard: the breakdown itself must attribute the fee to
+    # Ledger A and the lab charge to Ledger B, not e.g. 1000/700 or any
+    # other split that still happens to sum to 1700 -- a subtler
+    # double-counting bug (one side over-counting, the other under-
+    # counting by the same amount) would pass the total-only assertion
+    # above but fail this one.
+    breakdown = dashboard_billing["ledger_breakdown"]
+    assert float(breakdown["consultation_fee"]) == consultation_fee
+    assert float(breakdown["itemized_billing"]) == lab_charge

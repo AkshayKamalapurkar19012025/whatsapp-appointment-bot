@@ -245,3 +245,100 @@ def test_billing_report_staff_can_read(client, db_connection):
     staff_headers = create_staff_and_get_headers(db_connection, role="STAFF")
     response = client.get("/api/dashboard/billing", headers=staff_headers)
     assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------
+# Phase 9, Option C (docs/architecture/BILLING_LEDGERS.md): the report
+# now combines Ledger A (appointments.payment_status, the consultation
+# fee) with Ledger B (invoices/charges/payments, everything else) --
+# these tests exercise both ledgers on the same visit, which none of
+# the tests above (each ledger tested in isolation elsewhere already)
+# did.
+# ---------------------------------------------------------------------
+
+
+def test_billing_report_combines_both_ledgers_in_collections(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Billing Combined",
+        department_name="Billing Combined Dept", appointment_type_name="Billing Combined Type",
+    )
+    _set_fee(client, admin_headers, seeded, 300)
+    patient = _create_patient(client, admin_headers, "Combined Ledger Patient", "+919700000008")
+    appointment_id = _create_checked_in_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+
+    # Ledger A: the consultation fee, paid in cash.
+    client.post(
+        f"/api/appointments/{appointment_id}/payment",
+        json={"method": "CASH", "outcome": "PAID"},
+        headers=admin_headers,
+    )
+    # Ledger B: an itemized lab charge, also paid in cash.
+    client.post(
+        f"/api/appointments/{appointment_id}/bill/charges",
+        json={"description": "CBC", "amount": 500, "source_type": "LAB"},
+        headers=admin_headers,
+    )
+    client.post(
+        f"/api/appointments/{appointment_id}/bill/payments",
+        json={"amount": 500, "method": "CASH"},
+        headers=admin_headers,
+    )
+
+    response = client.get("/api/dashboard/billing", headers=admin_headers)
+    assert response.status_code == 200
+    body = response.json()
+
+    # One CASH row, not two -- both ledgers' CASH collections merged.
+    cash_rows = [row for row in body["collections_by_method"] if row["method"] == "CASH"]
+    assert len(cash_rows) == 1
+    assert float(cash_rows[0]["amount"]) == 800.0
+    assert cash_rows[0]["count"] == 2
+
+    doctors = {row["doctor_name"]: row for row in body["collections_by_doctor"]}
+    assert float(doctors["Dr. Billing Combined"]["amount"]) == 800.0
+
+    assert float(body["total_collected"]) == 800.0
+    assert float(body["ledger_breakdown"]["consultation_fee"]) == 300.0
+    assert float(body["ledger_breakdown"]["itemized_billing"]) == 500.0
+
+
+def test_billing_report_outstanding_includes_both_ledgers(client, db_connection):
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. Billing OutstandingBoth",
+        department_name="Billing OutstandingBoth Dept", appointment_type_name="Billing OutstandingBoth Type",
+    )
+    _set_fee(client, admin_headers, seeded, 300)
+    patient = _create_patient(client, admin_headers, "Outstanding Both Patient", "+919700000009")
+    appointment_id = _create_checked_in_appointment(client, db_connection, admin_headers, seeded, patient["id"])
+    # Ledger A: never paid -- stays UNPAID.
+
+    # Ledger B: an unpaid lab charge on a *different* visit, same
+    # doctor -- proves outstanding_unpaid surfaces an itemized-bill
+    # balance even when nothing was ever charged against Ledger A for
+    # it (no consultation fee outstanding on this second visit at all).
+    patient_2 = _create_patient(client, admin_headers, "Outstanding Both Patient 2", "+919700000010")
+    appointment_id_2 = _create_checked_in_appointment(client, db_connection, admin_headers, seeded, patient_2["id"], hour=11)
+    client.post(
+        f"/api/appointments/{appointment_id_2}/payment",
+        json={"method": "CASH", "outcome": "PAID"},
+        headers=admin_headers,
+    )
+    client.post(
+        f"/api/appointments/{appointment_id_2}/bill/charges",
+        json={"description": "X-Ray", "amount": 700, "source_type": "RADIOLOGY"},
+        headers=admin_headers,
+    )
+
+    response = client.get("/api/dashboard/billing", headers=admin_headers)
+    assert response.status_code == 200
+    outstanding = response.json()["outstanding_unpaid"]
+
+    consultation_fee_row = next(row for row in outstanding if row["appointment_id"] == appointment_id)
+    assert consultation_fee_row["source"] == "CONSULTATION_FEE"
+
+    itemized_row = next(row for row in outstanding if row["source"] == "ITEMIZED_BILL")
+    assert itemized_row["appointment_id"] is None
+    assert float(itemized_row["balance"]) == 700.0
+    assert itemized_row["doctor_name"] == "Dr. Billing OutstandingBoth"

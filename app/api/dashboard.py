@@ -152,6 +152,113 @@ def get_dashboard_trends(
     }
 
 
+def _ledger_b_collections_by_method(cur, window_start):
+    """Ledger B's (invoices/charges/payments, migrations/0033) side of
+    "money actually collected" -- lab/radiology/procedure/pharmacy/
+    package payments, which Ledger A's own collections query never
+    included (it only ever charges the consultation fee). Net of
+    per-payment refunds (payments.refunded_amount), same convention
+    get_invoice_summary_service already uses.
+
+    Excludes legacy_appointment_id IS NOT NULL rows -- those are
+    ADR-009 Option B's mirrored consultation-fee payments
+    (migrations/0058), not genuine itemized billing. This function
+    exists to combine with Ledger A's own direct query below; counting
+    a mirrored row here too would double the consultation fee into
+    this report (it's already counted via appointments.payment_status
+    directly). The mirror exists for Payment History/Billing History
+    (which read Ledger B unconditionally, with no Ledger A query to
+    combine against), not for this endpoint."""
+    cur.execute(
+        """
+        SELECT method, COUNT(*), COALESCE(SUM(amount - refunded_amount), 0)
+        FROM payments
+        WHERE status = 'COMPLETED'
+          AND legacy_appointment_id IS NULL
+          AND recorded_at::date >= %s
+        GROUP BY method
+        ORDER BY method
+        """,
+        (window_start,),
+    )
+    return cur.fetchall()
+
+
+def _ledger_b_collections_by_doctor(cur, window_start):
+    """Same as above, attributed by encounters.doctor_id (every invoice
+    belongs to exactly one encounter, and every encounter has a
+    doctor_id directly -- migrations/0028_encounters.sql -- no need to
+    go through appointments). Same legacy_appointment_id exclusion as
+    _ledger_b_collections_by_method, same reason."""
+    cur.execute(
+        """
+        SELECT e.doctor_id, d.name, COUNT(*), COALESCE(SUM(pay.amount - pay.refunded_amount), 0)
+        FROM payments pay
+        JOIN invoices inv ON inv.id = pay.invoice_id
+        JOIN encounters e ON e.id = inv.encounter_id
+        JOIN doctors d ON d.id = e.doctor_id
+        WHERE pay.status = 'COMPLETED'
+          AND pay.legacy_appointment_id IS NULL
+          AND pay.recorded_at::date >= %s
+        GROUP BY e.doctor_id, d.name
+        ORDER BY d.name
+        """,
+        (window_start,),
+    )
+    return cur.fetchall()
+
+
+def _ledger_b_outstanding(cur):
+    """Ledger B's side of "what's owed right now" -- every OPEN invoice
+    with a positive balance, regardless of whether its encounter is
+    still open (an ongoing visit can already owe money for a dispensed
+    prescription) or closed. Not time-scoped, matching Ledger A's own
+    outstanding_unpaid semantics below. Same gross/discount/tax/paid
+    formula app/services/exception_engine.py's _payment_pending uses,
+    duplicated rather than imported -- that function additionally
+    requires the encounter to be CLOSED (a different question: "is this
+    overdue enough to flag as an exception" vs. this endpoint's "what's
+    the current outstanding total"), so it isn't a drop-in reuse.
+
+    Excludes legacy_appointment_id IS NOT NULL charges from the gross
+    sum, and legacy_appointment_id IS NOT NULL payments from the paid
+    sum -- same double-counting reason as the collections queries
+    above: this invoice's mirrored consultation-fee charge/payment (if
+    any) is already represented by Ledger A's own outstanding_rows
+    query, which reads appointments.payment_status directly."""
+    cur.execute(
+        """
+        SELECT inv.encounter_id, p.name, d.name,
+               COALESCE(gross.amount, 0) AS gross_amount,
+               inv.discount_amount, inv.tax_rate,
+               COALESCE(paid.amount, 0) AS paid_amount,
+               inv.created_at
+        FROM invoices inv
+        JOIN encounters e ON e.id = inv.encounter_id
+        JOIN patients p ON p.id = e.patient_id
+        JOIN doctors d ON d.id = e.doctor_id
+        LEFT JOIN LATERAL (
+            SELECT SUM(amount) AS amount FROM charges
+            WHERE invoice_id = inv.id AND status = 'ACTIVE' AND legacy_appointment_id IS NULL
+        ) gross ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT SUM(amount - refunded_amount) AS amount FROM payments
+            WHERE invoice_id = inv.id AND status = 'COMPLETED' AND legacy_appointment_id IS NULL
+        ) paid ON TRUE
+        WHERE inv.status = 'OPEN'
+        """
+    )
+    rows = []
+    for encounter_id, patient_name, doctor_name, gross, discount, tax_rate, paid, created_at in cur.fetchall():
+        taxable = max(gross - discount, 0)
+        net_amount = taxable + round(taxable * tax_rate / 100, 2)
+        balance = net_amount - paid
+        if balance <= 0:
+            continue
+        rows.append((encounter_id, patient_name, doctor_name, balance, created_at))
+    return rows
+
+
 @router.get("/billing")
 def get_billing_report(
     days: int = Query(default=14, ge=1, le=90),
@@ -163,66 +270,59 @@ def get_billing_report(
     comment: wired up after this endpoint was built, this docstring's
     older "no frontend for this yet" claim was stale).
 
-    ADR-009 (docs/OPD_HIMS_ARCHITECTURE_AUDIT.md), Option B: as of
-    migrations/0058_consultation_fee_ledger_mirror.sql, every write to
-    appointments.payment_status (app/services/appointment_services.py's
-    record_payment_service/waive_consultation_fee_service/
-    record_refund_service) also mirrors into a CONSULTATION charge +
-    payment on the encounter's Ledger B invoice
-    (app/services/billing_services.py's mirror_consultation_*
-    functions). collections (by method and by doctor) and refunds below
-    now read that mirror instead of appointments.payment_status
-    directly, closing the proven gap (tests/
-    test_billing_ledger_reconciliation_gap.py) where this report and
-    Payment History disagreed on one visit's total.
+    This endpoint and the Exception Engine's PAYMENT_PENDING check
+    (app/services/exception_engine.py) both close the billing-ledger
+    split (docs/architecture/BILLING_LEDGERS.md,
+    docs/OPD_HIMS_ARCHITECTURE_AUDIT.md ADR-009) the same way: by
+    combining Ledger A (appointments.payment_status, the consultation
+    fee) and Ledger B (invoices/charges/payments, migrations/0033,
+    everything else) at *read* time, reading each ledger's own
+    original columns directly -- Phase 9's "Option C". Neither write
+    path is touched by this endpoint.
 
-    outstanding_unpaid and waivers are the deliberate exceptions, both
-    still reading appointments.payment_status directly, for two
-    different reasons:
-      * outstanding_unpaid: this phase mirrors PAID/FAILED/WAIVED/
-        REFUNDED *events*, not an eagerly-created *unpaid* charge at
-        check-in time (see migration 0058's own "scope note"), so a
-        checked-in appointment that has never had a payment attempt yet
-        has no mirrored charge to read from Ledger B at all -- rewriting
-        this query now would silently make it under-report. This is a
-        temporary scope gap, closeable by a later, separately-scoped
-        phase (creating the charge eagerly at check-in).
-      * waivers: settle_free_visit_service (a genuinely free, $0 visit)
-        has nothing to mirror at all -- charges.amount has CHECK
-        (amount > 0), so there is no Ledger B row a $0 waiver could
-        ever produce. This is not a scope gap to close later; Ledger B
-        structurally cannot represent a $0 charge, so
-        appointments.payment_status stays the permanent source for
-        this one section.
-    Both are real-time-correct for their own questions by construction
-    (payment_status is the queue-token gate itself), so reading it
-    directly here is not a workaround, just the right source.
+    This is deliberately NOT the same mechanism ADR-009's separately-
+    accepted Option B (migrations/0058_consultation_fee_ledger_mirror.
+    sql) uses for Payment History/Billing History, which read Ledger B
+    unconditionally with no Ledger A query to combine against, and so
+    need the consultation fee physically mirrored into Ledger B to see
+    it at all. This endpoint has no such need -- it already queries
+    Ledger A directly -- so every Ledger B query below explicitly
+    excludes `legacy_appointment_id IS NOT NULL` rows (the mirror's own
+    marker column): counting them here too would double the
+    consultation fee into this report, once from Ledger A's own direct
+    query and once from the mirror. The two mechanisms serve different
+    screens and do not need to agree on which one is "the" source --
+    they only need to not double-count each other, which the exclusion
+    filters below guarantee.
 
     Four independent pieces, not one combined query -- each answers a
     different front-desk question and has a different natural time
     scope:
-      * collections: money actually collected (COMPLETED, net of any
-        refund), bucketed by payment_method and by doctor, over the
-        trailing `days` days (recorded_at-scoped -- when it was
-        collected, not when the appointment was scheduled). Net-of-
-        refund is a deliberate small refinement over the old Ledger-A
-        query's behavior (which excluded a visit from this report
-        entirely, for its *whole* collected amount, the moment *any*
-        refund against it was recorded, however partial) -- the same
-        "effective paid" pattern already used elsewhere in this
-        codebase (app/services/billing_history_service.py).
-      * outstanding: what's currently owed right now -- every CHECKED_IN
-        appointment still UNPAID or FAILED. Deliberately NOT time-scoped
-        by `days`: "who owes money today" means everyone outstanding,
-        not just the ones from this window. See the exception noted
-        above.
-      * waivers: count + reasons for the trailing `days` days, read from
-        appointments.waive_reason/payment_recorded_at directly (see the
-        exception noted above -- covers both a real fee waived and a
-        free visit settled).
-      * refunds: count + total refunded_amount for the trailing `days`
-        days, read from the mirrored payment's own refunded_amount/
-        refund_reason/refunded_at.
+      * collections: money actually collected (PAID/COMPLETED on either
+        ledger), bucketed by payment_method and by doctor, over the
+        trailing `days` days (recorded-at-scoped -- when it was
+        collected, not when the appointment was scheduled).
+      * outstanding: what's currently owed right now, on either ledger --
+        every CHECKED_IN appointment still UNPAID/FAILED on Ledger A,
+        plus every OPEN invoice with a positive balance on Ledger B
+        (excluding any mirrored consultation-fee charge, per above).
+        Deliberately NOT time-scoped by `days`: "who owes money today"
+        means everyone outstanding, not just the ones from this window.
+      * waivers: Ledger A only -- Ledger B has no waiver concept (a
+        waived fee mirrors as a VOIDED charge for Payment/Billing
+        History's benefit, migrations/0058, but that's excluded from
+        gross/outstanding sums by its own VOIDED status regardless of
+        the legacy_appointment_id filter, so there's nothing to combine
+        here anyway). No dollar total -- waive_consultation_fee_service
+        and settle_free_visit_service both record payment_amount = 0
+        for a waived visit (see their docstrings), so there is no real
+        "amount waived" number to report; fabricating one from
+        doctor_appointment_types.consultation_fee's *current* price
+        would misrepresent what was actually waived at the time.
+      * refunds: Ledger A only, same reason as waivers -- count + total
+        refund_amount for the trailing `days` days (refund_amount is
+        actually recorded, unlike waivers, so a real total is
+        reportable here).
     """
     window_start = date.today() - timedelta(days=days - 1)
 
@@ -230,32 +330,32 @@ def get_billing_report(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT pay.method, COUNT(*), COALESCE(SUM(pay.amount - pay.refunded_amount), 0)
-                FROM payments pay
-                WHERE pay.legacy_appointment_id IS NOT NULL
-                  AND pay.status = 'COMPLETED'
-                  AND pay.recorded_at::date >= %s
-                GROUP BY pay.method
-                ORDER BY pay.method
+                SELECT payment_method, COUNT(*), COALESCE(SUM(payment_amount), 0)
+                FROM appointments
+                WHERE payment_status = 'PAID'
+                  AND payment_recorded_at::date >= %s
+                GROUP BY payment_method
+                ORDER BY payment_method
                 """,
                 (window_start,),
             )
-            collections_by_method = cur.fetchall()
+            ledger_a_by_method = cur.fetchall()
+            ledger_b_by_method = _ledger_b_collections_by_method(cur, window_start)
 
             cur.execute(
                 """
-                SELECT d.id, d.name, COUNT(*), COALESCE(SUM(pay.amount - pay.refunded_amount), 0)
-                FROM payments pay
-                JOIN appointments a ON a.id = pay.legacy_appointment_id
+                SELECT d.id, d.name, COUNT(*), COALESCE(SUM(a.payment_amount), 0)
+                FROM appointments a
                 JOIN doctors d ON d.id = a.doctor_id
-                WHERE pay.status = 'COMPLETED'
-                  AND pay.recorded_at::date >= %s
+                WHERE a.payment_status = 'PAID'
+                  AND a.payment_recorded_at::date >= %s
                 GROUP BY d.id, d.name
                 ORDER BY d.name
                 """,
                 (window_start,),
             )
-            collections_by_doctor = cur.fetchall()
+            ledger_a_by_doctor = cur.fetchall()
+            ledger_b_by_doctor = _ledger_b_collections_by_doctor(cur, window_start)
 
             cur.execute(
                 """
@@ -269,6 +369,7 @@ def get_billing_report(
                 """
             )
             outstanding_rows = cur.fetchall()
+            ledger_b_outstanding_rows = _ledger_b_outstanding(cur)
 
             # Deliberately NOT rewritten to Ledger B, unlike collections/
             # refunds above: settle_free_visit_service (a genuinely free,
@@ -297,11 +398,10 @@ def get_billing_report(
 
             cur.execute(
                 """
-                SELECT COUNT(*), COALESCE(SUM(pay.refunded_amount), 0)
-                FROM payments pay
-                WHERE pay.legacy_appointment_id IS NOT NULL
-                  AND pay.refunded_amount > 0
-                  AND pay.refunded_at::date >= %s
+                SELECT COUNT(*), COALESCE(SUM(refund_amount), 0)
+                FROM appointments
+                WHERE payment_status = 'REFUNDED'
+                  AND refunded_at::date >= %s
                 """,
                 (window_start,),
             )
@@ -309,40 +409,86 @@ def get_billing_report(
 
             cur.execute(
                 """
-                SELECT a.id, p.name, d.name, pay.refunded_amount, pay.refund_reason, pay.refunded_at
-                FROM payments pay
-                JOIN appointments a ON a.id = pay.legacy_appointment_id
+                SELECT a.id, p.name, d.name, a.refund_amount, a.refund_reason, a.refunded_at
+                FROM appointments a
                 JOIN patients p ON p.id = a.patient_id
                 JOIN doctors d ON d.id = a.doctor_id
-                WHERE pay.refunded_amount > 0
-                  AND pay.refunded_at::date >= %s
-                ORDER BY pay.refunded_at DESC
+                WHERE a.payment_status = 'REFUNDED'
+                  AND a.refunded_at::date >= %s
+                ORDER BY a.refunded_at DESC
                 """,
                 (window_start,),
             )
             refund_rows = cur.fetchall()
 
+    # Merge each Ledger A / Ledger B pair by their shared key (method,
+    # or doctor_id) -- a method/doctor that only collected on one
+    # ledger in this window still appears once, with the other side's
+    # contribution simply 0, rather than two separate rows.
+    by_method: dict[str, dict] = {}
+    for method, count, amount in ledger_a_by_method:
+        by_method[method] = {"count": count, "amount": amount}
+    for method, count, amount in ledger_b_by_method:
+        entry = by_method.setdefault(method, {"count": 0, "amount": 0})
+        entry["count"] += count
+        entry["amount"] += amount
+
+    by_doctor: dict[int, dict] = {}
+    for doctor_id, doctor_name, count, amount in ledger_a_by_doctor:
+        by_doctor[doctor_id] = {"doctor_name": doctor_name, "count": count, "amount": amount}
+    for doctor_id, doctor_name, count, amount in ledger_b_by_doctor:
+        entry = by_doctor.setdefault(doctor_id, {"doctor_name": doctor_name, "count": 0, "amount": 0})
+        entry["count"] += count
+        entry["amount"] += amount
+
+    ledger_a_total = sum(amount for _, _, amount in ledger_a_by_method)
+    ledger_b_total = sum(amount for _, _, amount in ledger_b_by_method)
+
+    combined_outstanding = [
+        {
+            "encounter_id": None,
+            "appointment_id": row[0],
+            "patient_name": row[1],
+            "doctor_name": row[2],
+            "source": "CONSULTATION_FEE",
+            "payment_status": row[3],
+            "balance": None,  # Ledger A never stored a partial-payment amount -- UNPAID/FAILED owes the full consultation_fee, looked up separately (get_appointment_charge) if the exact figure is needed.
+            "since": row[4].isoformat() if row[4] else None,
+        }
+        for row in outstanding_rows
+    ] + [
+        {
+            "encounter_id": encounter_id,
+            "appointment_id": None,
+            "patient_name": patient_name,
+            "doctor_name": doctor_name,
+            "source": "ITEMIZED_BILL",
+            "payment_status": None,
+            "balance": float(balance),
+            "since": created_at.isoformat() if created_at else None,
+        }
+        for encounter_id, patient_name, doctor_name, balance, created_at in ledger_b_outstanding_rows
+    ]
+
     return {
         "window_days": days,
         "collections_by_method": [
-            {"method": method, "count": count, "amount": amount}
-            for method, count, amount in collections_by_method
+            {"method": method, "count": v["count"], "amount": v["amount"]}
+            for method, v in sorted(by_method.items(), key=lambda kv: kv[0] or "")
         ],
         "collections_by_doctor": [
-            {"doctor_id": doctor_id, "doctor_name": doctor_name, "count": count, "amount": amount}
-            for doctor_id, doctor_name, count, amount in collections_by_doctor
+            {"doctor_id": doctor_id, "doctor_name": v["doctor_name"], "count": v["count"], "amount": v["amount"]}
+            for doctor_id, v in sorted(by_doctor.items(), key=lambda kv: kv[1]["doctor_name"])
         ],
-        "total_collected": sum(amount for _, _, amount in collections_by_method),
-        "outstanding_unpaid": [
-            {
-                "appointment_id": row[0],
-                "patient_name": row[1],
-                "doctor_name": row[2],
-                "payment_status": row[3],
-                "visited_at": row[4].isoformat() if row[4] else None,
-            }
-            for row in outstanding_rows
-        ],
+        "total_collected": ledger_a_total + ledger_b_total,
+        # Phase 9, Option C: the two ledgers stay individually visible
+        # here even though the totals/breakdowns above are combined --
+        # see this endpoint's own docstring.
+        "ledger_breakdown": {
+            "consultation_fee": ledger_a_total,
+            "itemized_billing": ledger_b_total,
+        },
+        "outstanding_unpaid": combined_outstanding,
         "waivers": {
             "count": len(waiver_rows),
             "records": [
