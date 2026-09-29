@@ -63,8 +63,8 @@ export default function BillingHistoryPanel() {
         <div>
           <h2>Billing History</h2>
           <p className="muted">
-            Invoices for lab, radiology, pharmacy, packages, and other billed charges, newest
-            first. Consultation fees appear under Billing, not here.
+            Every invoice, newest first — lab, radiology, pharmacy, packages, other billed
+            charges, and (once paid or attempted) the consultation fee.
           </p>
         </div>
       </div>

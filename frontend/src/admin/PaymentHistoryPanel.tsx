@@ -66,8 +66,8 @@ export default function PaymentHistoryPanel() {
         <div>
           <h2>Payment History</h2>
           <p className="muted">
-            Invoice payments only — lab, radiology, pharmacy, packages, and other billed charges,
-            newest first. Consultation fees collected at check-in appear under Billing, not here.
+            Every invoice payment, newest first — lab, radiology, pharmacy, packages, other billed
+            charges, and consultation fees collected at check-in.
           </p>
         </div>
       </div>
