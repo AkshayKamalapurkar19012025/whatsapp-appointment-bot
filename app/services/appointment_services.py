@@ -46,6 +46,11 @@ from zoneinfo import ZoneInfo
 
 import psycopg
 
+from app.services.billing_services import (
+    record_consultation_fee_payment_service,
+    get_payment_by_id_service,
+    refund_invoice_payment_service,
+)
 from app.utils.timezone import overlaps, convert_to_timezone, validate_timezone
 from app.services.availability_engine import (
     get_appointment_type_for_doctor,
@@ -72,6 +77,7 @@ from app.services.exceptions import (
     WaiverNotEligible,
     FreeVisitNotEligible,
     RefundExceedsPayment,
+    PaymentRefundExceedsAmount,
 )
 
 logger = logging.getLogger(__name__)
@@ -97,6 +103,35 @@ ACTIONABLE_STATUSES = ("PENDING", "CONFIRMED")
 # create_appointment_service) is closed in the same transaction by
 # _close_encounter_for_appointment below.
 TERMINAL_STATUSES = ("CANCELLED", "REJECTED", "COMPLETED", "NO_SHOW")
+
+# Phase 10 (Billing Ledger Unification): reusable SQL for every reader
+# that used to select a.payment_status/a.payment_amount/a.payment_
+# method/a.payment_recorded_at directly (app/api/appointments.py's list
+# endpoint, app/api/dashboard.py, app/services/visit_completion_
+# service.py). record_payment_service no longer writes those columns
+# for a new PAID/FAILED outcome -- it writes a CONSULTATION charge +
+# payment on this encounter's ledger-2 invoice instead, and links it
+# back via appointments.consultation_payment_id (migrations/0058).
+# These fragments prefer that linked payment when one exists (true for
+# every payment recorded after this phase, and for every historical
+# PAID/FAILED/REFUNDED row migrations/0059 backfilled) and fall back to
+# the legacy columns only when nothing is linked -- true for a WAIVED
+# visit (never linked, see migrations/0059's own reasoning: a waiver
+# isn't representable as a ledger-2 charge) and for a genuinely never-
+# attempted UNPAID one. Every caller must alias the appointments table
+# "a" and add EFFECTIVE_PAYMENT_JOIN_SQL to its FROM clause.
+EFFECTIVE_PAYMENT_JOIN_SQL = "LEFT JOIN payments cp ON cp.id = a.consultation_payment_id"
+
+EFFECTIVE_PAYMENT_STATUS_SQL = """CASE
+        WHEN a.consultation_payment_id IS NULL THEN a.payment_status
+        WHEN cp.refunded_amount > 0 AND cp.refunded_amount >= cp.amount THEN 'REFUNDED'
+        WHEN cp.status = 'COMPLETED' THEN 'PAID'
+        ELSE 'FAILED'
+    END"""
+
+EFFECTIVE_PAYMENT_AMOUNT_SQL = "COALESCE(cp.amount, a.payment_amount)"
+EFFECTIVE_PAYMENT_METHOD_SQL = "COALESCE(cp.method, a.payment_method)"
+EFFECTIVE_PAYMENT_RECORDED_AT_SQL = "COALESCE(cp.recorded_at, a.payment_recorded_at)"
 
 
 def _close_encounter_for_appointment(cur, appointment_id: int):
@@ -1575,7 +1610,7 @@ def add_invoice_line_item_service(cur, appointment_id: int, *, description: str,
     service use for "this payment_status doesn't allow that action".
     """
     cur.execute(
-        "SELECT payment_status FROM appointments WHERE id = %s FOR UPDATE",
+        "SELECT payment_status, consultation_payment_id FROM appointments WHERE id = %s FOR UPDATE",
         (appointment_id,),
     )
     row = cur.fetchone()
@@ -1583,10 +1618,25 @@ def add_invoice_line_item_service(cur, appointment_id: int, *, description: str,
     if row is None:
         raise AppointmentNotFound()
 
-    (payment_status,) = row
+    payment_status, consultation_payment_id = row
 
     if payment_status not in ("UNPAID", "FAILED"):
         raise PaymentStateConflict()
+
+    # Phase 10 (Billing Ledger Unification): payment_status alone no
+    # longer tells the whole story once a consultation fee is paid via
+    # the new ledger -- record_payment_service stops writing PAID here,
+    # so this column stays UNPAID/FAILED even after a real payment
+    # completes. consultation_payment_id is the authoritative pointer
+    # to that payment (see app/services/billing_services.py); a
+    # COMPLETED one means the bill is frozen the same way a legacy PAID
+    # row always froze it, and a line item added after that would
+    # silently make the already-recorded payment_amount wrong, exactly
+    # the failure mode this gate has always existed to prevent.
+    if consultation_payment_id is not None:
+        payment = get_payment_by_id_service(cur, consultation_payment_id)
+        if payment is not None and payment["status"] == "COMPLETED":
+            raise PaymentStateConflict()
 
     cur.execute(
         """
@@ -1610,7 +1660,7 @@ def _lock_appointment_for_payment(cur, appointment_id: int):
     cur.execute(
         """
         SELECT a.status, a.payment_status, a.doctor_id, a.patient_id,
-               a.visited_at, d.timezone
+               a.visited_at, d.timezone, a.consultation_payment_id
         FROM appointments a
         JOIN doctors d ON d.id = a.doctor_id
         WHERE a.id = %s
@@ -1624,7 +1674,7 @@ def _lock_appointment_for_payment(cur, appointment_id: int):
     if row is None:
         raise AppointmentNotFound()
 
-    status, payment_status, doctor_id, patient_id, visited_at, doctor_tz = row
+    status, payment_status, doctor_id, patient_id, visited_at, doctor_tz, consultation_payment_id = row
 
     if status != "CHECKED_IN":
         raise InvalidStatusTransition()
@@ -1632,7 +1682,7 @@ def _lock_appointment_for_payment(cur, appointment_id: int):
     if not validate_timezone(doctor_tz):
         doctor_tz = "Asia/Kolkata"
 
-    return payment_status, doctor_id, patient_id, visited_at, doctor_tz
+    return payment_status, doctor_id, patient_id, visited_at, doctor_tz, consultation_payment_id
 
 
 def record_payment_service(cur, appointment_id: int, *, method: str, outcome: str, staff_id: int):
@@ -1643,11 +1693,33 @@ def record_payment_service(cur, appointment_id: int, *, method: str, outcome: st
     with a new outcome; nothing here talks to a real payment gateway,
     per the workflow spec's explicit scope boundary).
 
+    Phase 10 (Billing Ledger Unification): this is now a thin wrapper
+    around billing_services.record_consultation_fee_payment_service --
+    the consultation fee is recorded as a CONSULTATION charge + payment
+    on this encounter's ledger-2 invoice (migrations/0033), not by
+    writing appointments.payment_status/payment_amount any more. Every
+    lock (CHECKED_IN gate), amount computation (consultation_fee +
+    invoice_line_items), and the queue-token trigger below are
+    completely unchanged -- only where the money is actually recorded
+    moved. appointments.consultation_payment_id (migrations/0058) is
+    set to the resulting ledger-2 payment's id so this function (and
+    add_invoice_line_item_service/record_refund_service) can find it
+    again without guessing. appointments.payment_status/payment_amount/
+    payment_method/payment_recorded_by/payment_recorded_at are left
+    exactly as they were before this call (never written to again for
+    a PAID/FAILED outcome) -- retained, readable, historical-compatible
+    columns per migrations/0058's own reasoning, not a second write
+    target for new payments.
+
     Idempotent on an already-PAID appointment: returns the existing
     record unchanged rather than charging a second time -- guards
-    against a double-click or a refresh-and-resubmit. Raises
-    PaymentStateConflict for WAIVED/REFUNDED, since neither of those
-    should ever be overwritten by a plain payment attempt.
+    against a double-click or a refresh-and-resubmit. This is now
+    checked against consultation_payment_id's own COMPLETED status,
+    not the legacy payment_status column (which no longer changes on a
+    new payment). Raises PaymentStateConflict for WAIVED/REFUNDED --
+    still read from the legacy payment_status column, since neither of
+    those is ever represented any other way (see waive_consultation_
+    fee_service and record_refund_service).
 
     On a successful PAID outcome, also generates the queue token
     (generate_queue_token_service) -- this is the workflow's actual
@@ -1661,10 +1733,23 @@ def record_payment_service(cur, appointment_id: int, *, method: str, outcome: st
     line_item_service) -- still never client-supplied, just a wider
     server-side total than the original single-fee model.
     """
-    payment_status, doctor_id, patient_id, visited_at, doctor_tz = _lock_appointment_for_payment(cur, appointment_id)
+    payment_status, doctor_id, patient_id, visited_at, doctor_tz, consultation_payment_id = (
+        _lock_appointment_for_payment(cur, appointment_id)
+    )
 
+    # A zero-cost consultation being explicitly recorded PAID (as
+    # opposed to going through the dedicated settle_free_visit_service)
+    # is idempotent on the legacy column, exactly as it always was --
+    # see the amount == 0 branch below for why it never touches
+    # ledger 2 at all, so consultation_payment_id can't carry this
+    # state the way it does for a real, non-zero payment.
     if payment_status == "PAID":
         return {**_current_payment_record(cur, appointment_id), "token_just_issued": False}
+
+    if consultation_payment_id is not None:
+        existing_payment = get_payment_by_id_service(cur, consultation_payment_id)
+        if existing_payment is not None and existing_payment["status"] == "COMPLETED":
+            return {**_current_consultation_payment_record(cur, appointment_id), "token_just_issued": False}
 
     if payment_status in ("WAIVED", "REFUNDED"):
         raise PaymentStateConflict()
@@ -1676,18 +1761,38 @@ def record_payment_service(cur, appointment_id: int, *, method: str, outcome: st
     charge = get_consultation_charge_service(cur, appointment_id)
     amount = charge["consultation_fee"] + _invoice_extra_charges_total(cur, appointment_id)
 
+    if amount == 0:
+        # charges.amount and payments.amount both CHECK (amount > 0) --
+        # there is no way to represent "₹0, explicitly paid" as a
+        # ledger-2 event (see record_consultation_fee_payment_service's
+        # own docstring). This is structurally the same situation as a
+        # waiver (nothing owed, nothing to collect), so it gets the
+        # same treatment: recorded on the legacy columns only, exactly
+        # what this function did before Phase 10, never touching
+        # consultation_payment_id. Still triggers the same queue-token
+        # side effect on PAID below.
+        cur.execute(
+            """
+            UPDATE appointments
+            SET payment_status = %s, payment_method = %s, payment_amount = 0,
+                payment_recorded_by = %s, payment_recorded_at = NOW(), updated_at = NOW()
+            WHERE id = %s
+            """,
+            (outcome, method, staff_id, appointment_id),
+        )
+        token_just_issued = False
+        if outcome == "PAID":
+            token_result = generate_queue_token_service(cur, appointment_id, doctor_id=doctor_id, doctor_tz=doctor_tz)
+            token_just_issued = token_result["newly_generated"]
+        return {**_current_payment_record(cur, appointment_id), "token_just_issued": token_just_issued}
+
+    result = record_consultation_fee_payment_service(
+        cur, appointment_id, staff_id=staff_id, amount=amount, method=method, outcome=outcome
+    )
+
     cur.execute(
-        """
-        UPDATE appointments
-        SET payment_status = %s,
-            payment_method = %s,
-            payment_amount = %s,
-            payment_recorded_by = %s,
-            payment_recorded_at = NOW(),
-            updated_at = NOW()
-        WHERE id = %s
-        """,
-        (outcome, method, amount, staff_id, appointment_id),
+        "UPDATE appointments SET consultation_payment_id = %s, updated_at = NOW() WHERE id = %s",
+        (result["consultation_payment_id"], appointment_id),
     )
 
     token_just_issued = False
@@ -1695,7 +1800,7 @@ def record_payment_service(cur, appointment_id: int, *, method: str, outcome: st
         token_result = generate_queue_token_service(cur, appointment_id, doctor_id=doctor_id, doctor_tz=doctor_tz)
         token_just_issued = token_result["newly_generated"]
 
-    return {**_current_payment_record(cur, appointment_id), "token_just_issued": token_just_issued}
+    return {**_current_consultation_payment_record(cur, appointment_id), "token_just_issued": token_just_issued}
 
 
 def waive_consultation_fee_service(cur, appointment_id: int, *, reason: str, staff_id: int):
@@ -1720,13 +1825,26 @@ def waive_consultation_fee_service(cur, appointment_id: int, *, reason: str, sta
     outcome uses: "payment complete or waived" is what admits a patient
     to the queue, not check-in itself.
     """
-    payment_status, doctor_id, patient_id, visited_at, doctor_tz = _lock_appointment_for_payment(cur, appointment_id)
+    payment_status, doctor_id, patient_id, visited_at, doctor_tz, consultation_payment_id = (
+        _lock_appointment_for_payment(cur, appointment_id)
+    )
 
     if payment_status == "WAIVED":
         return {**_current_payment_record(cur, appointment_id), "token_just_issued": False}
 
     if payment_status in ("PAID", "REFUNDED"):
         raise PaymentStateConflict()
+
+    # Phase 10 (Billing Ledger Unification): payment_status alone
+    # doesn't catch a fee already paid via the new ledger (it stays
+    # UNPAID/FAILED even after a real payment -- see record_payment_
+    # service's docstring), so a waiver attempt after a real ledger-2
+    # payment needs its own check here, same reasoning as add_invoice_
+    # line_item_service's gate above.
+    if consultation_payment_id is not None:
+        existing_payment = get_payment_by_id_service(cur, consultation_payment_id)
+        if existing_payment is not None and existing_payment["status"] == "COMPLETED":
+            raise PaymentStateConflict()
 
     this_visit_date = convert_to_timezone(visited_at, doctor_tz).date()
 
@@ -1804,13 +1922,23 @@ def settle_free_visit_service(cur, appointment_id: int):
     with a real extra charge on it isn't "free" just because the base
     consultation_fee happens to be 0.
     """
-    payment_status, doctor_id, patient_id, visited_at, doctor_tz = _lock_appointment_for_payment(cur, appointment_id)
+    payment_status, doctor_id, patient_id, visited_at, doctor_tz, consultation_payment_id = (
+        _lock_appointment_for_payment(cur, appointment_id)
+    )
 
     if payment_status == "WAIVED":
         return {**_current_payment_record(cur, appointment_id), "token_just_issued": False}
 
     if payment_status in ("PAID", "REFUNDED"):
         raise PaymentStateConflict()
+
+    # Phase 10 (Billing Ledger Unification): see the identical check in
+    # waive_consultation_fee_service above -- payment_status alone
+    # doesn't catch a fee already paid via the new ledger.
+    if consultation_payment_id is not None:
+        existing_payment = get_payment_by_id_service(cur, consultation_payment_id)
+        if existing_payment is not None and existing_payment["status"] == "COMPLETED":
+            raise PaymentStateConflict()
 
     charge = get_consultation_charge_service(cur, appointment_id)
 
@@ -1863,10 +1991,36 @@ def record_refund_service(cur, appointment_id: int, *, amount, reason: str, staf
     raises RefundExceedsPayment otherwise. A full refund is the common
     case (amount == payment_amount); a smaller amount is a deliberate
     partial refund, left to the caller's/UI's discretion.
+
+    Phase 10 (Billing Ledger Unification): when this appointment's
+    consultation fee was paid via the ledger-2 CONSULTATION charge
+    (consultation_payment_id is set -- true for every payment recorded
+    after this phase, and for every PAID/REFUNDED row migrations/0059
+    backfilled), the refund is applied there too, by delegating to
+    billing_services.refund_invoice_payment_service -- reusing its
+    remaining-balance check (PaymentRefundExceedsAmount, translated to
+    this function's own RefundExceedsPayment so the API layer needs no
+    change) rather than re-implementing it. Ledger 2 genuinely supports
+    more than one partial refund against the same payment (unlike the
+    legacy one-shot model this function used to enforce) -- that
+    capability is intentionally not re-restricted here; the previous
+    "second refund is always a conflict" behavior was a limitation of
+    the old storage, not a deliberate business rule (nothing in this
+    codebase's docs/tests asserts partial refunds must be forbidden).
+
+    The legacy payment_status/refund_* columns are still updated
+    alongside the ledger-2 refund -- the one deliberate exception to
+    "Ledger 2 only" this phase makes (see migrations/0058's own
+    reasoning): a refund is a rare, staff-initiated, already-audited
+    correction, not the high-frequency payment-collection path Ledger 2
+    unification targets, and several existing readers (app/api/
+    dashboard.py's refund summary/list) key off these columns directly.
+    A not-yet-linked (pre-Phase-10, never-backfilled) appointment falls
+    back to the original ledger-1-only behavior, unchanged.
     """
     cur.execute(
         """
-        SELECT payment_status, payment_amount
+        SELECT payment_status, payment_amount, consultation_payment_id
         FROM appointments
         WHERE id = %s
         FOR UPDATE
@@ -1879,7 +2033,47 @@ def record_refund_service(cur, appointment_id: int, *, amount, reason: str, staf
     if row is None:
         raise AppointmentNotFound()
 
-    payment_status, payment_amount = row
+    payment_status, payment_amount, consultation_payment_id = row
+
+    if consultation_payment_id is not None:
+        payment = get_payment_by_id_service(cur, consultation_payment_id)
+        if payment is None or payment["status"] != "COMPLETED":
+            raise PaymentStateConflict()
+
+        # A fully-refunded payment stays a state conflict (409, matching
+        # this function's pre-Phase-10 behavior and its own tests) --
+        # not RefundExceedsPayment (422), which refund_invoice_payment_
+        # service's own remaining-balance math would otherwise raise for
+        # this exact case (0 left to refund). A *partial* prior refund
+        # correctly falls through to that same math below instead --
+        # ledger 2 genuinely supports a second partial refund, unlike
+        # the one-shot legacy model, and that capability is deliberately
+        # not re-restricted (see this function's own docstring).
+        if payment["refunded_amount"] >= payment["amount"]:
+            raise PaymentStateConflict()
+
+        try:
+            refund_invoice_payment_service(
+                cur, appointment_id, consultation_payment_id, staff_id=staff_id, amount=amount, reason=reason
+            )
+        except PaymentRefundExceedsAmount:
+            raise RefundExceedsPayment()
+
+        cur.execute(
+            """
+            UPDATE appointments
+            SET payment_status = 'REFUNDED',
+                refund_amount = %s,
+                refund_reason = %s,
+                refunded_by = %s,
+                refunded_at = NOW(),
+                updated_at = NOW()
+            WHERE id = %s
+            """,
+            (amount, reason, staff_id, appointment_id),
+        )
+
+        return _current_consultation_payment_record(cur, appointment_id)
 
     if payment_status != "PAID":
         raise PaymentStateConflict()
@@ -1929,6 +2123,49 @@ def _current_payment_record(cur, appointment_id: int):
         "refund_amount": row[7],
         "refund_reason": row[8],
         "refunded_at": row[9].isoformat() if row[9] else None,
+    }
+
+
+def _current_consultation_payment_record(cur, appointment_id: int):
+    """
+    Phase 10 (Billing Ledger Unification)-aware replacement for
+    _current_payment_record, used by record_payment_service/record_
+    refund_service now that a real consultation-fee payment lives in
+    ledger-2's payments table. Falls back to the plain legacy columns
+    whenever consultation_payment_id is NULL -- true for a WAIVED visit
+    (waive_consultation_fee_service never sets it, see migrations/0059's
+    own reasoning for why a waiver isn't representable as a ledger-2
+    charge) and for a genuinely never-attempted (UNPAID) one.
+    """
+    cur.execute(
+        "SELECT id, payment_status, waive_reason, token_number, consultation_payment_id FROM appointments WHERE id = %s",
+        (appointment_id,),
+    )
+    appt_id, legacy_status, waive_reason, token_number, consultation_payment_id = cur.fetchone()
+
+    if consultation_payment_id is None:
+        return _current_payment_record(cur, appointment_id)
+
+    payment = get_payment_by_id_service(cur, consultation_payment_id)
+
+    if payment["refunded_amount"] > 0 and payment["refunded_amount"] >= payment["amount"]:
+        status = "REFUNDED"
+    elif payment["status"] == "COMPLETED":
+        status = "PAID"
+    else:
+        status = "FAILED"
+
+    return {
+        "id": appt_id,
+        "payment_status": status,
+        "payment_method": payment["method"],
+        "payment_amount": payment["amount"],
+        "payment_recorded_at": payment["recorded_at"],
+        "waive_reason": waive_reason,
+        "token_number": token_number,
+        "refund_amount": payment["refunded_amount"] if payment["refunded_amount"] > 0 else None,
+        "refund_reason": payment["refund_reason"],
+        "refunded_at": payment["refunded_at"],
     }
 
 

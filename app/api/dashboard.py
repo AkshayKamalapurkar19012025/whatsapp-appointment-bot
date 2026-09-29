@@ -24,6 +24,13 @@ from fastapi import APIRouter, Depends, Query
 
 from app.api.staff_auth import get_current_staff
 from app.db.connection import get_connection
+from app.services.appointment_services import (
+    EFFECTIVE_PAYMENT_JOIN_SQL,
+    EFFECTIVE_PAYMENT_STATUS_SQL,
+    EFFECTIVE_PAYMENT_AMOUNT_SQL,
+    EFFECTIVE_PAYMENT_METHOD_SQL,
+    EFFECTIVE_PAYMENT_RECORDED_AT_SQL,
+)
 
 router = APIRouter(
     prefix="/dashboard",
@@ -298,14 +305,27 @@ def get_billing_report(
 
     with get_connection() as conn:
         with conn.cursor() as cur:
+            # Phase 10 (Billing Ledger Unification): payment_status/
+            # payment_amount/payment_method/payment_recorded_at are no
+            # longer written for a payment recorded after this phase
+            # (see app/services/appointment_services.py's EFFECTIVE_
+            # PAYMENT_*_SQL and record_payment_service's own docstring)
+            # -- every query below that reasons about PAID/UNPAID/FAILED
+            # or sums payment_amount uses the effective-payment fragment
+            # instead of the bare column, so a new payment shows up here
+            # exactly as a legacy one always did. WAIVED/REFUNDED below
+            # are untouched: waivers never move to ledger 2 at all, and
+            # a refund still mirrors payment_status/refund_* onto these
+            # same legacy columns (see record_refund_service).
             cur.execute(
-                """
-                SELECT payment_method, COUNT(*), COALESCE(SUM(payment_amount), 0)
-                FROM appointments
-                WHERE payment_status = 'PAID'
-                  AND payment_recorded_at::date >= %s
-                GROUP BY payment_method
-                ORDER BY payment_method
+                f"""
+                SELECT {EFFECTIVE_PAYMENT_METHOD_SQL}, COUNT(*), COALESCE(SUM({EFFECTIVE_PAYMENT_AMOUNT_SQL}), 0)
+                FROM appointments a
+                {EFFECTIVE_PAYMENT_JOIN_SQL}
+                WHERE {EFFECTIVE_PAYMENT_STATUS_SQL} = 'PAID'
+                  AND {EFFECTIVE_PAYMENT_RECORDED_AT_SQL}::date >= %s
+                GROUP BY 1
+                ORDER BY 1
                 """,
                 (window_start,),
             )
@@ -313,12 +333,13 @@ def get_billing_report(
             ledger_b_by_method = _ledger_b_collections_by_method(cur, window_start)
 
             cur.execute(
-                """
-                SELECT d.id, d.name, COUNT(*), COALESCE(SUM(a.payment_amount), 0)
+                f"""
+                SELECT d.id, d.name, COUNT(*), COALESCE(SUM({EFFECTIVE_PAYMENT_AMOUNT_SQL}), 0)
                 FROM appointments a
                 JOIN doctors d ON d.id = a.doctor_id
-                WHERE a.payment_status = 'PAID'
-                  AND a.payment_recorded_at::date >= %s
+                {EFFECTIVE_PAYMENT_JOIN_SQL}
+                WHERE {EFFECTIVE_PAYMENT_STATUS_SQL} = 'PAID'
+                  AND {EFFECTIVE_PAYMENT_RECORDED_AT_SQL}::date >= %s
                 GROUP BY d.id, d.name
                 ORDER BY d.name
                 """,
@@ -328,13 +349,14 @@ def get_billing_report(
             ledger_b_by_doctor = _ledger_b_collections_by_doctor(cur, window_start)
 
             cur.execute(
-                """
-                SELECT a.id, p.name, d.name, a.payment_status, a.visited_at
+                f"""
+                SELECT a.id, p.name, d.name, {EFFECTIVE_PAYMENT_STATUS_SQL}, a.visited_at
                 FROM appointments a
                 JOIN patients p ON p.id = a.patient_id
                 JOIN doctors d ON d.id = a.doctor_id
+                {EFFECTIVE_PAYMENT_JOIN_SQL}
                 WHERE a.status = 'CHECKED_IN'
-                  AND a.payment_status IN ('UNPAID', 'FAILED')
+                  AND {EFFECTIVE_PAYMENT_STATUS_SQL} IN ('UNPAID', 'FAILED')
                 ORDER BY a.visited_at
                 """
             )

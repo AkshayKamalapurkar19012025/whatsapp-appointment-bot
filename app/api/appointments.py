@@ -53,6 +53,11 @@ from app.services.appointment_services import (
     add_invoice_line_item_service,
     hold_queue_entry_service,
     recall_queue_entry_service,
+    EFFECTIVE_PAYMENT_JOIN_SQL,
+    EFFECTIVE_PAYMENT_STATUS_SQL,
+    EFFECTIVE_PAYMENT_AMOUNT_SQL,
+    EFFECTIVE_PAYMENT_METHOD_SQL,
+    EFFECTIVE_PAYMENT_RECORDED_AT_SQL,
     set_priority_service,
 )
 from app.services.availability_engine import list_available_dates_in_range
@@ -269,11 +274,11 @@ def get_appointments(
                     a.status,
                     a.token_number,
                     a.created_at,
-                    a.payment_status,
+                    {EFFECTIVE_PAYMENT_STATUS_SQL},
                     dat.consultation_fee,
-                    a.payment_method,
-                    a.payment_amount,
-                    a.payment_recorded_at,
+                    {EFFECTIVE_PAYMENT_METHOD_SQL},
+                    {EFFECTIVE_PAYMENT_AMOUNT_SQL},
+                    {EFFECTIVE_PAYMENT_RECORDED_AT_SQL},
                     a.waive_reason,
                     a.arrived_at,
                     a.booking_source,
@@ -291,6 +296,7 @@ def get_appointments(
                 LEFT JOIN doctor_appointment_types dat
                     ON dat.doctor_id = a.doctor_id
                    AND dat.appointment_type_id = a.appointment_type_id
+                {EFFECTIVE_PAYMENT_JOIN_SQL}
                 {where_sql}
                 ORDER BY a.start_at
                 LIMIT 5000
@@ -912,7 +918,14 @@ def _notify_queue_token(cur, appointment_id: int, token_number: int) -> None:
 def record_appointment_payment(
     appointment_id: int,
     payment: PaymentRecord,
-    staff: dict = Depends(get_current_staff),
+    # Phase 10 (Billing Ledger Unification): record_payment_service now
+    # writes the consultation fee onto this encounter's ledger-2 invoice
+    # (app/services/billing_services.py) instead of appointments.
+    # payment_*, so this endpoint is now a thin compatibility wrapper --
+    # same request/response shape as before, same bill.record_payment
+    # gate as its newer /bill/payments sibling (migrations/0058 grants
+    # it to every existing role, so this isn't a narrowing).
+    staff: dict = Depends(require_permission("bill.record_payment")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -941,6 +954,16 @@ def record_appointment_payment(
                     status_code=409,
                     detail="This doctor/appointment-type combination no longer has a configured fee",
                 )
+
+            record_audit_log(
+                cur,
+                hospital_id=staff["hospital_id"],
+                staff_id=staff["id"],
+                action="bill.record_payment",
+                resource_type="appointment",
+                resource_id=appointment_id,
+                details={"method": payment.method, "outcome": payment.outcome},
+            )
 
             if result["token_just_issued"]:
                 _notify_queue_token(cur, appointment_id, result["token_number"])

@@ -172,3 +172,213 @@ def test_concurrent_dispense_against_the_same_stock_batch_only_one_wins(client, 
         cur.execute("SELECT quantity_on_hand FROM pharmacy_stock WHERE id = %s", (stock["id"],))
         (remaining,) = cur.fetchone()
     assert remaining == 0, f"expected the batch fully drawn down once, found {remaining} remaining"
+
+
+# ---------------------------------------------------------------------
+# Phase 10 (Billing Ledger Unification): record_payment_service now
+# writes the consultation fee onto this encounter's ledger-2 invoice
+# instead of a plain appointments UPDATE. The row lock protecting this
+# (_lock_appointment_for_payment's FOR UPDATE OF a) is the same one
+# that already existed pre-Phase-10 -- these tests prove it still
+# serializes correctly now that a real INSERT into charges/payments (and
+# potentially invoices) sits behind it, not just a column UPDATE, and
+# that charges_one_consultation_per_invoice (migrations/0058) backs it
+# up at the DB level even if the row lock were ever bypassed.
+# ---------------------------------------------------------------------
+
+
+def _set_consultation_fee(client, admin_headers, seeded, fee):
+    client.put(
+        f"/api/doctors/{seeded['doctor_id']}/appointment-types/{seeded['appointment_type_id']}",
+        json={"duration_minutes": 30, "consultation_fee": fee},
+        headers=admin_headers,
+    )
+
+
+def _checked_in_context_with_fee(client, db_connection, doctor_name: str, fee: int) -> dict:
+    admin_headers = create_admin_and_get_headers(db_connection)
+    seeded = seed_basic_doctor(
+        client,
+        db_connection,
+        doctor_name=doctor_name,
+        department_name=f"{doctor_name} Dept",
+        appointment_type_name=f"{doctor_name} Type",
+    )
+    _set_consultation_fee(client, admin_headers, seeded, fee)
+    patient = client.post(
+        "/api/patients",
+        json={"name": f"{doctor_name} Patient", "whatsapp_number": f"+9197{abs(hash(doctor_name)) % 10**8:08d}"},
+        headers=admin_headers,
+    ).json()
+    scheduling_date = _next_weekday(date.today() + timedelta(days=10))
+    created = client.post(
+        "/api/appointments",
+        json={
+            "doctor_id": seeded["doctor_id"],
+            "patient_id": patient["id"],
+            "appointment_type_id": seeded["appointment_type_id"],
+            "start_at": f"{scheduling_date.isoformat()}T09:00:00+05:30",
+        },
+        headers=admin_headers,
+    ).json()
+    response = client.post(f"/api/appointments/{created['id']}/confirm-and-checkin", headers=admin_headers)
+    assert response.status_code == 200
+    return {"admin_headers": admin_headers, "appointment_id": created["id"], "doctor_id": seeded["doctor_id"]}
+
+
+def test_concurrent_consultation_payments_same_appointment_only_one_charge_one_payment_one_token(
+    client, db_connection
+):
+    """Two threads POST /appointments/{id}/payment for the SAME
+    checked-in appointment at the same instant. _lock_appointment_for_
+    payment's FOR UPDATE OF a serializes them exactly as it always did
+    pre-Phase-10 -- the second thread must see consultation_payment_id
+    already set (COMPLETED) once it acquires the lock and take the
+    idempotent-return path, not create a second charge/payment or issue
+    a second queue token."""
+    ctx = _checked_in_context_with_fee(client, db_connection, "Dr. Concurrent Consult Payment", 400)
+    appointment_id = ctx["appointment_id"]
+    headers = ctx["admin_headers"]
+
+    results = {}
+    barrier = threading.Barrier(2)
+
+    def do_pay(key):
+        barrier.wait()
+        response = client.post(
+            f"/api/appointments/{appointment_id}/payment",
+            json={"method": "CASH", "outcome": "PAID"},
+            headers=headers,
+        )
+        results[key] = response
+
+    threads = [threading.Thread(target=do_pay, args=(k,)) for k in ("a", "b")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    for key, response in results.items():
+        assert response.status_code == 200, f"thread {key} got {response.status_code}: {response.text}"
+
+    tokens = {r.json()["token_number"] for r in results.values()}
+    assert len(tokens) == 1, f"both threads must agree on exactly one token, got {tokens}"
+
+    with db_connection.cursor() as cur:
+        cur.execute(
+            """
+            SELECT COUNT(*) FROM charges c
+            JOIN invoices i ON i.id = c.invoice_id
+            JOIN encounters e ON e.id = i.encounter_id
+            JOIN appointments a ON a.encounter_id = e.id
+            WHERE a.id = %s AND c.source_type = 'CONSULTATION' AND c.status = 'ACTIVE'
+            """,
+            (appointment_id,),
+        )
+        (charge_count,) = cur.fetchone()
+        cur.execute(
+            """
+            SELECT COUNT(*) FROM payments pay
+            JOIN invoices i ON i.id = pay.invoice_id
+            JOIN encounters e ON e.id = i.encounter_id
+            JOIN appointments a ON a.encounter_id = e.id
+            WHERE a.id = %s
+            """,
+            (appointment_id,),
+        )
+        (payment_count,) = cur.fetchone()
+
+    assert charge_count == 1, f"expected exactly one ACTIVE consultation charge, found {charge_count}"
+    assert payment_count == 1, f"expected exactly one payment, found {payment_count}"
+
+
+def test_concurrent_first_time_invoice_creation_for_same_encounter_no_duplicate(client, db_connection):
+    """Two threads race to be the FIRST payment for an appointment whose
+    encounter has no invoice yet -- both hit _ensure_invoice's INSERT
+    ... ON CONFLICT (encounter_id) DO NOTHING at (near) the same instant.
+    invoices.encounter_id's own UNIQUE constraint is the real backstop
+    here; this proves it holds under a genuine race, not just sequential
+    calls."""
+    ctx = _checked_in_context_with_fee(client, db_connection, "Dr. Concurrent Invoice Create", 250)
+    appointment_id = ctx["appointment_id"]
+    headers = ctx["admin_headers"]
+
+    results = {}
+    barrier = threading.Barrier(2)
+
+    def do_pay(key):
+        barrier.wait()
+        response = client.post(
+            f"/api/appointments/{appointment_id}/payment",
+            json={"method": "UPI", "outcome": "PAID"},
+            headers=headers,
+        )
+        results[key] = response.status_code
+
+    threads = [threading.Thread(target=do_pay, args=(k,)) for k in ("a", "b")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    for key, code in results.items():
+        assert code == 200, f"thread {key} got {code}"
+
+    with db_connection.cursor() as cur:
+        cur.execute(
+            """
+            SELECT COUNT(*) FROM invoices i
+            JOIN encounters e ON e.id = i.encounter_id
+            JOIN appointments a ON a.encounter_id = e.id
+            WHERE a.id = %s
+            """,
+            (appointment_id,),
+        )
+        (invoice_count,) = cur.fetchone()
+    assert invoice_count == 1, f"expected exactly one invoice for this encounter, found {invoice_count}"
+
+
+def test_duplicate_consultation_payment_request_prevented_by_unique_index(client, db_connection):
+    """Direct DB-level proof that charges_one_consultation_per_invoice
+    (migrations/0058) backs up the row lock: a second ACTIVE CONSULTATION
+    charge for the same invoice must be rejected by the constraint
+    itself, independent of any application-code race."""
+    ctx = _checked_in_context_with_fee(client, db_connection, "Dr. Duplicate Consult Charge", 350)
+    appointment_id = ctx["appointment_id"]
+    headers = ctx["admin_headers"]
+
+    paid = client.post(
+        f"/api/appointments/{appointment_id}/payment",
+        json={"method": "CASH", "outcome": "PAID"},
+        headers=headers,
+    )
+    assert paid.status_code == 200
+
+    with db_connection.cursor() as cur:
+        cur.execute(
+            """
+            SELECT i.id FROM invoices i
+            JOIN encounters e ON e.id = i.encounter_id
+            JOIN appointments a ON a.encounter_id = e.id
+            WHERE a.id = %s
+            """,
+            (appointment_id,),
+        )
+        (invoice_id,) = cur.fetchone()
+
+        raised = False
+        try:
+            cur.execute(
+                """
+                INSERT INTO charges (invoice_id, description, amount, source_type, created_by)
+                VALUES (%s, 'Duplicate consultation attempt', 350, 'CONSULTATION', 1)
+                """,
+                (invoice_id,),
+            )
+        except Exception as exc:
+            raised = True
+            assert "charges_one_consultation_per_invoice" in str(exc)
+        finally:
+            db_connection.rollback()
+
+    assert raised, "a second ACTIVE CONSULTATION charge on the same invoice must be rejected by the DB"
