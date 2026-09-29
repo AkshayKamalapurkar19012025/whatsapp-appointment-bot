@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Literal
 
 from app.db.connection import get_connection
+from app.services.staff_permissions import staff_has_permission
 from app.services import exceptions as svc_exc
 from app.services.audit_log import record_audit_log
 from app.services.staff_auth import (
@@ -140,26 +141,7 @@ def require_permission(permission_name: str):
     def dependency(staff: dict = Depends(get_current_staff)) -> dict:
         with get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT EXISTS (
-                        SELECT 1
-                        FROM staff_roles sr
-                        JOIN role_permissions rp ON rp.role_id = sr.role_id
-                        JOIN permissions p ON p.id = rp.permission_id
-                        WHERE sr.staff_id = %(staff_id)s
-                          AND p.name = %(permission_name)s
-                    ) OR EXISTS (
-                        SELECT 1
-                        FROM break_glass_grants g
-                        WHERE g.staff_id = %(staff_id)s
-                          AND g.permission_name = %(permission_name)s
-                          AND g.expires_at > NOW()
-                    )
-                    """,
-                    {"staff_id": staff["id"], "permission_name": permission_name},
-                )
-                has_permission = cur.fetchone()[0]
+                has_permission = staff_has_permission(cur, staff["id"], permission_name)
 
         if not has_permission:
             raise HTTPException(status_code=403, detail="Insufficient permissions")

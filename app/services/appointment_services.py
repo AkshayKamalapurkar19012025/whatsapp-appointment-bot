@@ -2107,3 +2107,184 @@ def get_now_serving_token_service(cur, doctor_id: int, doctor_tz: str) -> int | 
     row = cur.fetchone()
 
     return row[0] if row else None
+
+
+
+
+def list_appointments_service(
+    cur,
+    *,
+    doctor_id: int | None = None,
+    patient_id: int | None = None,
+    status: str | None = None,
+    appointment_type_id: int | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    limit: int = 1000,
+    offset: int = 0,
+    appointment_id: int | None = None,
+    hospital_id: int | None = None,
+) -> dict:
+    """
+    The admin appointment listing, moved verbatim out of
+    app/api/appointments.py's GET /appointments (see that route's
+    docstring for the doctor-local-date reasoning -- unchanged) so the AI
+    agent's appointment tools reuse the exact same query and date
+    handling instead of a second copy.
+
+    appointment_id and hospital_id are the only additions: both optional
+    and both default to "no extra filter", so the route's behavior is
+    byte-for-byte what it was. The agent tools always pass hospital_id.
+    Returns {items, total, limit, offset}.
+    """
+    where_clauses = []
+    params: list = []
+
+    if appointment_id is not None:
+        where_clauses.append("a.id = %s")
+        params.append(appointment_id)
+    if hospital_id is not None:
+        where_clauses.append("a.hospital_id = %s")
+        params.append(hospital_id)
+    if doctor_id is not None:
+        where_clauses.append("a.doctor_id = %s")
+        params.append(doctor_id)
+    if patient_id is not None:
+        where_clauses.append("a.patient_id = %s")
+        params.append(patient_id)
+    if status is not None:
+        where_clauses.append("a.status = %s")
+        params.append(status)
+    if appointment_type_id is not None:
+        where_clauses.append("a.appointment_type_id = %s")
+        params.append(appointment_type_id)
+
+    # A widened, UTC-instant SQL pre-filter -- NOT the precise
+    # doctor-local-day bound itself (that stays the exact Python-side
+    # trim below, unchanged, including its invalid-timezone fallback,
+    # which a SQL-side AT TIME ZONE can't replicate). +/-1 day either
+    # side of the requested range covers every real-world UTC offset
+    # (max +/-14:00), so this can never exclude a row the precise trim
+    # would have kept -- it only turns "always scan the whole table"
+    # into "scan roughly the requested date range" at the database
+    # layer (master spec section 80: "avoid load entire table where
+    # datasets can grow"), with identical results either way.
+    if date_from is not None:
+        where_clauses.append("a.start_at >= %s")
+        params.append(datetime.combine(date_from, datetime.min.time()) - timedelta(days=1))
+    if date_to is not None:
+        where_clauses.append("a.start_at < %s")
+        params.append(datetime.combine(date_to, datetime.min.time()) + timedelta(days=2))
+
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+
+    cur.execute(
+        f"""
+        SELECT
+            a.id,
+            a.doctor_id,
+            d.name,
+            d.timezone,
+            a.patient_id,
+            p.name,
+            p.whatsapp_number,
+            a.appointment_type_id,
+            at.name,
+            a.start_at,
+            a.end_at,
+            a.status,
+            a.token_number,
+            a.created_at,
+            a.payment_status,
+            dat.consultation_fee,
+            a.payment_method,
+            a.payment_amount,
+            a.payment_recorded_at,
+            a.waive_reason,
+            a.arrived_at,
+            a.booking_source,
+            a.refund_amount,
+            a.refund_reason,
+            a.refunded_at,
+            a.invoice_number
+        FROM appointments a
+        JOIN doctors d
+            ON d.id = a.doctor_id
+        JOIN patients p
+            ON p.id = a.patient_id
+        JOIN appointment_types at
+            ON at.id = a.appointment_type_id
+        LEFT JOIN doctor_appointment_types dat
+            ON dat.doctor_id = a.doctor_id
+           AND dat.appointment_type_id = a.appointment_type_id
+        {where_sql}
+        ORDER BY a.start_at
+        LIMIT 5000
+        """,
+        params,
+    )
+
+    rows = cur.fetchall()
+
+    results = []
+    for row in rows:
+        doctor_tz = row[3]
+        if not validate_timezone(doctor_tz):
+            doctor_tz = "Asia/Kolkata"
+
+        local_start_at = convert_to_timezone(row[9], doctor_tz)
+
+        if date_from is not None and local_start_at.date() < date_from:
+            continue
+        if date_to is not None and local_start_at.date() > date_to:
+            continue
+
+        results.append(
+            {
+                "id": row[0],
+                "doctor_id": row[1],
+                "doctor_name": row[2],
+                "patient_id": row[4],
+                "patient_name": row[5],
+                "whatsapp_number": row[6],
+                "appointment_type_id": row[7],
+                "appointment_type_name": row[8],
+                "start_at": local_start_at.isoformat(),
+                "end_at": convert_to_timezone(row[10], doctor_tz).isoformat(),
+                "status": row[11],
+                "token_number": row[12],
+                # Deliberately NOT converted to doctor_tz like start_at/
+                # end_at above -- unlike a clinic wall-clock slot time,
+                # this is an audit-log-style "when did this happen"
+                # moment (same category as a doctor's created_at in
+                # DoctorProfile), which format.ts's formatDateTime
+                # renders in the *viewer's* own local time, not the
+                # doctor's.
+                "created_at": row[13].isoformat(),
+                "payment_status": row[14],
+                "consultation_fee": row[15],
+                "payment_method": row[16],
+                "payment_amount": row[17],
+                "paid_at": row[18].isoformat() if row[18] else None,
+                "waive_reason": row[19],
+                # Doctor-local, same convention as start_at/end_at above
+                # (a clinic wall-clock moment, not an audit-log one) --
+                # this is what the "Arrived early/late" label is
+                # computed from on the frontend, alongside start_at.
+                "arrived_at": convert_to_timezone(row[20], doctor_tz).isoformat() if row[20] else None,
+                "booking_source": row[21],
+                "refund_amount": row[22],
+                "refund_reason": row[23],
+                "refunded_at": row[24].isoformat() if row[24] else None,
+                "invoice_number": row[25],
+            }
+        )
+
+    total = len(results)
+    return {
+        "items": results[offset : offset + limit],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }

@@ -4,6 +4,7 @@ from datetime import date, time
 
 from app.api.staff_auth import require_permission
 from app.db.connection import get_connection
+from app.services.doctor_schedule_read_service import get_doctor_schedule_service
 from app.services.audit_log import record_audit_log
 
 router = APIRouter(
@@ -125,59 +126,15 @@ def doctor_has_department(cur, doctor_id: int, department_id: int) -> bool:
 def get_doctor_schedule(doctor_id: int):
     with get_connection() as conn:
         with conn.cursor() as cur:
+            schedule = get_doctor_schedule_service(cur, doctor_id)
 
-            cur.execute(
-                """
-                SELECT id
-                FROM doctors
-                WHERE id = %s
-                  AND active = TRUE
-                """,
-                (doctor_id,),
-            )
+    if schedule is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Doctor not found",
+        )
 
-            doctor = cur.fetchone()
-
-            if doctor is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail="Doctor not found",
-                )
-
-            cur.execute(
-                """
-                SELECT
-                    id,
-                    day_of_week,
-                    start_time,
-                    end_time,
-                    active,
-                    start_date,
-                    end_date,
-                    department_id
-                FROM doctor_schedule
-                WHERE doctor_id = %s
-                  AND active = TRUE
-                ORDER BY day_of_week, start_time
-                """,
-                (doctor_id,),
-            )
-
-            rows = cur.fetchall()
-
-    return [
-        {
-            "id": row[0],
-            "day_of_week": row[1],
-            "start_time": row[2].strftime("%H:%M"),
-            "end_time": row[3].strftime("%H:%M"),
-            "active": row[4],
-            "start_date": row[5].isoformat() if row[5] else None,
-            "end_date": row[6].isoformat() if row[6] else None,
-            "department_id": row[7],
-        }
-        for row in rows
-    ]
+    return schedule
 
 
 @router.post("/{doctor_id}/schedule")

@@ -135,3 +135,26 @@ Optional, separately approved: add `require_permission` + `audit_log` to `POST /
 8. Improver, `confirm_and_check_in`, financial tools and payment→token: **explicitly deferred.**
 
 Next phase after this: Phase 2 — payment/waiver → queue-token tools (high risk, approval-gated) and background execution.
+
+
+---
+
+## Phase 1 implementation status (added after approval)
+
+Approved with the audit's recommendations. Delivered: everything in section L items 1-7, with these outcomes for the open questions in section K:
+
+| # | Decision taken |
+|---|---|
+| 1 PHI to provider | Tool outputs are whitelisted/minimized (id, name, UHID, gender, last-4 phone); raw staff-typed input is stored in `agent_tasks.raw_input`. The layer is **off** unless `AGENT_LLM_PROVIDER=anthropic`. Provider agreement/retention policy is still an operator decision. |
+| 2 Approval for check-in | Medium risk, no approval; every agent write is attributed to the human in `audit_log` (`agent.appointment.check_in`). Approval machinery exists and is exercised via a test-only high-risk tool. |
+| 3 Whose authority | Always the initiating human's own permissions, re-resolved on resume. |
+| 4 Existing endpoints | Left unchanged; the tools enforce permission + tenant themselves. `/visit` was **not** given a permission/audit gate (separate follow-up). |
+| 5 Router-only queries | Extracted, behavior-preserving, into `patient_lookup_service`, `appointment_services.list_appointments_service`, `queue_read_service`, `doctor_schedule_read_service`, `check_in_service`; permission SQL into `staff_permissions`. Routes call the services. |
+| 6 Idempotency | `agent_tasks` unique key; unique partial index on successful tool calls; replay from record. |
+| 7 patient_scope | Optional allow-list in `AuthContext`, enforced in every tool. |
+| 8 Synchronous | Yes. |
+| 9 Prompt injection | Tool output is data under strict schemas; the Executor can't choose tools or arguments; writes are gated by prechecks/postchecks. Residual risk remains. |
+| 10 Verifier independence | Same model family; deterministic checks and the evidence-substring rule are the real gate. |
+| 11 Duplicate `0054` | `scripts/migrate.py` handles it (files are keyed by full filename); `0058` applied cleanly. |
+
+Deviations from the audit's section J: `app/agent/agents/improver.py` was **not** created (the Improver is deferred); `tests/agent/` holds the suites; the new services above were added; `requirements.txt` now pins `anthropic` (imported lazily).

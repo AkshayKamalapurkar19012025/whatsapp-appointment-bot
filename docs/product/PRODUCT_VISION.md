@@ -56,6 +56,10 @@ That audit (as of PR #112) is the most recent full pass and is mostly still accu
 | Accessibility / responsive / print bugs (§52-54) | ✅ Addressed in a dedicated hardening pass (0 axe-core violations across 13 screens; a real phone-width topbar bug and 2 print bugs fixed) |
 | "Visit Completion checklist" (§43) | 🟡 The non-gating checklist now exists (`VisitCompletionDialog.tsx`, `visit_completion_service.py`); a "jump to the pending item's tab" navigation enhancement exists on an unmerged branch as of this writing — **verify current `main` state before relying on it.** |
 
+### AI agent layer (after PR #120)
+
+A controlled AI task-automation layer now exists above the OPD services (`app/agent/`, `docs/architecture/AI_AGENT_LAYER.md`): model calls are confined to intake/planning/verification behind a deterministic orchestrator, and the only path to hospital data is a registered tool calling an existing service. Phase 1 covers read-only lookups and one controlled write (front-desk check-in). It is API-only and disabled unless `AGENT_LLM_PROVIDER` is configured.
+
 Everything else in that audit (lab/radiology result-model granularity, no dedicated Department Queue/Billing-History/Payment-History screens as their own top-level views vs. per-visit lists, no allergy-aware clinical-safety warnings in the consultation UI, no i18n) should be treated as still accurate unless a specific doc below says otherwise.
 
 ## Target State

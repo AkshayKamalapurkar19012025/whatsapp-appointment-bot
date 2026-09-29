@@ -154,3 +154,14 @@ AUTHKEY_COUNTRY_CODE = os.environ.get("AUTHKEY_COUNTRY_CODE", "91")
 # variable's value -- accepting a fixed, widely-known code for any phone
 # number would otherwise let anyone log in as any patient.
 TEST_STATIC_OTP = os.environ.get("TEST_STATIC_OTP", "") if ENVIRONMENT != "production" else ""
+
+# AI Agent Automation Layer (app/agent, docs/implementation/
+# AI_AGENT_IMPLEMENTATION_AUDIT.md). Off unless AGENT_LLM_PROVIDER=anthropic
+# -- with it unset POST /api/agent/tasks answers 503 and nothing calls out.
+# The provider reads its credential from ANTHROPIC_API_KEY (the SDK's own
+# resolution); this app never stores or logs it. Patient data reaches the
+# provider only in minimized form (see app/agent/llm.py); confirm the
+# provider agreement covers that before enabling in production.
+AGENT_LLM_PROVIDER = os.environ.get("AGENT_LLM_PROVIDER", "")
+AGENT_LLM_MODEL = os.environ.get("AGENT_LLM_MODEL", "claude-opus-5-5")
+AGENT_LLM_EFFORT = os.environ.get("AGENT_LLM_EFFORT", "low")

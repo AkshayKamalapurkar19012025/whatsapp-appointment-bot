@@ -66,6 +66,10 @@ The canonical phase sequence for HospitalOS going forward. Each phase below is m
 
 **Status: 🟡 Exercised piecemeal, never run as one continuous, scripted pass.** Most individual steps of the full patient journey have been verified live in a browser during their own feature phase; the specific 38-step (or equivalent) single-sitting acceptance run described in `docs/implementation/ACCEPTANCE_CRITERIA.md` has not been executed as its own dedicated exercise.
 
+## Phase 15 — AI Agent Automation Layer
+
+**Status: 🟡 Phase 1 done (read-only tools + one controlled write, first vertical slice); later phases not started.** A controlled task-automation layer above the existing services: strict Intake/Planner/Executor/Verifier contracts, a deterministic orchestrator, a formal tool registry, server-built authorization context, per-step human approval for high-risk tools, idempotent writes, and a full audit trail (`migrations/0058_agent_layer.sql`, `app/agent/`, `app/api/agent.py`). First slice: "check in today's 10:30 appointment for Ravi". See `docs/architecture/AI_AGENT_LAYER.md`, `docs/decisions/ADR-006-AI-AGENT-LAYER.md`, and the audit `docs/implementation/AI_AGENT_IMPLEMENTATION_AUDIT.md`. **Not done:** the offline Improver, any frontend, background execution, payment/waiver → queue-token tools (next phase), and hardening of the existing endpoints the audit flags.
+
 ---
 
 ## Phases beyond the original 15 — not yet scoped

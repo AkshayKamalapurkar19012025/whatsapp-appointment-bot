@@ -9,6 +9,11 @@ from app.db.connection import get_connection
 from app.services import exceptions as svc_exc
 from app.services.patient_duplicate_detection import decide_duplicate_review, find_duplicate_candidates
 from app.services.patient_identifiers import resolve_patient_by_identifier, write_phone_identifier
+from app.services.patient_lookup_service import (
+    PATIENT_OPTIONAL_DETAIL_COLUMNS,
+    get_patient_service,
+    search_patients_service,
+)
 from app.services.patient_merge import merge_patients, unmerge_patients
 from app.services.patient_timeline_service import get_patient_timeline_service
 from app.services.patient_allergies import (
@@ -25,11 +30,8 @@ router = APIRouter(
 )
 
 
-_PATIENT_OPTIONAL_DETAIL_COLUMNS = (
-    "email", "alternate_whatsapp_number", "address_line", "city",
-    "state", "pincode", "emergency_contact_name", "emergency_contact_phone",
-    "blood_group",
-)
+# Defined in patient_lookup_service so the agent tools share it.
+_PATIENT_OPTIONAL_DETAIL_COLUMNS = PATIENT_OPTIONAL_DETAIL_COLUMNS
 
 
 def insert_patient(
@@ -361,54 +363,9 @@ def search_patients(
             detail="Provide a search term (q) and/or a date of birth (dob).",
         )
 
-    conditions = []
-    params: list = []
-
-    if q:
-        needle = f"%{q.strip()}%"
-        conditions.append(
-            "(p.name ILIKE %s OR p.whatsapp_number ILIKE %s OR p.uhid ILIKE %s)"
-        )
-        params.extend([needle, needle, needle])
-
-    if dob:
-        conditions.append("p.date_of_birth = %s")
-        params.append(dob)
-
-    where_clause = " AND ".join(conditions)
-
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                f"""
-                SELECT
-                    p.id,
-                    p.name,
-                    p.whatsapp_number,
-                    p.date_of_birth,
-                    p.gender,
-                    p.uhid
-                FROM patients p
-                WHERE {where_clause}
-                ORDER BY p.name
-                LIMIT 20
-                """,
-                params,
-            )
-
-            rows = cur.fetchall()
-
-    return [
-        {
-            "id": row[0],
-            "name": row[1],
-            "whatsapp_number": row[2],
-            "date_of_birth": row[3].isoformat() if row[3] else None,
-            "gender": row[4],
-            "uhid": row[5],
-        }
-        for row in rows
-    ]
+            return search_patients_service(cur, q=q, dob=dob)
 
 
 @router.post("")
@@ -475,31 +432,12 @@ def get_patient(
     """
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                f"""
-                SELECT id, name, whatsapp_number, date_of_birth, gender, government_id, uhid, created_at,
-                       {', '.join(_PATIENT_OPTIONAL_DETAIL_COLUMNS)}
-                FROM patients
-                WHERE id = %s AND hospital_id = %s
-                """,
-                (patient_id, staff["hospital_id"]),
-            )
-            row = cur.fetchone()
+            patient = get_patient_service(cur, patient_id, hospital_id=staff["hospital_id"])
 
-    if row is None:
+    if patient is None:
         raise HTTPException(status_code=404, detail="Patient not found")
 
-    return {
-        "id": row[0],
-        "name": row[1],
-        "whatsapp_number": row[2],
-        "date_of_birth": row[3].isoformat() if row[3] else None,
-        "gender": row[4],
-        "government_id": row[5],
-        "uhid": row[6],
-        "registered_at": row[7].isoformat(),
-        **dict(zip(_PATIENT_OPTIONAL_DETAIL_COLUMNS, row[8:])),
-    }
+    return patient
 
 
 @router.patch("/{patient_id}")

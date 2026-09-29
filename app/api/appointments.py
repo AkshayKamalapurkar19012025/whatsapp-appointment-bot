@@ -33,6 +33,7 @@ from app.db.connection import get_connection
 from app.services import exceptions as svc_exc
 from app.services.audit_log import record_audit_log
 from app.services.appointment_services import (
+    list_appointments_service,
     create_appointment_service,
     cancel_appointment_service,
     reschedule_appointment_service,
@@ -56,6 +57,7 @@ from app.services.appointment_services import (
     set_priority_service,
 )
 from app.services.availability_engine import list_available_dates_in_range
+from app.services.check_in_service import front_desk_check_in_service
 from app.services.visit_completion_service import get_visit_completion_checklist_service
 from app.services.notification_center_service import create_notification
 from app.services.notifications import KIND_CHECK_IN, KIND_QUEUE_TOKEN, send_mock_notification
@@ -215,152 +217,19 @@ def get_appointments(
     displayed this endpoint's output to a human. It does now, as the
     admin dashboard's own data source.
     """
-    where_clauses = []
-    params: list = []
-
-    if doctor_id is not None:
-        where_clauses.append("a.doctor_id = %s")
-        params.append(doctor_id)
-    if patient_id is not None:
-        where_clauses.append("a.patient_id = %s")
-        params.append(patient_id)
-    if status is not None:
-        where_clauses.append("a.status = %s")
-        params.append(status)
-    if appointment_type_id is not None:
-        where_clauses.append("a.appointment_type_id = %s")
-        params.append(appointment_type_id)
-
-    # A widened, UTC-instant SQL pre-filter -- NOT the precise
-    # doctor-local-day bound itself (that stays the exact Python-side
-    # trim below, unchanged, including its invalid-timezone fallback,
-    # which a SQL-side AT TIME ZONE can't replicate). +/-1 day either
-    # side of the requested range covers every real-world UTC offset
-    # (max +/-14:00), so this can never exclude a row the precise trim
-    # would have kept -- it only turns "always scan the whole table"
-    # into "scan roughly the requested date range" at the database
-    # layer (master spec section 80: "avoid load entire table where
-    # datasets can grow"), with identical results either way.
-    if date_from is not None:
-        where_clauses.append("a.start_at >= %s")
-        params.append(datetime.combine(date_from, datetime.min.time()) - timedelta(days=1))
-    if date_to is not None:
-        where_clauses.append("a.start_at < %s")
-        params.append(datetime.combine(date_to, datetime.min.time()) + timedelta(days=2))
-
-    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                f"""
-                SELECT
-                    a.id,
-                    a.doctor_id,
-                    d.name,
-                    d.timezone,
-                    a.patient_id,
-                    p.name,
-                    p.whatsapp_number,
-                    a.appointment_type_id,
-                    at.name,
-                    a.start_at,
-                    a.end_at,
-                    a.status,
-                    a.token_number,
-                    a.created_at,
-                    a.payment_status,
-                    dat.consultation_fee,
-                    a.payment_method,
-                    a.payment_amount,
-                    a.payment_recorded_at,
-                    a.waive_reason,
-                    a.arrived_at,
-                    a.booking_source,
-                    a.refund_amount,
-                    a.refund_reason,
-                    a.refunded_at,
-                    a.invoice_number
-                FROM appointments a
-                JOIN doctors d
-                    ON d.id = a.doctor_id
-                JOIN patients p
-                    ON p.id = a.patient_id
-                JOIN appointment_types at
-                    ON at.id = a.appointment_type_id
-                LEFT JOIN doctor_appointment_types dat
-                    ON dat.doctor_id = a.doctor_id
-                   AND dat.appointment_type_id = a.appointment_type_id
-                {where_sql}
-                ORDER BY a.start_at
-                LIMIT 5000
-                """,
-                params,
+            return list_appointments_service(
+                cur,
+                doctor_id=doctor_id,
+                patient_id=patient_id,
+                status=status,
+                appointment_type_id=appointment_type_id,
+                date_from=date_from,
+                date_to=date_to,
+                limit=limit,
+                offset=offset,
             )
-
-            rows = cur.fetchall()
-
-    results = []
-    for row in rows:
-        doctor_tz = row[3]
-        if not validate_timezone(doctor_tz):
-            doctor_tz = "Asia/Kolkata"
-
-        local_start_at = convert_to_timezone(row[9], doctor_tz)
-
-        if date_from is not None and local_start_at.date() < date_from:
-            continue
-        if date_to is not None and local_start_at.date() > date_to:
-            continue
-
-        results.append(
-            {
-                "id": row[0],
-                "doctor_id": row[1],
-                "doctor_name": row[2],
-                "patient_id": row[4],
-                "patient_name": row[5],
-                "whatsapp_number": row[6],
-                "appointment_type_id": row[7],
-                "appointment_type_name": row[8],
-                "start_at": local_start_at.isoformat(),
-                "end_at": convert_to_timezone(row[10], doctor_tz).isoformat(),
-                "status": row[11],
-                "token_number": row[12],
-                # Deliberately NOT converted to doctor_tz like start_at/
-                # end_at above -- unlike a clinic wall-clock slot time,
-                # this is an audit-log-style "when did this happen"
-                # moment (same category as a doctor's created_at in
-                # DoctorProfile), which format.ts's formatDateTime
-                # renders in the *viewer's* own local time, not the
-                # doctor's.
-                "created_at": row[13].isoformat(),
-                "payment_status": row[14],
-                "consultation_fee": row[15],
-                "payment_method": row[16],
-                "payment_amount": row[17],
-                "paid_at": row[18].isoformat() if row[18] else None,
-                "waive_reason": row[19],
-                # Doctor-local, same convention as start_at/end_at above
-                # (a clinic wall-clock moment, not an audit-log one) --
-                # this is what the "Arrived early/late" label is
-                # computed from on the frontend, alongside start_at.
-                "arrived_at": convert_to_timezone(row[20], doctor_tz).isoformat() if row[20] else None,
-                "booking_source": row[21],
-                "refund_amount": row[22],
-                "refund_reason": row[23],
-                "refunded_at": row[24].isoformat() if row[24] else None,
-                "invoice_number": row[25],
-            }
-        )
-
-    total = len(results)
-    return {
-        "items": results[offset : offset + limit],
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-    }
 
 
 @router.get("/calendar")
@@ -634,7 +503,12 @@ def visit_appointment(
     with get_connection() as conn:
         with conn.cursor() as cur:
             try:
-                result = mark_visited_service(cur, appointment_id)
+                # Check-in + its patient/staff notifications live in
+                # check_in_service so the AI agent's appointment.check_in
+                # tool performs exactly what this route does.
+                result = front_desk_check_in_service(
+                    cur, appointment_id, hospital_id=staff["hospital_id"]
+                )
             except svc_exc.AppointmentNotFound:
                 raise HTTPException(status_code=404, detail="Appointment not found")
             except svc_exc.InvalidStatusTransition:
@@ -642,41 +516,6 @@ def visit_appointment(
                     status_code=409,
                     detail="Only a Confirmed appointment can be marked Checked In",
                 )
-
-            # Staff-initiated check-in notification (migrations/0012).
-            # No token number here any more (Phase 4 decoupled token
-            # issuance from check-in -- see mark_visited_service's
-            # docstring): this just confirms arrival. The token itself
-            # is announced separately, via KIND_QUEUE_TOKEN, once
-            # payment succeeds or is waived (record_appointment_payment/
-            # waive_appointment_payment below). Not a duplicate of
-            # anything: unlike a WhatsApp-driven action, the patient
-            # isn't mid-chat with the bot when staff check them in at
-            # the front desk, so there's no live confirmation this
-            # would repeat (see notifications.py's KIND_CHECK_IN note).
-            cur.execute(
-                """
-                SELECT p.whatsapp_number, p.name, d.name
-                FROM patients p, doctors d
-                WHERE p.id = %s AND d.id = %s
-                """,
-                (result["patient_id"], result["doctor_id"]),
-            )
-            patient_number, patient_name, doctor_name = cur.fetchone()
-            send_mock_notification(
-                cur,
-                patient_number,
-                KIND_CHECK_IN,
-                f"Hi {patient_name}, you're checked in with {doctor_name}. "
-                f"Please complete registration and payment at the front desk.",
-            )
-            create_notification(
-                cur,
-                hospital_id=staff["hospital_id"],
-                kind="PATIENT_ARRIVED",
-                message=f"{patient_name} has arrived for {doctor_name}",
-                appointment_id=appointment_id,
-            )
 
     return {
         "id": result["id"],
