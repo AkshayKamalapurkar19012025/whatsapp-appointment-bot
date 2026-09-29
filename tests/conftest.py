@@ -37,6 +37,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # bookkeeping, not application data). TRUNCATE ... CASCADE means the
 # order here doesn't need to respect foreign keys.
 APP_TABLES = [
+    "agent_audit_events",
+    "agent_verifications",
+    "agent_approvals",
+    "agent_tool_calls",
+    "agent_steps",
+    "agent_plans",
+    "agent_tasks",
     "scheduling_sessions",
     "mock_sms_outbox",
     "patient_sessions",
