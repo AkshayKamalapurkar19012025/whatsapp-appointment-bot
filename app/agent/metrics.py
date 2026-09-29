@@ -19,6 +19,9 @@ Definitions (rates are None when their denominator is 0):
                                cost driver; multiply by your model's price
                                (cost_per_task is deliberately not hardcoded)
   approval_rate                approvals granted / approvals decided
+  jobs_queued                  background jobs waiting for a worker right now
+  average_queue_wait_s         created -> first claimed, for jobs that have started
+  job_failure_rate             jobs that ended `failed` / jobs that ended (done or failed)
 """
 
 _FINISHED = "finished_at IS NOT NULL"
@@ -101,7 +104,22 @@ def compute_metrics(cur, hospital_id: int) -> dict:
     )
     tokens = cur.fetchone()[0]
 
+    cur.execute(
+        """
+        SELECT COUNT(*) FILTER (WHERE j.status = 'queued'),
+               AVG(EXTRACT(EPOCH FROM (j.started_at - j.created_at))) FILTER (WHERE j.started_at IS NOT NULL),
+               COUNT(*) FILTER (WHERE j.status = 'failed'),
+               COUNT(*) FILTER (WHERE j.status IN ('done', 'failed'))
+        FROM agent_jobs j JOIN agent_tasks t ON t.id = j.task_id WHERE t.hospital_id = %s
+        """,
+        (hospital_id,),
+    )
+    queued, avg_wait, failed_jobs, ended_jobs = cur.fetchone()
+
     return {
+        "jobs_queued": queued,
+        "average_queue_wait_s": round(float(avg_wait), 3) if avg_wait is not None else None,
+        "job_failure_rate": _rate(failed_jobs, ended_jobs),
         "tasks_total": total,
         "tasks_finished": finished,
         "task_success_rate": _rate(completed, finished),

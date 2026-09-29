@@ -39,3 +39,10 @@ Staff perform repetitive OPD tasks (e.g. "check in Ravi's 10:30"). We want langu
 - Models may not type money: financial tools can declare `reference_only_args`, which must be `$from` references to a read step.
 - `record_payment` records a payment a human received; the agent never moves money. Only outcome `PAID` is exposed (a failed attempt has no queue effect and needs no automation).
 - Refunds, line-item edits and other financial reversals remain out of scope.
+
+## Addendum -- Phase 3 (background execution)
+
+- **Queue in Postgres, workers in the app.** A job table with `FOR UPDATE SKIP LOCKED` rather than a broker or a separate service: the deployment is one Postgres instance and a single app, and the orchestrator was already re-entrant, so durability comes from the recorded task state rather than from queue semantics. (Rejected: FastAPI `BackgroundTasks` -- lost on restart; Celery/Redis -- new infrastructure for no scale need.)
+- **Jobs carry no secrets and grant no authority.** Approval authority lives only in `agent_approvals`; the worker re-verifies it. A job is just "look at this task".
+- **Crash safety over speed of recovery.** After a crash the task continues from its recorded state; the idempotency guarantees from Phase 1 (write precheck, recorded-call replay, unique index, single-use approval) are what make replay safe. Where nothing has executed yet (before a plan exists) the task is escalated for resubmission rather than silently re-planned.
+- Default mode is `background`; `inline` remains for tests and scripts.
