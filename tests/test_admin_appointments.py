@@ -15,7 +15,7 @@ new reschedule endpoint's own wiring.
 from datetime import date, timedelta
 import secrets
 
-from tests.helpers import create_admin_and_get_headers, create_staff_and_get_headers, seed_basic_doctor
+from tests.helpers import add_doctor_to_department, create_admin_and_get_headers, create_staff_and_get_headers, seed_basic_doctor
 
 
 def _next_weekday(from_date: date | None = None) -> date:
@@ -510,6 +510,77 @@ def test_calendar_shows_open_days_beyond_the_patient_booking_window(client, db_c
     # seed_basic_doctor's default schedule is Mon-Fri, so the month can't
     # be entirely closed.
     assert any(is_open for is_open in body["dates"].values())
+
+
+def test_availability_by_department_requires_authentication(client, db_connection):
+    seeded = seed_basic_doctor(client, db_connection, doctor_name="Dr. P9 ByDept Auth")
+    scheduling_date = _next_weekday(date.today() + timedelta(days=10))
+    response = client.get(
+        "/api/appointments/availability/by-department",
+        params={
+            "department_id": seeded["department_id"],
+            "appointment_type_id": seeded["appointment_type_id"],
+            "selected_date": scheduling_date.isoformat(),
+        },
+    )
+    assert response.status_code == 401
+
+
+def test_availability_by_department_shows_slots_beyond_the_patient_booking_window(client, db_connection):
+    # Same reasoning as test_calendar_shows_open_days_beyond_the_patient_
+    # booking_window above: this must be exempt from the patient-facing
+    # scheduling window the same way GET /web/availability/by-date (app/
+    # api/patient_scheduling.py) is not, or the admin grid would be
+    # unusable for exactly the far-out bookings staff can otherwise make.
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. P9 ByDept Window",
+        department_name="ByDept Window Dept", appointment_type_name="ByDept Window Type",
+    )
+    admin_headers = create_admin_and_get_headers(db_connection)
+    far_future = _next_weekday(date.today() + timedelta(days=200))  # well past any 3-month window
+
+    response = client.get(
+        "/api/appointments/availability/by-department",
+        params={
+            "department_id": seeded["department_id"],
+            "appointment_type_id": seeded["appointment_type_id"],
+            "selected_date": far_future.isoformat(),
+        },
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["doctors"]) == 1
+    assert body["doctors"][0]["id"] == seeded["doctor_id"]
+    assert len(body["doctors"][0]["slots"]) > 0
+
+
+def test_availability_by_department_aggregates_every_doctor_offering_the_type(client, db_connection):
+    seeded = seed_basic_doctor(
+        client, db_connection, doctor_name="Dr. P9 ByDept First",
+        department_name="ByDept Multi Dept", appointment_type_name="ByDept Multi Type",
+    )
+    second_doctor_id = add_doctor_to_department(
+        client, db_connection,
+        department_id=seeded["department_id"],
+        appointment_type_id=seeded["appointment_type_id"],
+        doctor_name="Dr. P9 ByDept Second",
+    )
+    admin_headers = create_admin_and_get_headers(db_connection)
+    scheduling_date = _next_weekday(date.today() + timedelta(days=10))
+
+    response = client.get(
+        "/api/appointments/availability/by-department",
+        params={
+            "department_id": seeded["department_id"],
+            "appointment_type_id": seeded["appointment_type_id"],
+            "selected_date": scheduling_date.isoformat(),
+        },
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    doctor_ids = {d["id"] for d in response.json()["doctors"]}
+    assert doctor_ids == {seeded["doctor_id"], second_doctor_id}
 
 
 def test_reschedule_nonexistent_appointment_returns_404(client, db_connection):
