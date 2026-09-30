@@ -94,6 +94,14 @@ def get_task(cur, task_id: int, *, hospital_id: int, for_update: bool = False) -
     return _row(row) if row else None
 
 
+def get_task_by_id(cur, task_id: int) -> dict | None:
+    """Tenant-unscoped lookup for the worker, which is handed a job (not a
+    caller's hospital). Never used by request handlers."""
+    cur.execute(f"SELECT {', '.join(_TASK_COLUMNS)} FROM agent_tasks WHERE id = %s", (task_id,))
+    row = cur.fetchone()
+    return _row(row) if row else None
+
+
 def add_event(cur, task_id: int, event: str, *, from_state=None, to_state=None, actor_id=None, details=None) -> None:
     cur.execute("SELECT id FROM agent_tasks WHERE id = %s FOR UPDATE", (task_id,))
     cur.execute(
@@ -369,9 +377,17 @@ def decide_approval(cur, approval_id: int, *, approver_staff_id: int, initiator_
     return token
 
 
-def verify_approval(cur, *, task_id: int, step_id: int, args: dict, token: str, initiator_staff_id: int) -> int:
+def verify_approval(cur, *, task_id: int, step_id: int, args: dict, token: str | None, initiator_staff_id: int) -> int:
     """Check (without spending) that `token` is a valid, unexpired,
-    unspent approval for exactly this task, step and argument set."""
+    unspent approval for exactly this task, step and argument set.
+
+    token=None is the SERVER-INTERNAL form used by the background worker to
+    continue a task whose approval a human already decided: every check
+    below still applies (approved, unexpired, unspent, same arguments,
+    approver != initiator) except the bearer-token comparison, since there
+    is no caller to authenticate -- the worker reads the decision from this
+    table itself. Public entry points (Orchestrator.resume) never accept
+    an empty token."""
     cur.execute(
         """
         SELECT id, decision, token_hash, expires_at, consumed_at, args_hash, approver_staff_id
@@ -385,7 +401,7 @@ def verify_approval(cur, *, task_id: int, step_id: int, args: dict, token: str, 
     approval_id, decision, token_hash, expires_at, consumed_at, stored_args_hash, approver = row
     if decision != "approved" or token_hash is None:
         raise ApprovalError("this step has not been approved")
-    if not secrets.compare_digest(token_hash, hash_value(token or "")):
+    if token is not None and not secrets.compare_digest(token_hash, hash_value(token)):
         raise ApprovalError("approval token does not match")
     if consumed_at is not None:
         raise ApprovalError("approval token was already used")
@@ -396,6 +412,15 @@ def verify_approval(cur, *, task_id: int, step_id: int, args: dict, token: str, 
     if stored_args_hash != args_hash(args):
         raise ApprovalError("the arguments changed since the approval was granted")
     return approval_id
+
+
+def decided_unspent_approval(cur, step_id: int) -> bool:
+    """True if a human approved this step and the approval hasn't been spent."""
+    cur.execute(
+        "SELECT 1 FROM agent_approvals WHERE step_id = %s AND decision = 'approved' AND consumed_at IS NULL",
+        (step_id,),
+    )
+    return cur.fetchone() is not None
 
 
 def consume_approval(cur, approval_id: int) -> None:
@@ -439,6 +464,10 @@ def get_task_trace(cur, task_id: int, *, hospital_id: int) -> dict | None:
         "verifications": rows("SELECT id, step_id, kind, verdict, criteria, detail, created_at "
                               "FROM agent_verifications WHERE task_id = %s ORDER BY id",
                               ("id", "step_id", "kind", "verdict", "criteria", "detail", "created_at")),
+        "jobs": rows("SELECT id, kind, status, attempts, max_attempts, last_error, created_at, started_at, finished_at "
+                     "FROM agent_jobs WHERE task_id = %s ORDER BY id",
+                     ("id", "kind", "status", "attempts", "max_attempts", "last_error", "created_at", "started_at",
+                      "finished_at")),
         "events": rows("SELECT seq, event, from_state, to_state, actor_id, details, created_at "
                        "FROM agent_audit_events WHERE task_id = %s ORDER BY seq",
                        ("seq", "event", "from_state", "to_state", "actor_id", "details", "created_at")),
@@ -472,3 +501,84 @@ def plan_trace(cur, task_id: int, plan_id: int, plan_version: int) -> list[dict]
     )
     trace.extend({"kind": "precheck_already_done", **r[0]} for r in cur.fetchall())
     return trace
+
+
+# ---------------------------------------------------------------------
+# Jobs (background execution)
+# ---------------------------------------------------------------------
+
+JOB_LEASE_MINUTES = 10
+
+
+def enqueue_job(cur, task_id: int, kind: str) -> int | None:
+    """Queue a job for the task. Returns None if the task already has a live
+    (queued or running) job -- the one-active-job-per-task index."""
+    cur.execute(
+        """
+        INSERT INTO agent_jobs (task_id, kind) VALUES (%s, %s)
+        ON CONFLICT (task_id) WHERE status IN ('queued', 'running') DO NOTHING
+        RETURNING id
+        """,
+        (task_id, kind),
+    )
+    row = cur.fetchone()
+    if row is not None:
+        add_event(cur, task_id, "job_enqueued", details={"job_id": row[0], "kind": kind})
+    return row[0] if row else None
+
+
+def claim_job(cur, worker_id: str) -> dict | None:
+    """Claim the oldest runnable job: queued and due, or running with an
+    expired lease (its worker died). FOR UPDATE SKIP LOCKED lets any number
+    of workers -- threads or processes -- claim distinct jobs safely."""
+    cur.execute(
+        f"""
+        UPDATE agent_jobs
+        SET status = 'running', attempts = attempts + 1, locked_by = %s,
+            lease_expires_at = NOW() + INTERVAL '{JOB_LEASE_MINUTES} minutes',
+            started_at = COALESCE(started_at, NOW())
+        WHERE id = (
+            SELECT id FROM agent_jobs
+            WHERE (status = 'queued' AND run_after <= NOW())
+               OR (status = 'running' AND lease_expires_at < NOW())
+            ORDER BY id
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+        )
+        RETURNING id, task_id, kind, attempts, max_attempts
+        """,
+        (worker_id,),
+    )
+    row = cur.fetchone()
+    return dict(zip(("id", "task_id", "kind", "attempts", "max_attempts"), row)) if row else None
+
+
+def finish_job(cur, job_id: int, *, status: str, error: str | None = None) -> None:
+    cur.execute(
+        "UPDATE agent_jobs SET status = %s, last_error = %s, finished_at = NOW(), lease_expires_at = NULL WHERE id = %s",
+        (status, error, job_id),
+    )
+
+
+def latest_job(cur, task_id: int) -> dict | None:
+    cur.execute(
+        "SELECT id, kind, status, attempts, last_error, created_at, started_at, finished_at "
+        "FROM agent_jobs WHERE task_id = %s ORDER BY id DESC LIMIT 1",
+        (task_id,),
+    )
+    row = cur.fetchone()
+    return dict(zip(("id", "kind", "status", "attempts", "last_error", "created_at", "started_at", "finished_at"),
+                    row)) if row else None
+
+
+def requeue_job(cur, job_id: int, *, delay_seconds: int, error: str) -> None:
+    """Put a job that raised back on the queue after a backoff."""
+    cur.execute(
+        """
+        UPDATE agent_jobs
+        SET status = 'queued', last_error = %s, locked_by = NULL, lease_expires_at = NULL,
+            run_after = NOW() + make_interval(secs => %s)
+        WHERE id = %s
+        """,
+        (error, delay_seconds, job_id),
+    )

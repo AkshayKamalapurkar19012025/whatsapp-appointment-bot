@@ -41,6 +41,12 @@ from app.services.audit_log import record_audit_log
 
 logger = logging.getLogger("app.agent")
 
+# "Continue with an approval a human already decided" -- used by the
+# background worker, which has no bearer token to present (the token never
+# leaves the process that minted it and is not stored in a job). Passed as
+# _execute's approval argument; every approval check still runs.
+_DECIDED = object()
+
 
 @dataclass
 class OrchestratorConfig:
@@ -63,6 +69,10 @@ class _Stop(Exception):
 
 class _Pause(Exception):
     """Internal control flow: leave the task waiting for a human."""
+
+
+class _JobBusy(Exception):
+    """A live job already exists for the task (see store.enqueue_job)."""
 
 
 class _Replan(Exception):
@@ -93,6 +103,10 @@ class Orchestrator:
         self.registry = registry
         self._connect = connection_factory
         self.config = config or OrchestratorConfig()
+        # "inline": submit/approve run the task in the caller (tests, scripts).
+        # "background": the API records the task and a worker runs it
+        # (app/agent/worker.py). Chosen by app/api/agent.py from config.
+        self.execution_mode = "inline"
         self._today = today_fn or (lambda: datetime.now(ZoneInfo(self.config.timezone)).date())
 
     # ------------------------------------------------------------------
@@ -208,6 +222,108 @@ class Orchestrator:
 
         return self.resume(task_id, approver.facility_id, token)
 
+    # ------------------------------------------------------------------
+    # background execution (Phase 3)
+    # ------------------------------------------------------------------
+
+    def submit_async(self, ctx: AuthContext, raw_input: str, *, idempotency_key: str | None = None) -> dict:
+        """Record the task and queue it for a worker; returns at once with
+        the task in RECEIVED. Idempotent on (hospital, key): a repeat gets
+        the original task back and queues nothing."""
+        with self._tx() as (_, cur):
+            task_id, created = store.create_task(cur, ctx, raw_input, idempotency_key)
+            if created:
+                store.enqueue_job(cur, task_id, "start")
+        return self.view(task_id, ctx.facility_id)
+
+    def approve_async(self, task_id: int, approver: AuthContext, *, approve: bool = True) -> dict:
+        """As approve(), but an approval only records the decision, moves the
+        task to APPROVED and queues a 'resume' job; a worker performs the
+        step. Rejection cancels immediately (nothing to run)."""
+        if not approve:
+            return self.approve(task_id, approver, approve=False)
+        if not approver.has("agent.task.approve"):
+            raise PermissionError("approver lacks agent.task.approve")
+
+        for _ in range(20):
+            try:
+                return self._approve_async_once(task_id, approver)
+            except _JobBusy:
+                # The 'start' job that just parked the task is still finishing its bookkeeping (milliseconds).
+                _time.sleep(0.1)
+        raise store.ApprovalError("the task is still being processed; try again in a moment")
+
+    def _approve_async_once(self, task_id: int, approver: AuthContext) -> dict:
+        with self._tx() as (_, cur):
+            task = store.get_task(cur, task_id, hospital_id=approver.facility_id, for_update=True)
+            if task is None:
+                raise store.ApprovalError("unknown task")
+            if task["state"] != states.APPROVAL_REQUIRED:
+                raise store.ApprovalError("this task is not waiting for approval")
+            pending = store.pending_approval(cur, task_id)
+            if pending is None:
+                raise store.ApprovalError("no pending approval")
+            store.decide_approval(
+                cur, pending["approval_id"], approver_staff_id=approver.actor_id,
+                initiator_staff_id=task["initiated_by"], approve=True, ttl_minutes=self.config.approval_ttl_minutes)
+            store.add_event(cur, task_id, "approval_decided", actor_id=approver.actor_id,
+                            details={"approved": True, "step_id": pending["step_id"], "tool": pending["tool"],
+                                     "args": pending["args"], "preview": pending["preview"]})
+            store.transition(cur, task_id, states.APPROVAL_REQUIRED, states.APPROVED,
+                             reason="approved by a second person", actor_id=approver.actor_id)
+            if store.enqueue_job(cur, task_id, "resume") is None:
+                raise _JobBusy()  # rolls the whole decision back; approve_async retries
+            return self.view_in(cur, task_id, approver.facility_id)
+
+    def process_job(self, task_id: int, *, kind: str) -> str:
+        """What a worker does with a claimed job. State-driven and re-entrant,
+        so a job re-claimed after a worker crash is handled the same way:
+          RECEIVED                         -> run the pipeline from the start
+          PLANNED..NEXT_STEP, APPROVED     -> continue executing (completed steps are skipped; a
+                                              write that already happened is detected by its
+                                              precheck / replayed from its recorded call, never repeated)
+          INTAKE..PLANNING (no plan yet)   -> nothing was executed; escalate for a human to resubmit
+          APPROVAL_REQUIRED / terminal     -> nothing to do
+        Returns a short outcome label for the worker's log."""
+        with self._tx() as (_, cur):
+            task = store.get_task_by_id(cur, task_id)
+        if task is None:
+            return "task_missing"
+        state = task["state"]
+        if state in states.TERMINAL_STATES:
+            return "task_already_terminal"
+        if state == states.APPROVAL_REQUIRED:
+            return "waiting_for_approval"
+
+        hospital_id = task["hospital_id"]
+        if state in (states.INTAKE, states.INTAKE_VALIDATED, states.AUTHORIZATION_CHECK, states.PLANNING):
+            self.escalate(task_id, hospital_id,
+                          "the worker was interrupted before a plan existed; nothing was executed -- please resubmit")
+            return "escalated_interrupted_early"
+
+        if state == states.RECEIVED:
+            with self._tx() as (_, cur):
+                ctx = reload_auth_context(cur, task["auth_context"])
+            if ctx is None:
+                self.escalate(task_id, hospital_id, "the initiating account is no longer active")
+                return "escalated_inactive_initiator"
+            run = _Run(task_id=task_id, ctx=ctx, state=states.RECEIVED)
+            self._guarded(run, self._pipeline, task["raw_input"])
+            return "ran_pipeline"
+
+        run = self._load_run(task_id, hospital_id)
+        if run is None:
+            return "cancelled_inactive_initiator"
+        self._guarded(run, self._execute, _DECIDED if state == states.APPROVED else None)
+        return "continued_execution"
+
+    def escalate(self, task_id: int, hospital_id: int, reason: str) -> None:
+        """Move a non-terminal task to ESCALATED (a human must look)."""
+        with self._tx() as (_, cur):
+            task = store.get_task(cur, task_id, hospital_id=hospital_id, for_update=True)
+            if task is not None and task["state"] not in states.TERMINAL_STATES:
+                store.transition(cur, task_id, task["state"], states.ESCALATED, reason=reason)
+
     def cancel(self, task_id: int, actor: AuthContext) -> dict:
         with self._tx() as (_, cur):
             task = store.get_task(cur, task_id, hospital_id=actor.facility_id, for_update=True)
@@ -229,6 +345,7 @@ class Orchestrator:
     def view_in(cur, task_id: int, hospital_id: int) -> dict:
         task = store.get_task(cur, task_id, hospital_id=hospital_id)
         pending = store.pending_approval(cur, task_id) if task and task["state"] == states.APPROVAL_REQUIRED else None
+        job = store.latest_job(cur, task_id)
         return {
             "task_id": task["id"],
             "state": task["state"],
@@ -240,6 +357,7 @@ class Orchestrator:
                 {"step": pending["step_no"], "tool": pending["tool"], "args": pending["args"],
                  "preview": pending["preview"]} if pending else None
             ),
+            "job": ({k: job[k] for k in ("status", "attempts", "last_error")} if job else None),
         }
 
     # ------------------------------------------------------------------
@@ -351,7 +469,7 @@ class Orchestrator:
 
     # -- execution --------------------------------------------------------
 
-    def _execute(self, run: _Run, approval_token: str | None) -> None:
+    def _execute(self, run: _Run, approval_token) -> None:
         while True:
             try:
                 for step in run.steps:
@@ -376,7 +494,7 @@ class Orchestrator:
         if run.state != states.EXECUTING:
             self._set_state(run, states.EXECUTING)
 
-    def _run_step(self, run: _Run, step: PlanStep, approval_token: str | None) -> None:
+    def _run_step(self, run: _Run, step: PlanStep, approval_token) -> None:
         """Drive ONE step to VERIFIED, or raise a control exception
         (_Stop / _Pause / _Replan). Retries of this step loop in here."""
         feedback: str | None = None
@@ -440,6 +558,13 @@ class Orchestrator:
             needs_approval = tool.requires_approval or (step.irreversible and tool.is_write)
             if needs_approval:
                 if approval_token is None:
+                    # A crash after a human decided (but before the write) leaves a
+                    # decided, unspent approval for this very step: honor it rather
+                    # than asking the human again.
+                    with self._tx() as (_, cur):
+                        if store.decided_unspent_approval(cur, step_id):
+                            approval_token = _DECIDED
+                if approval_token is None:
                     with self._tx() as (_, cur):
                         preview = tool.approval_preview(cur, run.ctx, parsed) if tool.approval_preview else None
                         store.request_approval(cur, run.task_id, step_id, args, preview)
@@ -449,7 +574,8 @@ class Orchestrator:
                 with self._tx() as (_, cur):
                     try:
                         approval_id = store.verify_approval(
-                            cur, task_id=run.task_id, step_id=step_id, args=args, token=approval_token,
+                            cur, task_id=run.task_id, step_id=step_id, args=args,
+                            token=None if approval_token is _DECIDED else approval_token,
                             initiator_staff_id=run.ctx.actor_id)
                     except store.ApprovalError as exc:
                         raise _Stop(states.ESCALATED, f"approval could not be honored: {exc}") from exc

@@ -5,7 +5,7 @@ AuthContext server-side; nothing about identity or permissions is taken
 from the request body. The orchestrator runs synchronously in the request
 in Phase 1 (one short task) -- see the audit's risk #8.
 
-  POST /agent/tasks                  agent.task.create   submit a task
+  POST /agent/tasks                  agent.task.create   submit a task (202 + queued in background mode)
   GET  /agent/tasks/{id}             agent.task.read     status + full trace
   POST /agent/tasks/{id}/approve     agent.task.approve  a DIFFERENT person approves a pending write
   POST /agent/tasks/{id}/reject      agent.task.approve  reject it (cancels the task)
@@ -13,9 +13,10 @@ in Phase 1 (one short task) -- see the audit's risk #8.
   GET  /agent/metrics                staff.manage        aggregate metrics
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from app import config
 from app.agent import metrics, store
 from app.agent.authz import build_auth_context
 from app.agent.llm import LLMUnavailable, UnavailableLLM, build_default_llm
@@ -47,7 +48,9 @@ def get_orchestrator() -> Orchestrator:
         llm = build_default_llm()
     except LLMUnavailable:
         llm = UnavailableLLM()
-    return Orchestrator(llm, build_default_registry())
+    orchestrator = Orchestrator(llm, build_default_registry())
+    orchestrator.execution_mode = config.AGENT_EXECUTION_MODE
+    return orchestrator
 
 
 def _context(staff: dict, patient_ids: list[int] | None = None):
@@ -59,6 +62,7 @@ def _context(staff: dict, patient_ids: list[int] | None = None):
 @router.post("/tasks")
 def create_task(
     body: TaskCreateBody,
+    response: Response,
     staff: dict = Depends(require_permission("agent.task.create")),
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ):
@@ -66,6 +70,10 @@ def create_task(
         raise HTTPException(status_code=503, detail="The AI agent layer is not enabled")
     ctx = _context(staff, body.patient_ids)
     try:
+        if orchestrator.execution_mode == "background":
+            # 202: recorded and queued; poll GET /agent/tasks/{id}. A worker runs it.
+            response.status_code = 202
+            return orchestrator.submit_async(ctx, body.input, idempotency_key=body.idempotency_key)
         return orchestrator.submit(ctx, body.input, idempotency_key=body.idempotency_key)
     except PermissionError:
         raise HTTPException(status_code=409, detail="That idempotency key belongs to another user's task")
@@ -90,6 +98,8 @@ def get_task(task_id: int, staff: dict = Depends(require_permission("agent.task.
 def _decide(task_id: int, staff: dict, orchestrator: Orchestrator, approve: bool):
     approver = _context(staff)
     try:
+        if orchestrator.execution_mode == "background":
+            return orchestrator.approve_async(task_id, approver, approve=approve)
         return orchestrator.approve(task_id, approver, approve=approve)
     except PermissionError:
         raise HTTPException(status_code=403, detail="Insufficient permissions")
