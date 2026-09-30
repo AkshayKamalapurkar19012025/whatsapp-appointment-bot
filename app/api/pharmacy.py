@@ -212,7 +212,25 @@ def remove_prescription_item(
                 )
             except svc_exc.PrescriptionItemNotFound:
                 raise _not_found("Prescription item not found")
-    return result
+
+            # Removing a drafted medication line is a clinical write and
+            # is recorded as one. Written after the service call, so a
+            # rejected removal (wrong status, unknown item -- every one
+            # of which raises above) never leaves a row claiming a drug
+            # was taken off the prescription. The details name the drug
+            # itself: once the row is deleted, an item id alone resolves
+            # to nothing and the audit trail would be unreadable.
+            record_audit_log(
+                cur,
+                hospital_id=staff["hospital_id"],
+                staff_id=staff["id"],
+                action="prescription.item_removed",
+                resource_type="prescription",
+                resource_id=result["prescription"]["id"],
+                details=result["removed"],
+            )
+
+    return result["prescription"]
 
 
 @prescription_router.post("/{appointment_id}/prescription/prescribe")

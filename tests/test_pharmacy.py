@@ -132,6 +132,71 @@ def test_add_and_remove_item(client, db_connection):
     assert response.json()["items"] == []
 
 
+def _audit_rows(db_connection, resource_type: str, resource_id: int) -> list[tuple]:
+    with db_connection.cursor() as cur:
+        cur.execute(
+            """
+            SELECT action, staff_id, details FROM audit_log
+            WHERE resource_type = %s AND resource_id = %s
+            ORDER BY id
+            """,
+            (resource_type, resource_id),
+        )
+        return cur.fetchall()
+
+
+def test_removing_an_item_is_audited(client, db_connection):
+    """Removing a drafted medication line is a clinical write and must
+    leave a record of who removed what. It previously left none at all:
+    remove_prescription_item_service ran a bare DELETE and the handler
+    never called record_audit_log, so a prescribed drug could be taken
+    off a DRAFT prescription with nothing in audit_log to show for it.
+    See issue #131 -- this is step 1 of that issue, independent of the
+    PATCH endpoint it also asks for.
+    """
+    ctx = _checked_in_context(client, db_connection, "Dr. Rx RemoveAudit")
+    appointment_id = ctx["appointment"]["id"]
+    admin_headers = ctx["admin_headers"]
+
+    prescription = _add_item(client, appointment_id, admin_headers, medicine_name="Atorvastatin", quantity=14)
+    prescription_id = prescription["id"]
+    item = prescription["items"][0]
+
+    # A plain add writes no audit row (only the allergy outcomes do --
+    # see app/api/pharmacy.py), so anything found afterwards is the
+    # removal's own record and nothing else.
+    assert _audit_rows(db_connection, "prescription", prescription_id) == []
+
+    response = client.delete(
+        f"/api/appointments/{appointment_id}/prescription/items/{item['id']}", headers=admin_headers
+    )
+    assert response.status_code == 200
+
+    rows = _audit_rows(db_connection, "prescription", prescription_id)
+    assert len(rows) == 1, "removing a prescription item must write exactly one audit row"
+    action, staff_id, details = rows[0]
+    assert action == "prescription.item_removed"
+    assert staff_id is not None
+    # The row has to identify the drug, not just that "an item" went --
+    # a bare item id is useless once the row itself is deleted.
+    assert details["medicine_name"] == "Atorvastatin"
+    assert details["quantity"] == 14
+    assert details["item_id"] == item["id"]
+
+
+def test_failed_removal_writes_no_audit_row(client, db_connection):
+    """A 404 must not leave an audit row claiming something was removed."""
+    ctx = _checked_in_context(client, db_connection, "Dr. Rx RemoveAuditMiss")
+    appointment_id = ctx["appointment"]["id"]
+    prescription = _add_item(client, appointment_id, ctx["admin_headers"])
+
+    response = client.delete(
+        f"/api/appointments/{appointment_id}/prescription/items/999999", headers=ctx["admin_headers"]
+    )
+    assert response.status_code == 404
+    assert _audit_rows(db_connection, "prescription", prescription["id"]) == []
+
+
 def test_remove_nonexistent_item_is_404(client, db_connection):
     ctx = _checked_in_context(client, db_connection, "Dr. Rx RemoveMissing")
     appointment_id = ctx["appointment"]["id"]
