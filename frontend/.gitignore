@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Playwright (frontend/playwright.config.ts) -- per-run artifacts only;
+# the specs themselves under e2e/ are committed.
+test-results
+playwright-report
+blob-report
+.playwright
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useState } from 'react'
-import { ArrowLeft, CheckCircle, Warning } from '@phosphor-icons/react'
+import { useEffect, useState } from 'react'
+import { ArrowLeft, CheckCircle, Clock, Warning } from '@phosphor-icons/react'
 import {
   ApiError,
   addPatientAllergy,
@@ -12,6 +12,7 @@ import {
   getLatestVitals,
   getOrCreateConsultation,
   getPatientAllergies,
+  getPatientTimeline,
   listOrders,
   recordOrderResult,
   recordVitals,
@@ -29,14 +30,16 @@ import type {
   OrderResultItemInput,
   OrderType,
   PatientAllergy,
+  PatientTimeline,
+  TimelineVitals,
   Vitals,
   VitalsPriority,
 } from '../types'
-import { formatAgeGender, formatDateTime } from '../format'
+import { formatAgeGender, formatDateTime, formatTime } from '../format'
 import PrescriptionPanel from './PrescriptionPanel'
 import AppointmentBillingPanel from './AppointmentBillingPanel'
 
-type Tab = 'triage' | 'consultation' | 'orders' | 'prescription' | 'billing'
+type Tab = 'consultation' | 'triage' | 'orders' | 'prescription' | 'billing'
 
 const ORDER_TYPE_LABELS: Record<OrderType, string> = {
   LAB: 'Laboratory',
@@ -45,6 +48,19 @@ const ORDER_TYPE_LABELS: Record<OrderType, string> = {
   SERVICE: 'Service',
   EXTERNAL_REFERRAL: 'External referral',
 }
+
+// The full lab/radiology lifecycle (migrations/0054_diagnostic_
+// workflow.sql), in order -- used to draw the stage bar in the Orders
+// tab below. Every other order_type (PROCEDURE/SERVICE/EXTERNAL_
+// REFERRAL) never leaves ORDERED/IN_PROGRESS/COMPLETED/CANCELLED, so
+// they get a plain status pill instead, not this bar.
+const LAB_RADIOLOGY_STAGES: { status: ClinicalOrder['status']; label: string }[] = [
+  { status: 'ORDERED', label: 'Ordered' },
+  { status: 'COLLECTED', label: 'Collected' },
+  { status: 'RESULT_ENTERED', label: 'Result' },
+  { status: 'VERIFIED', label: 'Verified' },
+  { status: 'COMPLETED', label: 'Released' },
+]
 
 const FOLLOW_UP_OPTIONS = [
   { label: 'No follow-up', days: null },
@@ -124,6 +140,16 @@ type ConsultationFormState = {
   history_notes: string
   examination_notes: string
   diagnosis: string
+  // The one optional coded-diagnosis slot (migrations/0056_
+  // consultation_diagnosis_coding.sql) -- singular columns on
+  // consultations, not a child table, so this is genuinely one
+  // code/system/display triple, never a list. There is no ICD-10
+  // lookup/search endpoint anywhere in this app (grepped app/api and
+  // app/services -- none exists), so this is honest manual structured
+  // entry against the real columns, not a fake searchable index.
+  diagnosis_code_system: string
+  diagnosis_code: string
+  diagnosis_code_display: string
   clinical_notes: string
   follow_up_reason: string
   disposition: ConsultationDisposition | ''
@@ -136,6 +162,9 @@ function consultationFormFromRecord(c: Consultation): ConsultationFormState {
     history_notes: c.history_notes ?? '',
     examination_notes: c.examination_notes ?? '',
     diagnosis: c.diagnosis ?? '',
+    diagnosis_code_system: c.diagnosis_code_system ?? '',
+    diagnosis_code: c.diagnosis_code ?? '',
+    diagnosis_code_display: c.diagnosis_code_display ?? '',
     clinical_notes: c.clinical_notes ?? '',
     follow_up_reason: c.follow_up_reason ?? '',
     disposition: c.disposition ?? '',
@@ -143,11 +172,23 @@ function consultationFormFromRecord(c: Consultation): ConsultationFormState {
   }
 }
 
-const DISPOSITION_LABELS: Record<ConsultationDisposition, string> = {
+// ADMIT_TO_IPD deliberately excluded -- no IPD module exists yet
+// (types.ts's own Consultation.disposition comment calls it "a stub,
+// no IPD/referral workflow behind it yet"). The backend enum value
+// itself is untouched (existing historical rows keep reading fine);
+// this UI simply never offers selecting it going forward.
+const DISPOSITION_LABELS: Record<Exclude<ConsultationDisposition, 'ADMIT_TO_IPD'>, string> = {
   FOLLOW_UP: 'Follow-up',
   REFER: 'Refer',
-  ADMIT_TO_IPD: 'Admit to IPD',
   EMERGENCY: 'Emergency',
+}
+
+function vitalsBpTrend(recent: TimelineVitals[]): 'up' | 'down' | 'flat' | null {
+  const withBp = recent.filter((v) => v.bp_systolic !== null)
+  if (withBp.length < 2) return null
+  const [latest, previous] = withBp
+  if (latest.bp_systolic === previous.bp_systolic) return 'flat'
+  return (latest.bp_systolic ?? 0) > (previous.bp_systolic ?? 0) ? 'up' : 'down'
 }
 
 // OPD/HIMS master spec Phase 5 -- the doctor/nurse "Full Workspace" for
@@ -168,6 +209,7 @@ export default function ConsultationWorkspace({
   canCreateOrders,
   canCreatePrescriptions,
   onBack,
+  onOpenLabWorklist,
 }: {
   appointmentId: number
   // Six distinct capabilities, not one -- each server-enforced by its
@@ -184,8 +226,20 @@ export default function ConsultationWorkspace({
   canCreateOrders: boolean
   canCreatePrescriptions: boolean
   onBack: () => void
+  // Real navigation to the Lab/Radiology Worklist section (AdminApp.tsx),
+  // not this component's own onBack (which returns to the queue) --
+  // DOCTOR's own ROLE_VISIBLE_SECTIONS doesn't include 'lab-worklist'
+  // (that sidebar entry is LAB_TECH's own, plus ADMIN/STAFF who see
+  // every section), so this link is a real but role-limited shortcut,
+  // same as any other direct goTo call bypassing the sidebar -- the
+  // worklist's own actions stay individually permission-gated
+  // server-side regardless of how staff got there.
+  onOpenLabWorklist: () => void
 }) {
-  const [tab, setTab] = useState<Tab>('triage')
+  // Notes is the landing tab (the mockup's own default) -- vitals/
+  // allergies are now always visible in the left rail instead of
+  // needing their own primary tab first.
+  const [tab, setTab] = useState<Tab>('consultation')
   const [encounter, setEncounter] = useState<EncounterSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -200,6 +254,14 @@ export default function ConsultationWorkspace({
   const [vitalsSaving, setVitalsSaving] = useState(false)
   const [vitalsError, setVitalsError] = useState<string | null>(null)
   const [vitalsSavedAt, setVitalsSavedAt] = useState<number | null>(null)
+
+  // Cross-visit history (GET /patients/{id}/timeline) -- the one
+  // source for both the left rail's vitals trend (more than just this
+  // encounter's own latest reading, which getLatestVitals alone can
+  // never show) and its "Recent visits" list. Fetched once the
+  // encounter's patient_id is known; failure is non-fatal (the rest of
+  // the workspace still works from getLatestVitals/allergies alone).
+  const [timeline, setTimeline] = useState<PatientTimeline | null>(null)
 
   // Allergy list (master spec section 91's clinical-safety warning).
   const [allergies, setAllergies] = useState<PatientAllergy[]>([])
@@ -220,6 +282,12 @@ export default function ConsultationWorkspace({
   )
   const [followUpChoice, setFollowUpChoice] = useState<string | null>(null)
   const [followUpCustomDate, setFollowUpCustomDate] = useState('')
+  // Draft inputs for the one coded-diagnosis slot's manual entry row
+  // (see ConsultationFormState's own diagnosis_code comment) -- kept
+  // separate from consultationForm itself so typing a code doesn't
+  // commit it until "Add" is pressed.
+  const [diagnosisCodeDraft, setDiagnosisCodeDraft] = useState('')
+  const [diagnosisDisplayDraft, setDiagnosisDisplayDraft] = useState('')
   const [consultationSaving, setConsultationSaving] = useState(false)
   const [consultationError, setConsultationError] = useState<string | null>(null)
   const [consultationSavedAt, setConsultationSavedAt] = useState<number | null>(null)
@@ -229,7 +297,12 @@ export default function ConsultationWorkspace({
   // Amendment (master spec section 70) -- correcting a COMPLETED
   // consultation. `amending` locally re-enables the consultation tab's
   // fields without touching the global `readOnly` (vitals/orders stay
-  // exactly as read-only as the visit's own state says).
+  // exactly as read-only as the visit's own state says). There is no
+  // time-based grace window on either side of this: clinical_
+  // services.py locks the moment status flips to COMPLETED (no
+  // timedelta/minutes check anywhere in that file), so the UI doesn't
+  // pretend one exists either -- Amend is the only way back in, at any
+  // time after completion, same as today.
   const [amending, setAmending] = useState(false)
   const [amendReason, setAmendReason] = useState('')
   const [amendSaving, setAmendSaving] = useState(false)
@@ -245,6 +318,7 @@ export default function ConsultationWorkspace({
   const [orderDestination, setOrderDestination] = useState('')
   const [orderSaving, setOrderSaving] = useState(false)
   const [orderError, setOrderError] = useState<string | null>(null)
+  const [showNewOrderForm, setShowNewOrderForm] = useState(false)
   // The one order currently showing its "why cancel" reason input --
   // same one-row-at-a-time pattern QueueSection.tsx uses for its own
   // required-reason action (priority).
@@ -262,6 +336,15 @@ export default function ConsultationWorkspace({
   // *every* LAB/RADIOLOGY row's own print-area would otherwise put on
   // the page isn't what "Print requisition" on one row means.
   const [printOrderTarget, setPrintOrderTarget] = useState<ClinicalOrder | null>(null)
+
+  // Re-renders the banner's "N min" elapsed readout once a minute --
+  // not every second (this isn't a stopwatch), matching the app's own
+  // 30s/20s polling cadence elsewhere for "keep roughly fresh" data.
+  const [, forceTick] = useState(0)
+  useEffect(() => {
+    const interval = setInterval(() => forceTick((n) => n + 1), 60_000)
+    return () => clearInterval(interval)
+  }, [])
 
   useEffect(() => {
     if (printOrderTarget) {
@@ -283,6 +366,7 @@ export default function ConsultationWorkspace({
           getLatestVitals(appointmentId).catch(() => null),
           listOrders(appointmentId).catch(() => []),
           getPatientAllergies(summary.patient_id).catch(() => []),
+          getPatientTimeline(summary.patient_id).catch(() => null),
           getOrCreateConsultation(appointmentId)
             .then((c) => {
               setConsultation(c)
@@ -302,13 +386,14 @@ export default function ConsultationWorkspace({
       })
       .then((result) => {
         if (cancelled || !result) return
-        const [vitals, orderList, allergyList] = result
+        const [vitals, orderList, allergyList, patientTimeline] = result
         if (vitals) {
           setLatestVitals(vitals)
           setVitalsForm(vitalsFormFromRecord(vitals))
         }
         setOrders(orderList)
         setAllergies(allergyList)
+        setTimeline(patientTimeline)
       })
       .catch((err) => {
         if (cancelled) return
@@ -356,6 +441,11 @@ export default function ConsultationWorkspace({
         history_notes: consultationForm.history_notes.trim() || undefined,
         examination_notes: consultationForm.examination_notes.trim() || undefined,
         diagnosis: consultationForm.diagnosis.trim() || undefined,
+        diagnosis_code_system: consultationForm.diagnosis_code.trim()
+          ? consultationForm.diagnosis_code_system.trim() || 'ICD-10'
+          : undefined,
+        diagnosis_code: consultationForm.diagnosis_code.trim() || undefined,
+        diagnosis_code_display: consultationForm.diagnosis_code_display.trim() || undefined,
         clinical_notes: consultationForm.clinical_notes.trim() || undefined,
         follow_up_date: currentFollowUpDate(),
         follow_up_reason: consultationForm.follow_up_reason.trim() || undefined,
@@ -393,6 +483,15 @@ export default function ConsultationWorkspace({
       })
       setLatestVitals(saved)
       setVitalsSavedAt(Date.now())
+      // The trend card should reflect a just-recorded reading without
+      // needing a full page reload -- getPatientTimeline again is the
+      // one source of truth it reads from, so re-fetch it rather than
+      // hand-splicing `saved` into the cached timeline shape.
+      if (encounter) {
+        getPatientTimeline(encounter.patient_id)
+          .then(setTimeline)
+          .catch(() => undefined)
+      }
     } catch (err) {
       setVitalsError(err instanceof ApiError ? err.message : 'Could not save vitals')
     } finally {
@@ -454,6 +553,11 @@ export default function ConsultationWorkspace({
         history_notes: consultationForm.history_notes.trim() || undefined,
         examination_notes: consultationForm.examination_notes.trim() || undefined,
         diagnosis: consultationForm.diagnosis.trim() || undefined,
+        diagnosis_code_system: consultationForm.diagnosis_code.trim()
+          ? consultationForm.diagnosis_code_system.trim() || 'ICD-10'
+          : undefined,
+        diagnosis_code: consultationForm.diagnosis_code.trim() || undefined,
+        diagnosis_code_display: consultationForm.diagnosis_code_display.trim() || undefined,
         clinical_notes: consultationForm.clinical_notes.trim() || undefined,
         follow_up_date: currentFollowUpDate(),
         follow_up_reason: consultationForm.follow_up_reason.trim() || undefined,
@@ -481,6 +585,11 @@ export default function ConsultationWorkspace({
         history_notes: consultationForm.history_notes.trim() || undefined,
         examination_notes: consultationForm.examination_notes.trim() || undefined,
         diagnosis: consultationForm.diagnosis.trim() || undefined,
+        diagnosis_code_system: consultationForm.diagnosis_code.trim()
+          ? consultationForm.diagnosis_code_system.trim() || 'ICD-10'
+          : undefined,
+        diagnosis_code: consultationForm.diagnosis_code.trim() || undefined,
+        diagnosis_code_display: consultationForm.diagnosis_code_display.trim() || undefined,
         clinical_notes: consultationForm.clinical_notes.trim() || undefined,
         follow_up_date: currentFollowUpDate(),
         follow_up_reason: consultationForm.follow_up_reason.trim() || undefined,
@@ -512,6 +621,7 @@ export default function ConsultationWorkspace({
       setOrderIndication('')
       setOrderDestination('')
       setOrderPriority('ROUTINE')
+      setShowNewOrderForm(false)
     } catch (err) {
       setOrderError(err instanceof ApiError ? err.message : 'Could not create the order')
     } finally {
@@ -601,35 +711,94 @@ export default function ConsultationWorkspace({
 
   const readOnly = !encounter || encounter.appointment_status !== 'CHECKED_IN' || consultation?.status === 'COMPLETED'
 
+  // GET /patients/{id}/allergies defaults include_resolved to False
+  // (list_patient_allergies_service) with no query param exposed to
+  // change that, so `allergies` here is always the active set already
+  // -- never a mix that needs its own active/resolved filter.
+  const activeAllergies = allergies
+
+  // Every vitals reading across every past encounter for this patient,
+  // most recent first -- getPatientTimeline's own visits are already
+  // ordered newest-encounter-first (patient_timeline_service.py), but
+  // each visit's own vitals list is oldest-first internally, so this
+  // flattens and re-sorts by recorded_at directly rather than trusting
+  // that nesting order.
+  const vitalsHistory: TimelineVitals[] = (timeline?.visits ?? [])
+    .flatMap((v) => v.vitals)
+    .sort((a, b) => b.recorded_at.localeCompare(a.recorded_at))
+    .slice(0, 5)
+  const bpTrend = vitalsBpTrend(vitalsHistory)
+  const previousVitals = vitalsHistory[1] ?? null
+
+  const elapsedMinutes = encounter ? Math.max(0, Math.round((Date.now() - new Date(encounter.opened_at).getTime()) / 60000)) : null
+
+  const recentVisits = (timeline?.visits ?? []).filter((v) => v.encounter_id !== encounter?.encounter_id).slice(0, 4)
+
   return (
-    <section>
+    <section className="consult-workspace">
       <button type="button" className="link doctor-workspace-back" onClick={onBack}>
         <ArrowLeft size={16} weight="bold" /> Back to queue
       </button>
 
       {encounter && (
-        <div className="patient-context-header">
-          <div className="patient-context-identity">
-            <h2>{encounter.patient_name}</h2>
-            <div className="patient-context-meta">
-              <span>UHID {encounter.patient_uhid}</span>
-              {formatAgeGender(encounter.patient_date_of_birth, encounter.patient_gender) && (
-                <span>{formatAgeGender(encounter.patient_date_of_birth, encounter.patient_gender)}</span>
-              )}
-              <span>{encounter.doctor_name}</span>
-              {encounter.token_number !== null && <span>Token #{encounter.token_number}</span>}
+        <header className="consult-banner">
+          <div className="consult-banner-identity">
+            <span className="consult-banner-avatar" aria-hidden="true">
+              {encounter.patient_name
+                .split(' ')
+                .map((p) => p[0])
+                .slice(0, 2)
+                .join('')
+                .toUpperCase()}
+            </span>
+            <div className="consult-banner-text">
+              <div className="consult-banner-name-row">
+                <h2>{encounter.patient_name}</h2>
+                {encounter.token_number !== null && <span className="pill consult-token-pill">Token {encounter.token_number}</span>}
+              </div>
+              <div className="consult-banner-meta">
+                <span>UHID {encounter.patient_uhid}</span>
+                {formatAgeGender(encounter.patient_date_of_birth, encounter.patient_gender) && (
+                  <span>{formatAgeGender(encounter.patient_date_of_birth, encounter.patient_gender)}</span>
+                )}
+                <span>{encounter.doctor_name}</span>
+              </div>
             </div>
-            {allergies.length > 0 && (
-              <div className="patient-context-allergy-warning">
-                <Warning size={14} weight="fill" />
-                Allergies: {allergies.map((a) => a.allergen).join(', ')}
+            {activeAllergies.length > 0 && (
+              <div className="consult-banner-allergy-flag">
+                <Warning size={15} weight="fill" aria-hidden="true" />
+                {activeAllergies.length} active allerg{activeAllergies.length === 1 ? 'y' : 'ies'}
               </div>
             )}
           </div>
-          <span className={`pill status-${encounter.appointment_status.toLowerCase()}`}>
-            {encounter.appointment_status === 'CHECKED_IN' ? 'In progress' : encounter.appointment_status}
-          </span>
-        </div>
+          <div className="consult-banner-actions">
+            {elapsedMinutes !== null && (
+              <span className="muted consult-banner-elapsed">
+                <Clock size={14} weight="bold" aria-hidden="true" /> Started {formatTime(encounter.opened_at)} · {elapsedMinutes} min
+              </span>
+            )}
+            {!readOnly && canWriteConsultation && (
+              <button type="button" className="btn-secondary btn btn-sm" disabled={consultationSaving} onClick={handleSaveConsultation}>
+                {consultationSaving ? 'Saving…' : 'Save draft'}
+              </button>
+            )}
+            {!readOnly && canWriteConsultation && (
+              <button
+                type="button"
+                className="btn btn-sm"
+                disabled={completing || !consultationForm.chief_complaint.trim() || !consultationForm.diagnosis.trim()}
+                onClick={handleCompleteConsultation}
+                title={
+                  !consultationForm.chief_complaint.trim() || !consultationForm.diagnosis.trim()
+                    ? 'Chief complaint and diagnosis are required to complete the consultation'
+                    : undefined
+                }
+              >
+                {completing ? 'Completing…' : 'Complete visit'}
+              </button>
+            )}
+          </div>
+        </header>
       )}
 
       {notCheckedIn && (
@@ -656,170 +825,567 @@ export default function ConsultationWorkspace({
           <div className="tabs">
             <button
               type="button"
-              className={tab === 'triage' ? 'tab active' : 'tab'}
-              onClick={() => setTab('triage')}
-            >
-              Triage / Vitals
-            </button>
-            <button
-              type="button"
-              className={tab === 'consultation' ? 'tab active' : 'tab'}
+              className={tab === 'consultation' ? 'tab active consult-tab-notes' : 'tab consult-tab-notes'}
               onClick={() => setTab('consultation')}
             >
-              Consultation
+              Notes
             </button>
             <button
               type="button"
-              className={tab === 'orders' ? 'tab active' : 'tab'}
+              className={tab === 'triage' ? 'tab active consult-tab-vitals' : 'tab consult-tab-vitals'}
+              onClick={() => setTab('triage')}
+            >
+              Vitals &amp; triage
+            </button>
+            <button
+              type="button"
+              className={tab === 'orders' ? 'tab active consult-tab-orders' : 'tab consult-tab-orders'}
               onClick={() => setTab('orders')}
             >
               Orders{orders.length > 0 ? ` (${orders.length})` : ''}
             </button>
             <button
               type="button"
-              className={tab === 'prescription' ? 'tab active' : 'tab'}
+              className={tab === 'prescription' ? 'tab active consult-tab-prescription' : 'tab consult-tab-prescription'}
               onClick={() => setTab('prescription')}
             >
               Prescription
             </button>
             <button
               type="button"
-              className={tab === 'billing' ? 'tab active' : 'tab'}
+              className={tab === 'billing' ? 'tab active consult-tab-billing' : 'tab consult-tab-billing'}
               onClick={() => setTab('billing')}
             >
               Billing
             </button>
           </div>
 
-          {tab === 'triage' && (
-            <div className="detail-section">
-              <div className="allergy-panel">
-                <div className="allergy-panel-header">
-                  <h4>Allergies</h4>
-                  {!showAllergyForm && (
-                    <button type="button" className="btn-secondary btn btn-sm" onClick={() => setShowAllergyForm(true)}>
-                      + Add allergy
-                    </button>
+          {tab === 'consultation' && (
+            <div className="consult-notes-layout">
+              <div className="consult-left-rail">
+                <section className="consult-vitals-card">
+                  <div className="consult-card-heading">
+                    <h3>Vitals</h3>
+                  </div>
+                  {latestVitals ? (
+                    <>
+                      <div className="consult-vitals-grid">
+                        {latestVitals.bp_systolic !== null && (
+                          <div className="consult-vitals-tile">
+                            <span className="muted">BP</span>
+                            <strong>
+                              {latestVitals.bp_systolic}/{latestVitals.bp_diastolic}
+                            </strong>
+                            {bpTrend && previousVitals && (
+                              <span className={`consult-vitals-delta consult-vitals-delta-${bpTrend}`}>
+                                {bpTrend === 'up' ? '↑' : bpTrend === 'down' ? '↓' : '→'} from {previousVitals.bp_systolic}/
+                                {previousVitals.bp_diastolic}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {latestVitals.pulse !== null && (
+                          <div className="consult-vitals-tile">
+                            <span className="muted">Pulse</span>
+                            <strong>
+                              {latestVitals.pulse} <span className="muted">bpm</span>
+                            </strong>
+                          </div>
+                        )}
+                        {latestVitals.temperature_celsius !== null && (
+                          <div className="consult-vitals-tile">
+                            <span className="muted">Temp</span>
+                            <strong>
+                              {latestVitals.temperature_celsius} <span className="muted">°C</span>
+                            </strong>
+                          </div>
+                        )}
+                        {latestVitals.spo2 !== null && (
+                          <div className="consult-vitals-tile">
+                            <span className="muted">SpO₂</span>
+                            <strong>
+                              {latestVitals.spo2} <span className="muted">%</span>
+                            </strong>
+                          </div>
+                        )}
+                      </div>
+                      <p className="muted consult-vitals-footnote">
+                        Taken {formatDateTime(latestVitals.recorded_at)}
+                        {vitalsHistory.length > 1 ? ` · last ${vitalsHistory.length} readings shown` : ''}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="muted">No vitals recorded yet.</p>
                   )}
-                </div>
-                {allergyError && <p className="error">{allergyError}</p>}
+                </section>
 
-                {allergies.length === 0 && !showAllergyForm && <p className="muted">No known allergies recorded.</p>}
-
-                {allergies.length > 0 && (
-                  <ul className="allergy-list">
-                    {allergies.map((a) => (
-                      <li key={a.id} className="allergy-list-item">
-                        <span>
-                          <strong>{a.allergen}</strong>
-                          {a.severity && <span className={`pill severity-${a.severity.toLowerCase()}`}>{a.severity}</span>}
-                          {a.reaction && <span className="muted"> — {a.reaction}</span>}
-                        </span>
-                        {resolveTargetId === a.id ? (
-                          <span className="inline-form">
-                            <input
-                              type="text"
-                              placeholder="Reason for removing"
-                              value={resolveReason}
-                              onChange={(e) => setResolveReason(e.target.value)}
-                            />
+                <section className="consult-allergy-card">
+                  <div className="consult-card-heading">
+                    <h3>Allergies</h3>
+                    {!showAllergyForm && (
+                      <button type="button" className="link-btn" onClick={() => setShowAllergyForm(true)}>
+                        + Add
+                      </button>
+                    )}
+                  </div>
+                  {allergyError && <p className="error">{allergyError}</p>}
+                  {activeAllergies.length === 0 && !showAllergyForm && <p className="muted">No known allergies recorded.</p>}
+                  {activeAllergies.length > 0 && (
+                    <ul className="consult-allergy-list">
+                      {activeAllergies.map((a) => (
+                        <li
+                          key={a.id}
+                          className={a.severity === 'SEVERE' ? 'consult-allergy-entry consult-allergy-entry-severe' : 'consult-allergy-entry'}
+                        >
+                          <div className="consult-allergy-entry-head">
+                            <strong>{a.allergen}</strong>
+                            {a.severity && <span className={`pill severity-${a.severity.toLowerCase()}`}>{a.severity}</span>}
+                          </div>
+                          {(a.reaction || a.recorded_at) && (
+                            <div className="muted">
+                              {[a.reaction, a.recorded_at ? `noted ${new Date(a.recorded_at).getFullYear()}` : null]
+                                .filter(Boolean)
+                                .join(' · ')}
+                            </div>
+                          )}
+                          {resolveTargetId === a.id ? (
+                            <span className="inline-form">
+                              <input
+                                type="text"
+                                placeholder="Reason for removing"
+                                value={resolveReason}
+                                onChange={(e) => setResolveReason(e.target.value)}
+                              />
+                              <button
+                                type="button"
+                                className="btn btn-sm"
+                                disabled={resolving || !resolveReason.trim()}
+                                onClick={() => handleResolveAllergy(a.id)}
+                              >
+                                {resolving ? 'Removing…' : 'Confirm'}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-secondary btn btn-sm"
+                                onClick={() => {
+                                  setResolveTargetId(null)
+                                  setResolveReason('')
+                                }}
+                              >
+                                Cancel
+                              </button>
+                            </span>
+                          ) : (
                             <button
                               type="button"
-                              className="btn btn-sm"
-                              disabled={resolving || !resolveReason.trim()}
-                              onClick={() => handleResolveAllergy(a.id)}
-                            >
-                              {resolving ? 'Removing…' : 'Confirm'}
-                            </button>
-                            <button
-                              type="button"
-                              className="btn-secondary btn btn-sm"
+                              className="link"
                               onClick={() => {
-                                setResolveTargetId(null)
+                                setResolveTargetId(a.id)
                                 setResolveReason('')
                               }}
                             >
-                              Cancel
+                              Remove
                             </button>
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            className="link"
-                            onClick={() => {
-                              setResolveTargetId(a.id)
-                              setResolveReason('')
-                            }}
-                          >
-                            Remove
-                          </button>
-                        )}
-                      </li>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {showAllergyForm && (
+                    <div className="doctor-form-grid">
+                      <label className="inline-label">
+                        Allergen
+                        <input
+                          type="text"
+                          value={allergenInput}
+                          onChange={(e) => setAllergenInput(e.target.value)}
+                          placeholder="e.g. Penicillin"
+                        />
+                      </label>
+                      <label className="inline-label">
+                        Reaction
+                        <input
+                          type="text"
+                          value={reactionInput}
+                          onChange={(e) => setReactionInput(e.target.value)}
+                          placeholder="e.g. Rash"
+                        />
+                      </label>
+                      <label className="inline-label">
+                        Severity
+                        <select value={severityInput} onChange={(e) => setSeverityInput(e.target.value as AllergySeverity | '')}>
+                          <option value="">—</option>
+                          <option value="MILD">Mild</option>
+                          <option value="MODERATE">Moderate</option>
+                          <option value="SEVERE">Severe</option>
+                        </select>
+                      </label>
+                      <span className="inline-form">
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          disabled={allergySaving || !allergenInput.trim()}
+                          onClick={handleAddAllergy}
+                        >
+                          {allergySaving ? 'Saving…' : 'Save allergy'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secondary btn btn-sm"
+                          onClick={() => {
+                            setShowAllergyForm(false)
+                            setAllergenInput('')
+                            setReactionInput('')
+                            setSeverityInput('')
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </span>
+                    </div>
+                  )}
+
+                </section>
+
+                {recentVisits.length > 0 && (
+                  <section className="consult-recent-visits-card">
+                    <h3>Recent visits</h3>
+                    {recentVisits.map((v) => (
+                      <div key={v.encounter_id} className="consult-recent-visit">
+                        <div>
+                          {new Date(v.started_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} · {v.doctor_name}
+                        </div>
+                        <div className="muted">{v.consultation?.diagnosis ?? v.consultation?.chief_complaint ?? 'No note recorded'}</div>
+                      </div>
                     ))}
-                  </ul>
+                  </section>
+                )}
+              </div>
+
+              <section className="consult-notes-card">
+                <div className="consult-card-heading">
+                  <h3>Consultation note</h3>
+                </div>
+                {readOnly && !amending && (
+                  <p className="muted">
+                    {consultation?.status === 'COMPLETED'
+                      ? `Completed ${consultation.completed_at ? formatDateTime(consultation.completed_at) : ''} -- locked immediately on completion, corrections go through Amend below.`
+                      : 'This visit is no longer in progress -- the consultation can be viewed but not edited.'}
+                  </p>
+                )}
+                {amending && (
+                  <p className="muted">
+                    Amending a completed consultation -- every field below is editable, and the previous values
+                    will be kept in the amendment history.
+                  </p>
+                )}
+                {consultationError && <p className="error">{consultationError}</p>}
+                {completeError && <p className="error">{completeError}</p>}
+
+                <label className="inline-label">
+                  Chief complaint *
+                  <textarea
+                    rows={2}
+                    value={consultationForm.chief_complaint}
+                    disabled={readOnly && !amending}
+                    onChange={(e) => setConsultationForm({ ...consultationForm, chief_complaint: e.target.value })}
+                  />
+                </label>
+                <label className="inline-label">
+                  History
+                  <textarea
+                    rows={3}
+                    value={consultationForm.history_notes}
+                    disabled={readOnly && !amending}
+                    onChange={(e) => setConsultationForm({ ...consultationForm, history_notes: e.target.value })}
+                  />
+                </label>
+                <label className="inline-label">
+                  Examination
+                  <textarea
+                    rows={3}
+                    value={consultationForm.examination_notes}
+                    disabled={readOnly && !amending}
+                    onChange={(e) => setConsultationForm({ ...consultationForm, examination_notes: e.target.value })}
+                  />
+                </label>
+
+                <div className="consult-diagnosis-row">
+                  <label className="inline-label consult-diagnosis-field">
+                    Diagnosis *
+                    <textarea
+                      rows={2}
+                      value={consultationForm.diagnosis}
+                      disabled={readOnly && !amending}
+                      onChange={(e) => setConsultationForm({ ...consultationForm, diagnosis: e.target.value })}
+                    />
+                  </label>
+                  <label className="inline-label" style={{ width: 190 }}>
+                    Follow-up
+                    <select
+                      value={followUpChoice ?? ''}
+                      disabled={readOnly && !amending}
+                      onChange={(e) => setFollowUpChoice(e.target.value || null)}
+                    >
+                      <option value="">No follow-up</option>
+                      {FOLLOW_UP_OPTIONS.filter((o) => o.days !== null).map((o) => (
+                        <option key={o.label} value={o.label}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                {followUpChoice === 'custom' && (
+                  <label className="inline-label">
+                    Follow-up date
+                    <input
+                      type="date"
+                      value={followUpCustomDate}
+                      disabled={readOnly && !amending}
+                      onChange={(e) => setFollowUpCustomDate(e.target.value)}
+                    />
+                  </label>
+                )}
+                {followUpChoice && (
+                  <label className="inline-label">
+                    Follow-up reason
+                    <input
+                      type="text"
+                      value={consultationForm.follow_up_reason}
+                      disabled={readOnly && !amending}
+                      onChange={(e) => setConsultationForm({ ...consultationForm, follow_up_reason: e.target.value })}
+                    />
+                  </label>
                 )}
 
-                {showAllergyForm && (
-                  <div className="doctor-form-grid">
-                    <label className="inline-label">
-                      Allergen
-                      <input
-                        type="text"
-                        value={allergenInput}
-                        onChange={(e) => setAllergenInput(e.target.value)}
-                        placeholder="e.g. Penicillin"
-                      />
-                    </label>
-                    <label className="inline-label">
-                      Reaction
-                      <input
-                        type="text"
-                        value={reactionInput}
-                        onChange={(e) => setReactionInput(e.target.value)}
-                        placeholder="e.g. Rash"
-                      />
-                    </label>
-                    <label className="inline-label">
-                      Severity
-                      <select
-                        value={severityInput}
-                        onChange={(e) => setSeverityInput(e.target.value as AllergySeverity | '')}
+                {/* One coded-diagnosis slot (consultations.diagnosis_code
+                    et al, migrations/0056) -- not a searchable multi-
+                    chip picker, since no ICD-10 index exists to search
+                    and the schema itself only stores a single code.
+                    Empty -> a manual code+description entry row; filled
+                    -> a removable chip, which clears the slot back to
+                    empty rather than "adding a second" one. */}
+                <label className="inline-label">
+                  ICD-10 code (optional, structured)
+                  <div className="consult-diagnosis-chip-row">
+                    {consultationForm.diagnosis_code ? (
+                      <span className="consult-diagnosis-chip">
+                        {consultationForm.diagnosis_code}
+                        {consultationForm.diagnosis_code_display ? ` · ${consultationForm.diagnosis_code_display}` : ''}
+                        {!(readOnly && !amending) && (
+                          <button
+                            type="button"
+                            aria-label="Remove diagnosis code"
+                            onClick={() =>
+                              setConsultationForm({
+                                ...consultationForm,
+                                diagnosis_code: '',
+                                diagnosis_code_display: '',
+                                diagnosis_code_system: '',
+                              })
+                            }
+                          >
+                            ×
+                          </button>
+                        )}
+                      </span>
+                    ) : (
+                      !(readOnly && !amending) && (
+                        <>
+                          <input
+                            type="text"
+                            placeholder="Code, e.g. I10"
+                            className="consult-diagnosis-code-input"
+                            value={diagnosisCodeDraft}
+                            onChange={(e) => setDiagnosisCodeDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key !== 'Enter' || !diagnosisCodeDraft.trim()) return
+                              setConsultationForm({
+                                ...consultationForm,
+                                diagnosis_code: diagnosisCodeDraft.trim(),
+                                diagnosis_code_display: diagnosisDisplayDraft.trim(),
+                              })
+                              setDiagnosisCodeDraft('')
+                              setDiagnosisDisplayDraft('')
+                            }}
+                          />
+                          <input
+                            type="text"
+                            placeholder="Description"
+                            value={diagnosisDisplayDraft}
+                            onChange={(e) => setDiagnosisDisplayDraft(e.target.value)}
+                          />
+                          <button
+                            type="button"
+                            className="btn-secondary btn btn-sm"
+                            disabled={!diagnosisCodeDraft.trim()}
+                            onClick={() => {
+                              setConsultationForm({
+                                ...consultationForm,
+                                diagnosis_code: diagnosisCodeDraft.trim(),
+                                diagnosis_code_display: diagnosisDisplayDraft.trim(),
+                              })
+                              setDiagnosisCodeDraft('')
+                              setDiagnosisDisplayDraft('')
+                            }}
+                          >
+                            Add
+                          </button>
+                        </>
+                      )
+                    )}
+                  </div>
+                </label>
+
+                <label className="inline-label">
+                  Clinical notes
+                  <textarea
+                    rows={3}
+                    value={consultationForm.clinical_notes}
+                    disabled={readOnly && !amending}
+                    onChange={(e) => setConsultationForm({ ...consultationForm, clinical_notes: e.target.value })}
+                  />
+                </label>
+
+                <label className="inline-label">
+                  Disposition
+                  <div role="radiogroup" aria-label="Disposition" className="consult-disposition-group">
+                    {(Object.keys(DISPOSITION_LABELS) as Exclude<ConsultationDisposition, 'ADMIT_TO_IPD'>[]).map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        role="radio"
+                        aria-checked={consultationForm.disposition === d}
+                        className={consultationForm.disposition === d ? 'consult-disposition-pill active' : 'consult-disposition-pill'}
+                        disabled={readOnly && !amending}
+                        onClick={() =>
+                          setConsultationForm({
+                            ...consultationForm,
+                            disposition: consultationForm.disposition === d ? '' : d,
+                          })
+                        }
                       >
-                        <option value="">—</option>
-                        <option value="MILD">Mild</option>
-                        <option value="MODERATE">Moderate</option>
-                        <option value="SEVERE">Severe</option>
-                      </select>
+                        {DISPOSITION_LABELS[d]}
+                      </button>
+                    ))}
+                  </div>
+                </label>
+                {consultationForm.disposition && (
+                  <label className="inline-label">
+                    Disposition notes
+                    <input
+                      type="text"
+                      placeholder={
+                        consultationForm.disposition === 'REFER'
+                          ? 'e.g. Refer to cardiology'
+                          : consultationForm.disposition === 'EMERGENCY'
+                            ? 'e.g. Reason for emergency escalation'
+                            : undefined
+                      }
+                      value={consultationForm.disposition_notes}
+                      disabled={readOnly && !amending}
+                      onChange={(e) => setConsultationForm({ ...consultationForm, disposition_notes: e.target.value })}
+                    />
+                  </label>
+                )}
+
+                {amending && (
+                  <>
+                    <label className="inline-label">
+                      Reason for amendment *
+                      <textarea
+                        rows={2}
+                        value={amendReason}
+                        onChange={(e) => setAmendReason(e.target.value)}
+                        placeholder="Why is this consultation being corrected?"
+                      />
                     </label>
-                    <span className="inline-form">
+                    {amendError && <p className="error">{amendError}</p>}
+                    <div className="doctor-quick-actions">
                       <button
                         type="button"
-                        className="btn btn-sm"
-                        disabled={allergySaving || !allergenInput.trim()}
-                        onClick={handleAddAllergy}
+                        className="btn"
+                        disabled={
+                          amendSaving ||
+                          !amendReason.trim() ||
+                          !consultationForm.chief_complaint.trim() ||
+                          !consultationForm.diagnosis.trim()
+                        }
+                        onClick={handleSaveAmendment}
                       >
-                        {allergySaving ? 'Saving…' : 'Save allergy'}
+                        {amendSaving ? 'Saving…' : 'Save amendment'}
                       </button>
                       <button
                         type="button"
-                        className="btn-secondary btn btn-sm"
+                        className="btn-secondary btn"
+                        disabled={amendSaving}
                         onClick={() => {
-                          setShowAllergyForm(false)
-                          setAllergenInput('')
-                          setReactionInput('')
-                          setSeverityInput('')
+                          setAmending(false)
+                          if (consultation) setConsultationForm(consultationFormFromRecord(consultation))
                         }}
                       >
                         Cancel
                       </button>
-                    </span>
+                    </div>
+                  </>
+                )}
+
+                {!amending && consultation?.status === 'COMPLETED' && canAmendConsultation && (
+                  <div className="doctor-quick-actions">
+                    <button type="button" className="btn-secondary btn btn-sm" onClick={startAmend}>
+                      Amend consultation
+                    </button>
                   </div>
                 )}
-              </div>
 
-              {latestVitals && (
-                <p className="muted">Last recorded {formatDateTime(latestVitals.recorded_at)}</p>
-              )}
+                {!amending && amendments.length > 0 && (
+                  <div className="amendment-history">
+                    <button type="button" className="link" onClick={() => setShowAmendHistory(!showAmendHistory)}>
+                      {showAmendHistory ? 'Hide' : 'Show'} amendment history ({amendments.length})
+                    </button>
+                    {showAmendHistory && (
+                      <ul className="amendment-history-list">
+                        {amendments.map((a) => (
+                          <li key={a.id}>
+                            <p className="muted">
+                              {formatDateTime(a.amended_at)} · {a.amended_by_username}
+                            </p>
+                            <p>{a.reason}</p>
+                            {a.previous_diagnosis && <p className="muted">Previous diagnosis: {a.previous_diagnosis}</p>}
+                            {a.previous_disposition && a.previous_disposition !== 'ADMIT_TO_IPD' && (
+                              <p className="muted">
+                                Previous disposition: {DISPOSITION_LABELS[a.previous_disposition]}
+                              </p>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+
+                {consultationSavedAt !== null && !consultationSaving && (
+                  <span className="muted">
+                    <CheckCircle size={14} weight="fill" /> Draft saved
+                  </span>
+                )}
+
+                <div className="consult-lock-note">
+                  <Warning size={16} aria-hidden="true" />
+                  <div>
+                    <b>Complete visit</b> locks this note immediately. Later corrections go through an amendment
+                    with a reason, kept in the audit trail. Save draft as often as you like before completing.
+                  </div>
+                </div>
+              </section>
+            </div>
+          )}
+
+          {tab === 'triage' && (
+            <div className="detail-section">
+              {latestVitals && <p className="muted">Last recorded {formatDateTime(latestVitals.recorded_at)}</p>}
               {vitalsError && <p className="error">{vitalsError}</p>}
 
               <div className="doctor-form-grid">
@@ -955,277 +1521,17 @@ export default function ConsultationWorkspace({
             </div>
           )}
 
-          {tab === 'consultation' && (
-            <div className="detail-section">
-              {readOnly && !amending && (
-                <p className="muted">
-                  {consultation?.status === 'COMPLETED'
-                    ? `Completed ${consultation.completed_at ? formatDateTime(consultation.completed_at) : ''}`
-                    : 'This visit is no longer in progress -- the consultation can be viewed but not edited.'}
-                </p>
-              )}
-              {amending && (
-                <p className="muted">
-                  Amending a completed consultation -- every field below is editable, and the previous values
-                  will be kept in the amendment history.
-                </p>
-              )}
-              {consultationError && <p className="error">{consultationError}</p>}
-              {completeError && <p className="error">{completeError}</p>}
-
-              <label className="inline-label">
-                Chief complaint *
-                <textarea
-                  rows={2}
-                  value={consultationForm.chief_complaint}
-                  disabled={readOnly && !amending}
-                  onChange={(e) => setConsultationForm({ ...consultationForm, chief_complaint: e.target.value })}
-                />
-              </label>
-              <label className="inline-label">
-                History
-                <textarea
-                  rows={3}
-                  value={consultationForm.history_notes}
-                  disabled={readOnly && !amending}
-                  onChange={(e) => setConsultationForm({ ...consultationForm, history_notes: e.target.value })}
-                />
-              </label>
-              <label className="inline-label">
-                Examination
-                <textarea
-                  rows={3}
-                  value={consultationForm.examination_notes}
-                  disabled={readOnly && !amending}
-                  onChange={(e) => setConsultationForm({ ...consultationForm, examination_notes: e.target.value })}
-                />
-              </label>
-              <label className="inline-label">
-                Diagnosis *
-                <textarea
-                  rows={2}
-                  value={consultationForm.diagnosis}
-                  disabled={readOnly && !amending}
-                  onChange={(e) => setConsultationForm({ ...consultationForm, diagnosis: e.target.value })}
-                />
-              </label>
-              <label className="inline-label">
-                Clinical notes
-                <textarea
-                  rows={3}
-                  value={consultationForm.clinical_notes}
-                  disabled={readOnly && !amending}
-                  onChange={(e) => setConsultationForm({ ...consultationForm, clinical_notes: e.target.value })}
-                />
-              </label>
-
-              <div className="doctor-form-grid">
-                <label className="inline-label">
-                  Follow-up
-                  <select
-                    value={followUpChoice ?? ''}
-                    disabled={readOnly && !amending}
-                    onChange={(e) => setFollowUpChoice(e.target.value || null)}
-                  >
-                    <option value="">No follow-up</option>
-                    {FOLLOW_UP_OPTIONS.filter((o) => o.days !== null).map((o) => (
-                      <option key={o.label} value={o.label}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {followUpChoice === 'custom' && (
-                  <label className="inline-label">
-                    Follow-up date
-                    <input
-                      type="date"
-                      value={followUpCustomDate}
-                      disabled={readOnly && !amending}
-                      onChange={(e) => setFollowUpCustomDate(e.target.value)}
-                    />
-                  </label>
-                )}
-              </div>
-              {followUpChoice && (
-                <label className="inline-label">
-                  Follow-up reason
-                  <input
-                    type="text"
-                    value={consultationForm.follow_up_reason}
-                    disabled={readOnly && !amending}
-                    onChange={(e) => setConsultationForm({ ...consultationForm, follow_up_reason: e.target.value })}
-                  />
-                </label>
-              )}
-
-              <div className="doctor-form-grid">
-                <label className="inline-label">
-                  Disposition
-                  <select
-                    value={consultationForm.disposition}
-                    disabled={readOnly && !amending}
-                    onChange={(e) =>
-                      setConsultationForm({
-                        ...consultationForm,
-                        disposition: e.target.value as ConsultationDisposition | '',
-                      })
-                    }
-                  >
-                    <option value="">Not specified</option>
-                    {(Object.keys(DISPOSITION_LABELS) as ConsultationDisposition[]).map((d) => (
-                      <option key={d} value={d}>
-                        {DISPOSITION_LABELS[d]}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {consultationForm.disposition && (
-                  <label className="inline-label">
-                    Disposition notes
-                    <input
-                      type="text"
-                      placeholder={
-                        consultationForm.disposition === 'REFER'
-                          ? 'e.g. Refer to cardiology'
-                          : consultationForm.disposition === 'ADMIT_TO_IPD'
-                            ? 'e.g. Reason for admission'
-                            : undefined
-                      }
-                      value={consultationForm.disposition_notes}
-                      disabled={readOnly && !amending}
-                      onChange={(e) =>
-                        setConsultationForm({ ...consultationForm, disposition_notes: e.target.value })
-                      }
-                    />
-                  </label>
-                )}
-              </div>
-
-              {amending && (
-                <>
-                  <label className="inline-label">
-                    Reason for amendment *
-                    <textarea
-                      rows={2}
-                      value={amendReason}
-                      onChange={(e) => setAmendReason(e.target.value)}
-                      placeholder="Why is this consultation being corrected?"
-                    />
-                  </label>
-                  {amendError && <p className="error">{amendError}</p>}
-                  <div className="doctor-quick-actions">
-                    <button
-                      type="button"
-                      className="btn"
-                      disabled={
-                        amendSaving ||
-                        !amendReason.trim() ||
-                        !consultationForm.chief_complaint.trim() ||
-                        !consultationForm.diagnosis.trim()
-                      }
-                      onClick={handleSaveAmendment}
-                    >
-                      {amendSaving ? 'Saving…' : 'Save amendment'}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-secondary btn"
-                      disabled={amendSaving}
-                      onClick={() => {
-                        setAmending(false)
-                        if (consultation) setConsultationForm(consultationFormFromRecord(consultation))
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </>
-              )}
-
-              {!amending && consultation?.status === 'COMPLETED' && canAmendConsultation && (
-                <div className="doctor-quick-actions">
-                  <button type="button" className="btn-secondary btn btn-sm" onClick={startAmend}>
-                    Amend consultation
-                  </button>
-                </div>
-              )}
-
-              {!amending && amendments.length > 0 && (
-                <div className="amendment-history">
-                  <button
-                    type="button"
-                    className="link"
-                    onClick={() => setShowAmendHistory(!showAmendHistory)}
-                  >
-                    {showAmendHistory ? 'Hide' : 'Show'} amendment history ({amendments.length})
-                  </button>
-                  {showAmendHistory && (
-                    <ul className="amendment-history-list">
-                      {amendments.map((a) => (
-                        <li key={a.id}>
-                          <p className="muted">
-                            {formatDateTime(a.amended_at)} · {a.amended_by_username}
-                          </p>
-                          <p>{a.reason}</p>
-                          {a.previous_diagnosis && (
-                            <p className="muted">Previous diagnosis: {a.previous_diagnosis}</p>
-                          )}
-                          {a.previous_disposition && (
-                            <p className="muted">
-                              Previous disposition: {DISPOSITION_LABELS[a.previous_disposition]}
-                            </p>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-
-              {!readOnly && canWriteConsultation && (
-                <div className="doctor-quick-actions">
-                  <button
-                    type="button"
-                    className="btn-secondary btn"
-                    disabled={consultationSaving || completing}
-                    onClick={handleSaveConsultation}
-                  >
-                    {consultationSaving ? 'Saving…' : 'Save draft'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn"
-                    disabled={
-                      completing ||
-                      consultationSaving ||
-                      !consultationForm.chief_complaint.trim() ||
-                      !consultationForm.diagnosis.trim()
-                    }
-                    onClick={handleCompleteConsultation}
-                    title={
-                      !consultationForm.chief_complaint.trim() || !consultationForm.diagnosis.trim()
-                        ? 'Chief complaint and diagnosis are required to complete the consultation'
-                        : undefined
-                    }
-                  >
-                    {completing ? 'Completing…' : 'Complete consultation'}
-                  </button>
-                  {consultationSavedAt !== null && !consultationSaving && (
-                    <span className="muted">
-                      <CheckCircle size={14} weight="fill" /> Draft saved
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
           {tab === 'orders' && (
             <div className="detail-section">
               {orderError && <p className="error">{orderError}</p>}
 
-              {!readOnly && canCreateOrders && (
+              {!readOnly && canCreateOrders && !showNewOrderForm && (
+                <button type="button" className="btn-dashed" onClick={() => setShowNewOrderForm(true)}>
+                  + New order
+                </button>
+              )}
+
+              {!readOnly && canCreateOrders && showNewOrderForm && (
                 <div className="doctor-form-grid">
                   <label className="inline-label">
                     Order type
@@ -1239,10 +1545,7 @@ export default function ConsultationWorkspace({
                   </label>
                   <label className="inline-label">
                     Priority
-                    <select
-                      value={orderPriority}
-                      onChange={(e) => setOrderPriority(e.target.value as OrderPriority)}
-                    >
+                    <select value={orderPriority} onChange={(e) => setOrderPriority(e.target.value as OrderPriority)}>
                       <option value="ROUTINE">Routine</option>
                       <option value="URGENT">Urgent</option>
                       <option value="STAT">Stat</option>
@@ -1270,24 +1573,21 @@ export default function ConsultationWorkspace({
                   )}
                   <label className="inline-label doctor-form-full">
                     Clinical indication
-                    <input
-                      type="text"
-                      value={orderIndication}
-                      onChange={(e) => setOrderIndication(e.target.value)}
-                    />
+                    <input type="text" value={orderIndication} onChange={(e) => setOrderIndication(e.target.value)} />
                   </label>
-                  <div className="doctor-form-full">
+                  <div className="doctor-form-full doctor-quick-actions">
                     <button
                       type="button"
                       className="btn"
                       disabled={
-                        orderSaving ||
-                        !orderDescription.trim() ||
-                        (orderType === 'EXTERNAL_REFERRAL' && !orderDestination.trim())
+                        orderSaving || !orderDescription.trim() || (orderType === 'EXTERNAL_REFERRAL' && !orderDestination.trim())
                       }
                       onClick={handleCreateOrder}
                     >
                       {orderSaving ? 'Adding…' : 'Add order'}
+                    </button>
+                    <button type="button" className="btn-secondary btn" onClick={() => setShowNewOrderForm(false)}>
+                      Cancel
                     </button>
                   </div>
                 </div>
@@ -1295,243 +1595,234 @@ export default function ConsultationWorkspace({
 
               {orders.length === 0 && <p className="muted">No orders yet for this visit.</p>}
 
-              {orders.length > 0 && (
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Type</th>
-                      <th>Description</th>
-                      <th>Priority</th>
-                      <th>Status</th>
-                      <th>Ordered</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {orders.map((order) => {
-                      // Phase 7 (migrations/0054_diagnostic_workflow.sql)
-                      // widened the set of "still open" statuses for
-                      // LAB/RADIOLOGY (COLLECTED/RESULT_ENTERED/
-                      // VERIFIED) -- Cancel stays available through all
-                      // of them, matching cancel_order_service's own
-                      // guard (blocked only once COMPLETED/CANCELLED).
-                      // Record result stays reachable pre-verification
-                      // (ORDERED/COLLECTED/IN_PROGRESS) -- verify/
-                      // release themselves are the Lab/Radiology
-                      // Worklist's job, not this doctor-scoped tab's.
-                      const cancellable = order.status !== 'COMPLETED' && order.status !== 'CANCELLED'
-                      const resultable =
-                        order.status === 'ORDERED' || order.status === 'COLLECTED' || order.status === 'IN_PROGRESS'
-                      const actionable = cancellable || resultable
-                      return (
-                        <Fragment key={order.id}>
+              {orders.map((order) => {
+                // Cancel stays available through every "still open" LAB/
+                // RADIOLOGY status (migrations/0054), matching cancel_
+                // order_service's own guard (blocked only once COMPLETED/
+                // CANCELLED). Record result stays reachable pre-
+                // verification (ORDERED/COLLECTED/IN_PROGRESS) -- verify/
+                // release are the Lab/Radiology Worklist's job, never a
+                // button in this tab (migrations/0054's own comment on
+                // that separation), which is why this tab only ever
+                // shows a status and a link there, never a Verify/
+                // Release action of its own.
+                const cancellable = order.status !== 'COMPLETED' && order.status !== 'CANCELLED'
+                const resultable = order.status === 'ORDERED' || order.status === 'COLLECTED' || order.status === 'IN_PROGRESS'
+                const actionable = cancellable || resultable
+                const isLabRadiology = order.order_type === 'LAB' || order.order_type === 'RADIOLOGY'
+                const stageIndex = LAB_RADIOLOGY_STAGES.findIndex((s) => s.status === order.status)
+
+                return (
+                  <div key={order.id} className="consult-order-card">
+                    <div className="consult-order-card-head">
+                      <div>
+                        <strong>{order.description}</strong>
+                        <div className="muted">
+                          {ORDER_TYPE_LABELS[order.order_type]}
+                          {order.order_type === 'EXTERNAL_REFERRAL' && order.external_destination
+                            ? ` · to ${order.external_destination}`
+                            : ''}
+                        </div>
+                      </div>
+                      {!isLabRadiology && <span className={`pill status-${order.status.toLowerCase()}`}>{order.status}</span>}
+                    </div>
+
+                    {order.status === 'CANCELLED' && order.cancel_reason && (
+                      <p className="muted">Cancelled: {order.cancel_reason}</p>
+                    )}
+
+                    {isLabRadiology && order.status !== 'CANCELLED' && (
+                      <>
+                        <div className="consult-order-stage-bar">
+                          {LAB_RADIOLOGY_STAGES.map((stage, i) => (
+                            <div
+                              key={stage.status}
+                              className={i <= stageIndex ? 'consult-order-stage-seg filled' : 'consult-order-stage-seg'}
+                            />
+                          ))}
+                        </div>
+                        <div className="consult-order-stage-labels">
+                          {LAB_RADIOLOGY_STAGES.map((stage, i) => (
+                            <span key={stage.status} className={i === stageIndex ? 'active' : undefined}>
+                              {stage.label}
+                            </span>
+                          ))}
+                        </div>
+                      </>
+                    )}
+
+                    {order.results.length > 0 && (
+                      <table className="data-table">
+                        <thead>
                           <tr>
-                            <td>{ORDER_TYPE_LABELS[order.order_type]}</td>
-                            <td>
-                              {order.description}
-                              {order.order_type === 'EXTERNAL_REFERRAL' && order.external_destination && (
-                                <div className="muted">to {order.external_destination}</div>
-                              )}
-                              {order.status === 'CANCELLED' && order.cancel_reason && (
-                                <div className="muted">Cancelled: {order.cancel_reason}</div>
-                              )}
-                            </td>
-                            <td>{order.priority}</td>
-                            <td>
-                              <span className={`pill status-${order.status.toLowerCase()}`}>{order.status}</span>
-                            </td>
-                            <td>{formatDateTime(order.ordered_at)}</td>
-                            <td>
-                              {(order.order_type === 'LAB' || order.order_type === 'RADIOLOGY') && (
-                                <button
-                                  type="button"
-                                  className="btn-secondary btn btn-sm"
-                                  onClick={() => setPrintOrderTarget(order)}
-                                >
-                                  Print requisition
-                                </button>
-                              )}
-                              {actionable &&
-                                (cancelTargetId === order.id ? (
-                                  <div className="queue-priority-form">
-                                    <input
-                                      type="text"
-                                      placeholder="Reason (required)"
-                                      value={cancelReason}
-                                      onChange={(e) => setCancelReason(e.target.value)}
-                                      autoFocus
-                                    />
-                                    <button
-                                      type="button"
-                                      className="btn btn-sm"
-                                      disabled={!cancelReason.trim() || cancelling}
-                                      onClick={() => handleCancelOrder(order.id)}
-                                    >
-                                      {cancelling ? 'Cancelling…' : 'Confirm'}
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="btn-secondary btn btn-sm"
-                                      onClick={() => {
-                                        setCancelTargetId(null)
-                                        setCancelReason('')
-                                      }}
-                                    >
-                                      Back
-                                    </button>
-                                  </div>
-                                ) : resultTargetId === order.id ? null : (
-                                  <div className="queue-row-actions">
-                                    {resultable && (
-                                      <button
-                                        type="button"
-                                        className="btn btn-sm"
-                                        onClick={() => startRecordResult(order.id)}
-                                      >
-                                        Record result
-                                      </button>
-                                    )}
-                                    {cancellable && (
-                                      <button
-                                        type="button"
-                                        className="btn-danger btn btn-sm"
-                                        onClick={() => {
-                                          setCancelTargetId(order.id)
-                                          setCancelReason('')
-                                        }}
-                                      >
-                                        Cancel
-                                      </button>
-                                    )}
-                                  </div>
-                                ))}
-                            </td>
+                            <th>Parameter</th>
+                            <th>Result</th>
+                            <th>Unit</th>
+                            <th>Reference range</th>
+                            <th></th>
                           </tr>
-
-                          {resultTargetId === order.id && (
-                            <tr>
-                              <td colSpan={6}>
-                                {resultItems.map((item, index) => (
-                                  <div key={index} className="doctor-form-grid">
-                                    <label className="inline-label">
-                                      Parameter
-                                      <input
-                                        type="text"
-                                        value={item.parameter}
-                                        placeholder="e.g. Hemoglobin, Findings"
-                                        onChange={(e) => updateResultItem(index, { parameter: e.target.value })}
-                                      />
-                                    </label>
-                                    <label className="inline-label">
-                                      Result
-                                      <input
-                                        type="text"
-                                        value={item.result_value}
-                                        onChange={(e) => updateResultItem(index, { result_value: e.target.value })}
-                                      />
-                                    </label>
-                                    <label className="inline-label">
-                                      Unit
-                                      <input
-                                        type="text"
-                                        value={item.unit ?? ''}
-                                        onChange={(e) => updateResultItem(index, { unit: e.target.value })}
-                                      />
-                                    </label>
-                                    <label className="inline-label">
-                                      Reference range
-                                      <input
-                                        type="text"
-                                        value={item.reference_range ?? ''}
-                                        onChange={(e) =>
-                                          updateResultItem(index, { reference_range: e.target.value })
-                                        }
-                                      />
-                                    </label>
-                                    <label className="inline-label checkbox-label">
-                                      <input
-                                        type="checkbox"
-                                        checked={item.is_abnormal ?? false}
-                                        onChange={(e) => updateResultItem(index, { is_abnormal: e.target.checked })}
-                                      />
-                                      Abnormal
-                                    </label>
-                                    <label className="inline-label checkbox-label">
-                                      <input
-                                        type="checkbox"
-                                        checked={item.is_critical ?? false}
-                                        onChange={(e) => updateResultItem(index, { is_critical: e.target.checked })}
-                                      />
-                                      Critical
-                                    </label>
-                                  </div>
-                                ))}
-                                <div className="doctor-quick-actions">
-                                  <button
-                                    type="button"
-                                    className="btn-secondary btn btn-sm"
-                                    onClick={() => setResultItems((prev) => [...prev, blankResultItem()])}
-                                  >
-                                    + Add parameter
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="btn btn-sm"
-                                    disabled={
-                                      resultSaving ||
-                                      !resultItems.some((i) => i.parameter.trim() && i.result_value.trim())
-                                    }
-                                    onClick={() => handleSaveResult(order.id)}
-                                  >
-                                    {resultSaving ? 'Saving…' : 'Save result'}
-                                  </button>
-                                  <button type="button" className="btn-secondary btn btn-sm" onClick={cancelRecordResult}>
-                                    Cancel
-                                  </button>
-                                </div>
+                        </thead>
+                        <tbody>
+                          {order.results.map((r) => (
+                            <tr key={r.id}>
+                              <td>{r.parameter}</td>
+                              <td>{r.result_value}</td>
+                              <td>{r.unit ?? ''}</td>
+                              <td>{r.reference_range ?? ''}</td>
+                              <td>
+                                {r.is_critical && <span className="pill status-cancelled">Critical</span>}
+                                {!r.is_critical && r.is_abnormal && <span className="pill status-pending">Abnormal</span>}
                               </td>
                             </tr>
-                          )}
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
 
-                          {order.results.length > 0 && (
-                            <tr>
-                              <td colSpan={6}>
-                                <table className="data-table">
-                                  <thead>
-                                    <tr>
-                                      <th>Parameter</th>
-                                      <th>Result</th>
-                                      <th>Unit</th>
-                                      <th>Reference range</th>
-                                      <th></th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {order.results.map((r) => (
-                                      <tr key={r.id}>
-                                        <td>{r.parameter}</td>
-                                        <td>{r.result_value}</td>
-                                        <td>{r.unit ?? ''}</td>
-                                        <td>{r.reference_range ?? ''}</td>
-                                        <td>
-                                          {r.is_critical && <span className="pill status-cancelled">Critical</span>}
-                                          {!r.is_critical && r.is_abnormal && (
-                                            <span className="pill status-pending">Abnormal</span>
-                                          )}
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </td>
-                            </tr>
-                          )}
-                        </Fragment>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              )}
+                    {isLabRadiology && (
+                      <div className="muted consult-order-worklist-note">
+                        <Warning size={13} aria-hidden="true" /> Verification and release are done by the lab, not
+                        from this chart.
+                      </div>
+                    )}
+
+                    <div className="doctor-quick-actions">
+                      {isLabRadiology && (
+                        <button type="button" className="btn-secondary btn btn-sm" onClick={onOpenLabWorklist}>
+                          Open worklist
+                        </button>
+                      )}
+                      <button type="button" className="btn-secondary btn btn-sm" onClick={() => setPrintOrderTarget(order)}>
+                        Print requisition
+                      </button>
+                      {actionable &&
+                        (cancelTargetId === order.id ? (
+                          <div className="queue-priority-form">
+                            <input
+                              type="text"
+                              placeholder="Reason (required)"
+                              value={cancelReason}
+                              onChange={(e) => setCancelReason(e.target.value)}
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              className="btn btn-sm"
+                              disabled={!cancelReason.trim() || cancelling}
+                              onClick={() => handleCancelOrder(order.id)}
+                            >
+                              {cancelling ? 'Cancelling…' : 'Confirm'}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary btn btn-sm"
+                              onClick={() => {
+                                setCancelTargetId(null)
+                                setCancelReason('')
+                              }}
+                            >
+                              Back
+                            </button>
+                          </div>
+                        ) : resultTargetId === order.id ? null : (
+                          <>
+                            {resultable && (
+                              <button type="button" className="btn btn-sm" onClick={() => startRecordResult(order.id)}>
+                                Record result
+                              </button>
+                            )}
+                            {cancellable && (
+                              <button
+                                type="button"
+                                className="btn-danger btn btn-sm"
+                                onClick={() => {
+                                  setCancelTargetId(order.id)
+                                  setCancelReason('')
+                                }}
+                              >
+                                Cancel
+                              </button>
+                            )}
+                          </>
+                        ))}
+                    </div>
+
+                    {resultTargetId === order.id && (
+                      <div className="consult-result-form">
+                        {resultItems.map((item, index) => (
+                          <div key={index} className="doctor-form-grid">
+                            <label className="inline-label">
+                              Parameter
+                              <input
+                                type="text"
+                                value={item.parameter}
+                                placeholder="e.g. Hemoglobin, Findings"
+                                onChange={(e) => updateResultItem(index, { parameter: e.target.value })}
+                              />
+                            </label>
+                            <label className="inline-label">
+                              Result
+                              <input
+                                type="text"
+                                value={item.result_value}
+                                onChange={(e) => updateResultItem(index, { result_value: e.target.value })}
+                              />
+                            </label>
+                            <label className="inline-label">
+                              Unit
+                              <input type="text" value={item.unit ?? ''} onChange={(e) => updateResultItem(index, { unit: e.target.value })} />
+                            </label>
+                            <label className="inline-label">
+                              Reference range
+                              <input
+                                type="text"
+                                value={item.reference_range ?? ''}
+                                onChange={(e) => updateResultItem(index, { reference_range: e.target.value })}
+                              />
+                            </label>
+                            <label className="inline-label checkbox-label">
+                              <input
+                                type="checkbox"
+                                checked={item.is_abnormal ?? false}
+                                onChange={(e) => updateResultItem(index, { is_abnormal: e.target.checked })}
+                              />
+                              Abnormal
+                            </label>
+                            <label className="inline-label checkbox-label">
+                              <input
+                                type="checkbox"
+                                checked={item.is_critical ?? false}
+                                onChange={(e) => updateResultItem(index, { is_critical: e.target.checked })}
+                              />
+                              Critical
+                            </label>
+                          </div>
+                        ))}
+                        <div className="doctor-quick-actions">
+                          <button
+                            type="button"
+                            className="btn-secondary btn btn-sm"
+                            onClick={() => setResultItems((prev) => [...prev, blankResultItem()])}
+                          >
+                            + Add parameter
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            disabled={resultSaving || !resultItems.some((i) => i.parameter.trim() && i.result_value.trim())}
+                            onClick={() => handleSaveResult(order.id)}
+                          >
+                            {resultSaving ? 'Saving…' : 'Save result'}
+                          </button>
+                          <button type="button" className="btn-secondary btn btn-sm" onClick={cancelRecordResult}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
 
               {/* master spec section 54's gap #6: lab/radiology orders
                   had no requisition print view. Only ever holds ONE

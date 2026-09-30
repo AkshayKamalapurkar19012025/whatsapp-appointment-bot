@@ -10,16 +10,6 @@ import {
 } from '../api'
 import type { AllergyConflict, Prescription, PrescriptionItemInput } from '../types'
 import { formatDateTime } from '../format'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '../components/ui/alert-dialog'
 import MedicationPicker from './MedicationPicker'
 
 const BLANK_ITEM: PrescriptionItemInput = {
@@ -69,6 +59,8 @@ export default function PrescriptionPanel({
   const [notCheckedIn, setNotCheckedIn] = useState(false)
 
   const [form, setForm] = useState<PrescriptionItemInput>(BLANK_ITEM)
+  // The add form is collapsed behind "+ Add medication" until opened.
+  const [showAddForm, setShowAddForm] = useState(false)
   const [adding, setAdding] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [removingId, setRemovingId] = useState<number | null>(null)
@@ -137,6 +129,7 @@ export default function PrescriptionPanel({
         setAllergyConflicts(result.allergy_warning.conflicts)
       } else {
         setForm(BLANK_ITEM)
+        setShowAddForm(false)
       }
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : 'Could not add this medicine')
@@ -153,6 +146,7 @@ export default function PrescriptionPanel({
       setPrescription(result.prescription)
       setAllergyConflicts(null)
       setForm(BLANK_ITEM)
+      setShowAddForm(false)
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : 'Could not record this decision')
     } finally {
@@ -237,7 +231,13 @@ export default function PrescriptionPanel({
       )}
       {actionError && <p className="error">{actionError}</p>}
 
-      {editable && (
+      {editable && !showAddForm && allergyConflicts === null && (
+        <button type="button" className="btn-dashed" onClick={() => setShowAddForm(true)}>
+          + Add medication
+        </button>
+      )}
+
+      {editable && showAddForm && (
         <div className="doctor-form-grid">
           <div className="doctor-form-full">
             <MedicationPicker
@@ -253,7 +253,7 @@ export default function PrescriptionPanel({
             />
           </div>
           <label className="inline-label doctor-form-full">
-            Medicine *
+            Medicine name *
             <input
               type="text"
               value={form.medicine_name}
@@ -331,20 +331,87 @@ export default function PrescriptionPanel({
               onChange={(e) => setForm({ ...form, special_instructions: e.target.value })}
             />
           </label>
-          <div className="doctor-form-full">
+          <div className="doctor-form-full doctor-quick-actions">
             <button
               type="button"
               className="btn-secondary btn"
               disabled={adding || !form.medicine_name.trim() || !form.quantity}
               onClick={handleAddItem}
             >
-              {adding ? 'Adding…' : '+ Add medicine'}
+              {adding ? 'Saving…' : 'Save medicine'}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary btn"
+              disabled={adding}
+              onClick={() => {
+                setShowAddForm(false)
+                setForm(BLANK_ITEM)
+              }}
+            >
+              Cancel
             </button>
           </div>
         </div>
       )}
 
-      {prescription.items.length === 0 && <p className="muted">No medicines added yet.</p>}
+      {/* P0 clinical safety (app/services/allergy_check_service.py) --
+          a text match against one of the patient's recorded allergies.
+          Deliberately inline, not a blocking modal: the pending item
+          (not yet added -- outcome "warning_shown", see handleAddItem)
+          sits right where it would land in the list, with its conflict
+          spelled out and both real decisions (continue/cancel) beside
+          it, so it reads as part of the prescription being built
+          rather than an interruption. The wording is deliberately
+          explicit that this is a name/substring match only -- the
+          medications table has no drug-class or ingredient field to
+          check against (migrations/0054_medication_master.sql), so
+          claiming anything more here would misrepresent what was
+          actually checked. */}
+      {allergyConflicts !== null && (
+        <div className="consult-prescription-item consult-allergy-conflict-warning">
+          <div className="consult-prescription-item-head">
+            <strong>{form.medicine_name}</strong>
+            <span className="pill severity-check">CHECK</span>
+          </div>
+          <div className="muted">
+            {[form.dosage, form.frequency, form.duration].filter(Boolean).join(' · ')}
+          </div>
+          <div className="consult-allergy-conflict-body">
+            <Warning size={16} weight="fill" aria-hidden="true" />
+            <div>
+              <strong>Name match only — not a drug-class check.</strong> This name contains a recorded
+              allergen. Related drugs with different names are not detected.
+              {' Recorded: '}
+              {allergyConflicts
+                .map((c) => `${c.allergen}${c.reaction ? `, ${c.reaction}` : ''}${c.severity ? ` (${c.severity})` : ''}`)
+                .join('; ')}
+              .
+            </div>
+          </div>
+          {actionError && <p className="error">{actionError}</p>}
+          <div className="doctor-quick-actions">
+            <button
+              type="button"
+              className="btn-secondary btn btn-sm"
+              disabled={decidingAllergy}
+              onClick={() => handleAllergyDecision('cancel')}
+            >
+              {decidingAllergy ? 'Please wait…' : 'Remove'}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary btn btn-sm"
+              disabled={decidingAllergy}
+              onClick={() => handleAllergyDecision('continue')}
+            >
+              {decidingAllergy ? 'Please wait…' : 'Override…'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {prescription.items.length === 0 && allergyConflicts === null && <p className="muted">No medicines added yet.</p>}
 
       {prescription.items.length > 0 && (
         <table className="data-table">
@@ -361,7 +428,7 @@ export default function PrescriptionPanel({
           </thead>
           <tbody>
             {prescription.items.map((item) => (
-              <tr key={item.id}>
+              <tr key={item.id} className="consult-prescription-item">
                 <td>
                   {item.medicine_name}
                   {item.generic_name && <div className="muted">{item.generic_name}</div>}
@@ -382,8 +449,16 @@ export default function PrescriptionPanel({
                     {item.dispense_status.replace('_', ' ')}
                   </span>
                 </td>
+                {/* No Edit control: app/api/pharmacy.py has no update-item
+                    endpoint, only POST items and DELETE items/{id}. An
+                    "edit" would have to compose those two, and both
+                    orderings are unsafe for a prescription -- deleting
+                    first loses the line if the re-add never lands,
+                    adding first leaves a duplicate medication order if
+                    the delete fails. Remove + Add is the honest
+                    workflow until a real PATCH exists (issue #131). */}
                 {editable && (
-                  <td>
+                  <td className="queue-row-actions">
                     <button
                       type="button"
                       className="btn-danger btn btn-sm"
@@ -398,6 +473,13 @@ export default function PrescriptionPanel({
             ))}
           </tbody>
         </table>
+      )}
+
+      {prescription.items.length > 0 && (
+        <p className="muted consult-prescription-footnote">
+          Items can be removed and re-added until sent. After sending, only the whole prescription can be
+          cancelled.
+        </p>
       )}
 
       {(canPrescribe || canCancel || prescription.items.length > 0) && (
@@ -488,51 +570,6 @@ export default function PrescriptionPanel({
         </div>
       )}
 
-      {/* P0 clinical safety -- a text match against one of the patient's
-          recorded allergies (app/services/allergy_check_service.py).
-          Deliberately non-blocking (master spec Visit Completion
-          precedent, same "warn, let the human decide" pattern as
-          patient-duplicate detection): the clinician can still add the
-          medicine, but never without seeing this and making an explicit
-          choice, which is then audited either way. */}
-      <AlertDialog open={allergyConflicts !== null} onOpenChange={(open) => !open && setAllergyConflicts(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              <Warning size={18} weight="fill" style={{ color: 'var(--color-danger)', marginRight: '0.4rem' }} />
-              Allergy Warning
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {patientName} has a recorded allergy that may conflict with{' '}
-              <strong>{form.medicine_name}</strong>. This is a same-text match against the recorded allergen, not a
-              clinical assessment -- review before continuing.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-
-          <ul className="visit-completion-checklist">
-            {(allergyConflicts ?? []).map((c) => (
-              <li key={c.allergy_id} className="pending">
-                <Warning size={16} />
-                Allergy: {c.allergen}
-                {c.severity && ` (${c.severity})`} — matched against &quot;{c.matched_against}&quot;
-                {c.reaction && ` · Reaction: ${c.reaction}`}
-              </li>
-            ))}
-          </ul>
-
-          <AlertDialogFooter>
-            <AlertDialogCancel
-              disabled={decidingAllergy}
-              onClick={() => handleAllergyDecision('cancel')}
-            >
-              {decidingAllergy ? 'Please wait…' : 'Cancel Prescription'}
-            </AlertDialogCancel>
-            <AlertDialogAction variant="danger" disabled={decidingAllergy} onClick={() => handleAllergyDecision('continue')}>
-              {decidingAllergy ? 'Please wait…' : 'Continue Anyway'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   )
 }

@@ -533,6 +533,7 @@ export default function AdminApp() {
               canCreateOrders={canCreateOrders}
               canCreatePrescriptions={canCreatePrescriptions}
               onBack={() => goTo('queue')}
+              onOpenLabWorklist={() => goTo('lab-worklist')}
             />
           )}
           {section === 'doctors' && <DoctorsPanel key={navResetKey} isAdmin={isAdmin} onGoToQueue={goToQueueForDoctor} />}

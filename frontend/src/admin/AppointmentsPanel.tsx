@@ -15,6 +15,7 @@ import {
   ArrowClockwise,
   UsersThree,
   Wallet,
+  Warning,
   XCircle,
 } from '@phosphor-icons/react'
 import { useStaggerReveal } from '../useStaggerReveal'
@@ -62,7 +63,13 @@ import VisitCompletionDialog from './VisitCompletionDialog'
 // distinct sentinel value instead.
 const ALL_FILTER_VALUE = '__all__'
 
-const PAGE_SIZE = 8
+// Client-side over the already-fetched date-scoped list (the backend's
+// own GET /appointments already accepts limit/offset up to 5000 --
+// see app/api/appointments.py -- but every caller here, including this
+// one, fetches the whole date range in one shot and pages in memory;
+// this control only changes how many of those already-fetched rows
+// are shown per screen, never re-fetches with a different limit).
+const PAGE_SIZE_OPTIONS = [25, 50, 100] as const
 
 // This screen's own operational vocabulary (OPD Today redesign),
 // mapped from -- never replacing -- the real backend status model
@@ -92,23 +99,31 @@ type OpdStatus =
   | 'CANCELLED'
   | 'REJECTED'
   | 'NO_SHOW'
+  // This doctor's live queue fetch failed (fetchQueues below) -- the
+  // one CHECKED_IN sub-bucket that isn't computed from queuePosition,
+  // because there's genuinely no current data to compute it from. A
+  // row here must never silently read as WAITING just because
+  // queuePosition.get() came back empty the same way "truly waiting"
+  // does -- that would misrepresent a data gap as a real status.
+  | 'UNKNOWN'
 
 type StatusFilter = 'all' | OpdStatus
 
-// Equal-weight tabs -- exactly the states a front-desk view needs to
-// jump to constantly. Booked/Confirmed/Arrived/Rejected are real,
-// preserved states (see opdStatus above / MORE_TABS below), just not
-// equally urgent to have as permanent top-level real estate.
-const PRIMARY_TABS: { key: StatusFilter; label: string }[] = [
+// Every tab always visible, no overflow menu -- the redesign's own
+// requirement. Previously split into PRIMARY_TABS (top-level) and
+// MORE_TABS (behind a "More" dropdown); that split is gone, but every
+// individual status it used to hide is still its own tab below, in the
+// same relative order (most front-desk-urgent first), rather than
+// collapsed into broader buckets -- collapsing would need a new
+// multi-status-per-tab filter concept and would cost a receptionist
+// the ability to isolate, say, just Arrived from just Confirmed.
+const ALL_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'WAITING', label: 'Waiting' },
   { key: 'IN_CONSULTATION', label: 'In Consultation' },
   { key: 'COMPLETED', label: 'Completed' },
   { key: 'CANCELLED', label: 'Cancelled' },
   { key: 'NO_SHOW', label: 'No Show' },
-]
-
-const MORE_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'BOOKED', label: 'Booked' },
   { key: 'LAPSED', label: 'Lapsed' },
   { key: 'CONFIRMED', label: 'Confirmed' },
@@ -192,9 +207,15 @@ function durationBetween(startAt: string, endAt: string): number {
 
 // The one place "what bucket is this appointment in, right now" is
 // decided -- see the OpdStatus docstring above. queuePosition/
-// isTodayScope both come from the live per-doctor queue fetch
-// (fetchQueues below); every other field is already on AdminAppointment.
-function opdStatus(a: AdminAppointment, queuePosition: Map<number, QueuePosition>, isTodayScope: boolean): OpdStatus {
+// isTodayScope/failedDoctorIds all come from the live per-doctor queue
+// fetch (fetchQueues below); every other field is already on
+// AdminAppointment.
+function opdStatus(
+  a: AdminAppointment,
+  queuePosition: Map<number, QueuePosition>,
+  isTodayScope: boolean,
+  failedDoctorIds: Set<number>,
+): OpdStatus {
   switch (a.status) {
     case 'PENDING':
       return hasStarted(a.start_at) ? 'LAPSED' : 'BOOKED'
@@ -207,12 +228,21 @@ function opdStatus(a: AdminAppointment, queuePosition: Map<number, QueuePosition
       // (app/api/doctors.py) scopes strictly to the doctor's current
       // local day, so it drops off that view the moment the day rolls
       // over, with no other surface. Kept as its own raw 'CHECKED_IN'
-      // bucket (MORE_TABS below) rather than folded into
-      // Waiting/Arrived/In Consultation -- those three only mean
-      // anything relative to today's live queue, which a past day's
-      // straggler was never part of.
+      // bucket rather than folded into Waiting/Arrived/In Consultation
+      // -- those three only mean anything relative to today's live
+      // queue, which a past day's straggler was never part of.
       if (!isTodayScope) return 'CHECKED_IN'
+      // ARRIVED is derived from payment_status, which comes from the
+      // date-scoped appointments fetch itself (always fresh), never
+      // from the per-doctor queue fetch that can fail -- so it's
+      // resolved before ever consulting failedDoctorIds, and stays
+      // correct even while that doctor's queue data is stale.
       if (a.payment_status === 'UNPAID' || a.payment_status === 'FAILED') return 'ARRIVED'
+      // The one thing that DOES depend on the queue fetch: whether
+      // this patient is being served right now or still waiting. If
+      // that fetch failed for this doctor, there is no current answer
+      // -- UNKNOWN, never a guessed WAITING.
+      if (failedDoctorIds.has(a.doctor_id)) return 'UNKNOWN'
       return queuePosition.get(a.id) === 'serving' ? 'IN_CONSULTATION' : 'WAITING'
     }
     case 'COMPLETED':
@@ -240,6 +270,7 @@ const STATUS_PILL_LABEL: Record<OpdStatus, string> = {
   CANCELLED: 'Cancelled',
   REJECTED: 'Rejected',
   NO_SHOW: 'No Show',
+  UNKNOWN: 'Unknown',
 }
 
 // Reuses the existing lifecycle-status color tokens (styles.css's
@@ -247,7 +278,9 @@ const STATUS_PILL_LABEL: Record<OpdStatus, string> = {
 // -- only WAITING and IN_CONSULTATION are genuinely new buckets with
 // no prior single-word status to borrow a class from. LAPSED borrows
 // NO_SHOW's color (same "expected, but nothing happened by the time
-// that stopped being possible" shape), not a new one.
+// that stopped being possible" shape), not a new one. UNKNOWN is amber
+// (degraded-data warning, not a lifecycle state), never red -- see
+// .pill.status-unknown in styles.css.
 const STATUS_PILL_CLASS: Record<OpdStatus, string> = {
   BOOKED: 'pill status-pending',
   LAPSED: 'pill status-no_show',
@@ -260,10 +293,25 @@ const STATUS_PILL_CLASS: Record<OpdStatus, string> = {
   CANCELLED: 'pill status-cancelled',
   REJECTED: 'pill status-rejected',
   NO_SHOW: 'pill status-no_show',
+  UNKNOWN: 'pill status-unknown',
 }
 
-function statusPill(a: AdminAppointment, queuePosition: Map<number, QueuePosition>, isTodayScope: boolean) {
-  const status = opdStatus(a, queuePosition, isTodayScope)
+function statusPill(
+  a: AdminAppointment,
+  queuePosition: Map<number, QueuePosition>,
+  isTodayScope: boolean,
+  failedDoctorIds: Set<number>,
+  lastKnownAsOf: Map<number, Date>,
+) {
+  const status = opdStatus(a, queuePosition, isTodayScope, failedDoctorIds)
+  if (status === 'UNKNOWN') {
+    const asOf = lastKnownAsOf.get(a.doctor_id)
+    return (
+      <span className={STATUS_PILL_CLASS.UNKNOWN}>
+        Unknown{asOf ? ` · ${asOf.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}
+      </span>
+    )
+  }
   return <span className={STATUS_PILL_CLASS[status]}>{STATUS_PILL_LABEL[status]}</span>
 }
 
@@ -371,7 +419,21 @@ export default function AppointmentsPanel({
   // what QueuePanel itself would show for that doctor. Only fetched
   // when dateScope is 'today': the queue concept ("today's walk-in
   // queue") has no meaning for a week/month/custom range.
-  const [queueByDoctor, setQueueByDoctor] = useState<Map<number, DoctorQueue>>(new Map())
+  //
+  // Keyed by doctor id, carrying the queue alongside when it was last
+  // fetched successfully (`asOf`) -- a failed fetch (fetchQueues below)
+  // leaves a doctor's existing entry untouched rather than clearing it,
+  // so `asOf` keeps meaning "the last time this was actually true" even
+  // while failedDoctorIds says it's currently stale, instead of a
+  // failure silently reading as "no CHECKED_IN patients for this
+  // doctor" (which queueByDoctor.get(id) === undefined would otherwise
+  // look identical to).
+  const [queueByDoctor, setQueueByDoctor] = useState<Map<number, { queue: DoctorQueue; asOf: Date }>>(new Map())
+  // Doctor ids whose queue fetch failed on the most recent attempt --
+  // the one thing opdStatus consults to tell "genuinely nobody waiting"
+  // (empty queuePosition) apart from "no current data at all" (this
+  // set), so a data gap is never silently rendered as a real status.
+  const [failedDoctorIds, setFailedDoctorIds] = useState<Set<number>>(new Set())
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
 
   const [dateScope, setDateScope] = useState<DateScope>('today')
@@ -382,6 +444,7 @@ export default function AppointmentsPanel({
   const [departmentFilter, setDepartmentFilter] = useState('')
   const [searchText, setSearchText] = useState('')
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState<number>(PAGE_SIZE_OPTIONS[0])
 
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -396,27 +459,43 @@ export default function AppointmentsPanel({
   const range = dateRangeFor(dateScope, customFrom, customTo)
   const isTodayScope = dateScope === 'today'
 
-  // Reused for every doctor with a CHECKED_IN visit today -- .catch
-  // keeps one doctor's failed/404 (e.g. deactivated mid-shift) fetch
-  // from breaking the whole aggregate, same defensive pattern
-  // DoctorsPanel's own per-doctor Promise.all fan-outs already use.
+  // Reused for every doctor with a CHECKED_IN visit today -- a failed
+  // fetch for one doctor (e.g. deactivated mid-shift) never breaks the
+  // aggregate, same defensive intent DoctorsPanel's own per-doctor
+  // Promise.all fan-outs already have, but unlike a bare .catch(() =>
+  // null) this keeps track of exactly which doctors failed (so the
+  // degraded-data banner can name them, and their CHECKED_IN rows can
+  // read Unknown instead of silently falling through to Waiting) and
+  // preserves each failed doctor's last successful snapshot rather than
+  // discarding it, so "last known status from HH:MM" has something real
+  // to point at.
   function fetchQueues(appointments: AdminAppointment[]) {
     if (!isTodayScope) {
       setQueueByDoctor(new Map())
+      setFailedDoctorIds(new Set())
       return Promise.resolve()
     }
     const doctorIds = Array.from(new Set(appointments.filter((a) => a.status === 'CHECKED_IN').map((a) => a.doctor_id)))
     if (doctorIds.length === 0) {
       setQueueByDoctor(new Map())
+      setFailedDoctorIds(new Set())
       return Promise.resolve()
     }
-    return Promise.all(doctorIds.map((id) => getDoctorQueue(id).catch(() => null))).then((results) => {
-      const map = new Map<number, DoctorQueue>()
-      doctorIds.forEach((id, i) => {
-        const result = results[i]
-        if (result) map.set(id, result)
+    return Promise.all(
+      doctorIds.map((id) =>
+        getDoctorQueue(id)
+          .then((queue) => ({ id, ok: true as const, queue }))
+          .catch(() => ({ id, ok: false as const })),
+      ),
+    ).then((results) => {
+      setQueueByDoctor((prev) => {
+        const next = new Map(prev)
+        for (const r of results) {
+          if (r.ok) next.set(r.id, { queue: r.queue, asOf: new Date() })
+        }
+        return next
       })
-      setQueueByDoctor(map)
+      setFailedDoctorIds(new Set(results.filter((r) => !r.ok).map((r) => r.id)))
     })
   }
 
@@ -469,25 +548,38 @@ export default function AppointmentsPanel({
   // A live workspace front-desk staff leave open during a shift, same
   // reasoning as QueueSection.tsx's own 20s poll -- longer here (this
   // reload does more work: the full date-range fetch plus every active
-  // doctor's queue) and only while looking at Today, so a "This Month"
-  // view doesn't keep re-fetching a much bigger, rarely-changing list
-  // in the background.
+  // doctor's queue). Runs for every date scope, not just Today: a
+  // receptionist looking at "This Week" or a custom range still wants
+  // it to reflect check-ins/cancellations that land while it's open,
+  // same as Today does. fetchQueues itself still skips the per-doctor
+  // queue fan-out outside Today (that concept genuinely has no meaning
+  // for a multi-day range) -- only the date-scoped appointment list
+  // itself needs to keep refreshing regardless of scope.
   useEffect(() => {
-    if (!isTodayScope) return
     const interval = setInterval(load, 30_000)
     return () => clearInterval(interval)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isTodayScope])
+  }, [range?.from, range?.to])
 
   // Reset to page 1 whenever any filter (or the date scope itself)
   // changes -- staying on, say, page 3 after narrowing the list down to
   // one page's worth of rows would just show an empty page.
   useEffect(() => {
     setPage(1)
-  }, [dateScope, customFrom, customTo, statusFilter, doctorFilter, departmentFilter, searchText])
+  }, [dateScope, customFrom, customTo, statusFilter, doctorFilter, departmentFilter, searchText, pageSize])
 
   function doctorSpecialization(doctorId: number): string | null {
     return doctors.find((d) => d.id === doctorId)?.specialization ?? null
+  }
+
+  // Not from the `doctors` list (listAllDoctors) -- that's filtered to
+  // active doctors only (get_doctors' own WHERE active = TRUE), so a
+  // doctor whose queue fetch just failed because they were deactivated
+  // wouldn't resolve there. Every appointment row already carries its
+  // own doctor_name (AdminAppointment), which exists regardless of
+  // that doctor's current active flag -- the reliable source here.
+  function doctorNameFor(doctorId: number): string {
+    return dateScopedAppointments.find((a) => a.doctor_id === doctorId)?.doctor_name ?? `Doctor #${doctorId}`
   }
 
   // appointment.id -> whether this doctor's queue currently has them as
@@ -496,9 +588,11 @@ export default function AppointmentsPanel({
   // action) and the KPI cards below, so all of it reads one consistent
   // snapshot.
   const queuePosition = new Map<number, QueuePosition>()
-  queueByDoctor.forEach((q) => {
-    if (q.now_serving) queuePosition.set(q.now_serving.appointment_id, 'serving')
-    q.waiting.forEach((entry) => queuePosition.set(entry.appointment_id, 'waiting'))
+  const lastKnownAsOf = new Map<number, Date>()
+  queueByDoctor.forEach(({ queue, asOf }, doctorId) => {
+    if (queue.now_serving) queuePosition.set(queue.now_serving.appointment_id, 'serving')
+    queue.waiting.forEach((entry) => queuePosition.set(entry.appointment_id, 'waiting'))
+    lastKnownAsOf.set(doctorId, asOf)
   })
 
   const searchNeedle = searchText.trim().toLowerCase()
@@ -519,19 +613,32 @@ export default function AppointmentsPanel({
   // the summary cards above.
   function countFor(status: StatusFilter): number {
     if (status === 'all') return dateScopedAppointments.length
-    return dateScopedAppointments.filter((a) => opdStatus(a, queuePosition, isTodayScope) === status).length
+    return dateScopedAppointments.filter((a) => opdStatus(a, queuePosition, isTodayScope, failedDoctorIds) === status).length
   }
 
   const filteredAppointments = dateScopedAppointments.filter((a) => {
-    if (statusFilter !== 'all' && opdStatus(a, queuePosition, isTodayScope) !== statusFilter) return false
+    if (statusFilter !== 'all' && opdStatus(a, queuePosition, isTodayScope, failedDoctorIds) !== statusFilter) return false
     if (doctorFilter && a.doctor_id !== Number(doctorFilter)) return false
     if (departmentFilter && !(doctorDepartments.get(a.doctor_id) ?? []).some((d) => String(d.id) === departmentFilter)) return false
     return matchesSearch(a)
   })
 
-  const totalPages = Math.max(1, Math.ceil(filteredAppointments.length / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(filteredAppointments.length / pageSize))
   const currentPage = Math.min(page, totalPages)
-  const pagedAppointments = filteredAppointments.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+  const pagedAppointments = filteredAppointments.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+
+  // Windowed page numbers -- first, last, and up to 2 neighbors either
+  // side of the current page, with a single '…' gap marker where pages
+  // are skipped, rather than one button per page for a date range with
+  // hundreds of visits.
+  const pageNumbers: (number | '…')[] = []
+  for (let p = 1; p <= totalPages; p++) {
+    if (p === 1 || p === totalPages || Math.abs(p - currentPage) <= 2) {
+      pageNumbers.push(p)
+    } else if (pageNumbers[pageNumbers.length - 1] !== '…') {
+      pageNumbers.push('…')
+    }
+  }
 
   const tbodyRef = useStaggerReveal<HTMLTableSectionElement>([pagedAppointments])
 
@@ -567,8 +674,8 @@ export default function AppointmentsPanel({
   if (isTodayScope) {
     const waits: number[] = []
     const now = Date.now()
-    queueByDoctor.forEach((q) => {
-      q.waiting.forEach((entry) => waits.push((now - new Date(entry.visited_at).getTime()) / 60000))
+    queueByDoctor.forEach(({ queue }) => {
+      queue.waiting.forEach((entry) => waits.push((now - new Date(entry.visited_at).getTime()) / 60000))
     })
     if (waits.length > 0) avgWaitMinutes = Math.round(waits.reduce((s, v) => s + v, 0) / waits.length)
   }
@@ -702,7 +809,7 @@ export default function AppointmentsPanel({
     setSearchText('')
   }
 
-  const activeTabLabel = [...PRIMARY_TABS, ...MORE_TABS].find((t) => t.key === statusFilter)?.label ?? 'All'
+  const activeTabLabel = ALL_TABS.find((t) => t.key === statusFilter)?.label ?? 'All'
 
   function patientSubline(a: AdminAppointment): string | null {
     const patient = patients.get(a.patient_id)
@@ -772,6 +879,22 @@ export default function AppointmentsPanel({
 
       {error && <p className="error">{error}</p>}
 
+      {failedDoctorIds.size > 0 && (
+        <div className="opd-degraded-banner">
+          <Warning size={17} weight="fill" aria-hidden="true" />
+          <div className="opd-degraded-banner-text">
+            <strong>
+              Queue data for {Array.from(failedDoctorIds).map(doctorNameFor).join(', ')} failed to load.
+            </strong>{' '}
+            {failedDoctorIds.size === 1 ? "This doctor's" : 'Their'} rows show the last known status and may be
+            out of date.
+          </div>
+          <button type="button" className="btn-secondary btn btn-sm" onClick={() => fetchQueues(dateScopedAppointments)}>
+            Retry
+          </button>
+        </div>
+      )}
+
       <div className="dashboard-grid dashboard-grid-6 opd-kpi-grid">
         <div className="stat-card">
           <span className="stat-icon" aria-hidden="true">
@@ -839,7 +962,7 @@ export default function AppointmentsPanel({
       </div>
 
       <div className="tabs appointments-tabs">
-        {PRIMARY_TABS.map((t) => (
+        {ALL_TABS.map((t) => (
           <button
             key={t.key}
             type="button"
@@ -849,20 +972,6 @@ export default function AppointmentsPanel({
             {t.label} ({countFor(t.key)})
           </button>
         ))}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button type="button" className={MORE_TABS.some((t) => t.key === statusFilter) ? 'tab active' : 'tab'}>
-              More <CaretDown size={12} weight="bold" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            {MORE_TABS.map((t) => (
-              <DropdownMenuItem key={t.key} onSelect={() => setStatusFilter(t.key)}>
-                {t.label} ({countFor(t.key)})
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
       </div>
 
       <div className="date-scope-row">
@@ -1055,7 +1164,7 @@ export default function AppointmentsPanel({
                         <td>{a.appointment_type_name}</td>
                         <td>{timeCell(a)}</td>
                         <td>{paymentCell(a)}</td>
-                        <td>{statusPill(a, queuePosition, isTodayScope)}</td>
+                        <td>{statusPill(a, queuePosition, isTodayScope, failedDoctorIds, lastKnownAsOf)}</td>
                         <td>{a.token_number !== null ? <span className="pill token-pill">#{a.token_number}</span> : <span className="muted">—</span>}</td>
                         <td className="opd-actions-cell" onClick={(e) => e.stopPropagation()}>
                           <AppointmentActionButtons actions={actions} busy={busy} compact />
@@ -1083,7 +1192,7 @@ export default function AppointmentsPanel({
               return (
                 <li key={a.id} className="appointment-mobile-card" onClick={() => setDetailsTarget(a)}>
                   <div className="appointment-mobile-card-top">
-                    {statusPill(a, queuePosition, isTodayScope)}
+                    {statusPill(a, queuePosition, isTodayScope, failedDoctorIds, lastKnownAsOf)}
                     {a.token_number !== null && <span className="pill token-pill">#{a.token_number}</span>}
                   </div>
                   <strong>{a.patient_name}</strong>
@@ -1107,31 +1216,57 @@ export default function AppointmentsPanel({
           </ul>
 
           <div className="appointments-pagination">
-            <span className="muted">
-              Showing {(currentPage - 1) * PAGE_SIZE + 1} to{' '}
-              {Math.min(currentPage * PAGE_SIZE, filteredAppointments.length)} of {filteredAppointments.length} visits
+            <span className="muted appointments-pagination-summary">
+              Showing {(currentPage - 1) * pageSize + 1} to{' '}
+              {Math.min(currentPage * pageSize, filteredAppointments.length)} of {filteredAppointments.length} visits
+              <label className="appointments-pagination-rows-label">
+                Rows
+                <select
+                  aria-label="Rows per page"
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value))}
+                >
+                  {PAGE_SIZE_OPTIONS.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </span>
             <span className="appointments-pagination-controls">
               <button
                 type="button"
-                className="icon-btn"
-                aria-label="Previous page"
+                className="btn-secondary btn btn-sm"
                 disabled={currentPage <= 1}
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
               >
-                <CaretLeft size={16} />
+                <CaretLeft size={16} /> Previous
               </button>
-              <span className="appointments-pagination-current" aria-current="page">
-                {currentPage}
-              </span>
+              {pageNumbers.map((p, i) =>
+                p === '…' ? (
+                  <span key={`ellipsis-${i}`} className="appointments-pagination-ellipsis">
+                    …
+                  </span>
+                ) : (
+                  <button
+                    key={p}
+                    type="button"
+                    className={p === currentPage ? 'appointments-pagination-page active' : 'appointments-pagination-page'}
+                    aria-current={p === currentPage ? 'page' : undefined}
+                    onClick={() => setPage(p)}
+                  >
+                    {p}
+                  </button>
+                ),
+              )}
               <button
                 type="button"
-                className="icon-btn"
-                aria-label="Next page"
+                className="btn-secondary btn btn-sm"
                 disabled={currentPage >= totalPages}
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               >
-                <CaretRight size={16} />
+                Next <CaretRight size={16} />
               </button>
             </span>
           </div>

@@ -5657,17 +5657,93 @@ a.link.danger {
   gap: var(--space-2);
 }
 
-.appointments-pagination-current {
+.appointments-pagination-current,
+.appointments-pagination-page {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-width: 28px;
   height: 28px;
+  padding: 0 6px;
+  border: none;
   border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.appointments-pagination-page.active {
   background: var(--color-primary-soft);
   color: var(--color-primary);
   font-weight: 700;
+  cursor: default;
+}
+
+.appointments-pagination-ellipsis {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  color: var(--color-text-muted);
   font-size: 0.85rem;
+}
+
+.appointments-pagination-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.appointments-pagination-rows-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.appointments-pagination-rows-label select {
+  height: 30px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-size: 0.85rem;
+  color: var(--color-text);
+}
+
+/* Degraded-data banner (AppointmentsPanel.tsx) -- amber, never red:
+   this is a "some of this screen's data may be stale" notice, not a
+   destructive/error state. */
+.opd-degraded-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  background: var(--color-warning-soft);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  color: var(--color-warning);
+}
+
+.opd-degraded-banner-text {
+  flex-grow: 1;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--color-text);
+}
+
+.opd-degraded-banner-text strong {
+  color: var(--color-warning);
+}
+
+.pill.status-unknown {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
 }
 
 @media (max-width: 860px) {
@@ -8583,10 +8659,26 @@ a.link.danger {
   margin-left: 6px;
 }
 
+/* Escalated within the same amber family as mild/moderate above, not
+   red -- SEVERE is a clinical-safety warning, not a destructive/error
+   state, and this redesign's own rule is amber only, no red, for
+   exactly this kind of "pay attention" flag. The border is what marks
+   it as more urgent than mild/moderate, not a different hue. */
 .pill.severity-severe {
-  background: var(--color-danger-soft);
-  color: var(--color-danger);
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+  border: 1.5px solid var(--color-warning);
   margin-left: 6px;
+}
+
+/* Neutral, not amber. This pill tags the name-only allergen text match
+   (app/services/allergy_check_service.py), which is explicitly not a
+   clinical finding -- see .consult-allergy-conflict-warning below for
+   why it must not share .pill.severity-severe's amber. */
+.pill.severity-check {
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-strong);
 }
 
 /* Visit Completion checklist (master spec section 43), inside
@@ -8774,4 +8866,484 @@ a.link.danger {
 .invoice-print-area p,
 .requisition-print-area p {
   margin: 2px 0;
+}
+
+/* ===========================================================
+   Consultation workspace redesign (ConsultationWorkspace.tsx /
+   PrescriptionPanel.tsx). Amber only for clinical warnings (the
+   allergy flag, conflict cards, degraded-data-style notes) --
+   var(--color-warning)/var(--color-warning-soft), the app's existing
+   tokens, never var(--color-danger) or a literal hex. */
+
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-primary);
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  color: var(--color-primary-hover);
+}
+
+.btn-dashed {
+  height: 40px;
+  padding: 0 var(--space-4);
+  border: 1px dashed var(--color-border-strong);
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  cursor: pointer;
+  margin-bottom: var(--space-3);
+}
+
+.btn-dashed:hover {
+  background: var(--color-primary-soft);
+}
+
+.consult-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.consult-banner-identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.consult-banner-avatar {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--color-primary-soft);
+  color: var(--color-primary-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.consult-banner-text {
+  min-width: 0;
+}
+
+.consult-banner-name-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.consult-banner-name-row h2 {
+  margin: 0;
+}
+
+.consult-token-pill {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-hover);
+}
+
+.consult-banner-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+}
+
+.consult-banner-allergy-flag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  background: var(--color-warning-soft);
+  border: 1px solid var(--color-warning);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--color-warning);
+  flex-shrink: 0;
+}
+
+.consult-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.consult-banner-elapsed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+}
+
+.consult-notes-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
+.consult-left-rail {
+  width: 280px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.consult-vitals-card,
+.consult-allergy-card,
+.consult-recent-visits-card,
+.consult-notes-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+}
+
+.consult-notes-card {
+  flex-grow: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.consult-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.consult-card-heading h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.consult-vitals-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.consult-vitals-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--space-2);
+  background: var(--color-bg-subtle);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+}
+
+.consult-vitals-tile strong {
+  font-size: 1rem;
+}
+
+.consult-vitals-delta {
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.consult-vitals-delta-up {
+  color: var(--color-warning);
+}
+
+.consult-vitals-delta-down,
+.consult-vitals-delta-flat {
+  color: var(--color-text-muted);
+}
+
+.consult-vitals-footnote {
+  margin-top: var(--space-2);
+  font-size: 0.75rem;
+}
+
+.consult-allergy-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0 0 var(--space-2);
+  padding: 0;
+}
+
+.consult-allergy-entry {
+  padding: var(--space-2);
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+}
+
+.consult-allergy-entry-severe {
+  background: var(--color-warning-soft);
+  border-color: var(--color-warning);
+}
+
+.consult-allergy-entry-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.consult-recent-visit {
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--color-border);
+  font-size: 0.85rem;
+}
+
+.consult-recent-visit:first-of-type {
+  border-top: none;
+}
+
+.consult-diagnosis-row {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.consult-diagnosis-field {
+  flex-grow: 1;
+}
+
+.consult-diagnosis-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 42px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.consult-diagnosis-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  background: var(--color-primary-soft);
+  color: var(--color-primary-hover);
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.consult-diagnosis-chip button {
+  border: none;
+  background: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.consult-diagnosis-code-input {
+  width: 120px;
+}
+
+.consult-disposition-group {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.consult-disposition-pill {
+  height: 38px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.consult-disposition-pill.active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  font-weight: 600;
+}
+
+.consult-lock-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: auto;
+  padding: var(--space-3);
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.consult-lock-note svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.consult-order-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-3);
+}
+
+.consult-order-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.consult-order-stage-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.consult-order-stage-seg {
+  flex-grow: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-border);
+}
+
+.consult-order-stage-seg.filled {
+  background: var(--color-primary);
+}
+
+.consult-order-stage-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+}
+
+.consult-order-stage-labels .active {
+  font-weight: 700;
+  color: var(--color-text-secondary);
+}
+
+.consult-order-worklist-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.consult-order-worklist-note svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.consult-result-form {
+  padding: var(--space-3);
+  background: var(--color-bg-subtle);
+  border-radius: var(--radius-sm);
+}
+
+/* Prescription item rows (PrescriptionPanel.tsx) -- used both for a
+   real table row (<tr class="consult-prescription-item">) and the
+   pending allergy-conflict card, which is deliberately NOT a table
+   row (it isn't part of prescription.items yet). */
+.consult-prescription-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+/* Neutral surface, deliberately NOT the amber of .pill.severity-severe.
+   Amber in this app means a recorded clinical fact about the patient --
+   a documented allergy and its severity. This card is a substring match
+   between a drug name and an allergen string (allergy_check_service.py
+   does `allergen_normalized in name`, no drug-class or ingredient
+   concept), and the card's own copy says so. Dressing an unverified
+   text coincidence in the same colour as a documented anaphylaxis makes
+   the two indistinguishable at a glance and inflates what the check
+   actually proves. Amber survives here only on the warning icon and the
+   "Name match only" disclaimer, which is where it belongs. The card
+   does not need colour to be noticed: it interrupts the add-item flow
+   and cannot be dismissed without choosing Continue or Cancel. */
+.consult-allergy-conflict-warning {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-surface-hover);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-3);
+}
+
+.consult-allergy-conflict-body > svg {
+  color: var(--color-warning);
+}
+
+.consult-allergy-conflict-body strong {
+  color: var(--color-warning);
+}
+
+.consult-allergy-conflict-body {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: 0.85rem;
+  color: var(--color-text);
+  line-height: 1.5;
+}
+
+.consult-allergy-conflict-body svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--color-warning);
+}
+
+.consult-prescription-footnote {
+  text-align: center;
+  font-size: 0.78rem;
+}
+
+@media (max-width: 1100px) {
+  .consult-notes-layout {
+    flex-direction: column;
+  }
+
+  .consult-left-rail {
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .consult-left-rail > * {
+    flex: 1 1 260px;
+  }
 }
