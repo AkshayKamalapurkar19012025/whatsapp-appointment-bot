@@ -2,7 +2,9 @@
 
 ## Purpose
 
-Record, in one place, that this application has two independently-maintained billing tables for the same patient visit — not a documentation exaggeration, and not (yet) unified. Phase 9's source-of-truth audit named this precisely; this doc is the durable record of that finding and of Option C, the first phase of work against it.
+Record, in one place, that this application has two independently-maintained billing tables for the same patient visit. Phase 9's source-of-truth audit named this precisely; this doc is the durable record of that finding and of Option C, the first phase of work against it.
+
+**Superseded in large part by Phase 10** (`docs/architecture/BILLING_LEDGER_UNIFICATION.md`, migrations `0058_billing_ledger_unification.sql`/`0059_billing_ledger_backfill.sql`): what this doc calls "Option A" below — Ledger B absorbing Ledger A for the consultation fee — is now actually implemented. Read that doc for the current write-path mechanism; this doc's remaining value is Option C's read-side combination (still live, see below) and the historical record of how the two phases collided and were reconciled.
 
 ## Current State
 
@@ -11,49 +13,46 @@ Record, in one place, that this application has two independently-maintained bil
 - `invoice_line_items` — ad-hoc extra charges on top of the consultation fee, frozen once `payment_status` leaves `UNPAID`/`FAILED`.
 - Amount charged = `doctor_appointment_types.consultation_fee` + `SUM(invoice_line_items.amount)` (`get_invoice_service`, `app/services/appointment_services.py`).
 - Covers: the consultation/registration fee only. Never lab, radiology, procedure, pharmacy, or package charges.
-- **Drives queue-token issuance.** `generate_queue_token_service` is only ever called from `record_payment_service`'s `PAID` outcome, `waive_consultation_fee_service`, and `settle_free_visit_service` — all three read/write this ledger exclusively, under a `pg_advisory_xact_lock` + row `FOR UPDATE`. This is the single most concurrency-sensitive write path in the app.
-- **Payment is only collectible while `status = 'CHECKED_IN'`** (`_lock_appointment_for_payment`). Once an appointment reaches `COMPLETED`, there is no API path to record, waive, or settle its consultation fee — confirmed directly (`tests/test_exception_engine.py::test_payment_pending_exception_from_unpaid_consultation_fee_alone` asserts the 409). A visit that closes with its consultation fee still unpaid is stuck that way permanently through the existing endpoints.
+- **Drives queue-token issuance.** `generate_queue_token_service` is only ever called from `record_payment_service`'s `PAID` outcome, `waive_consultation_fee_service`, and `settle_free_visit_service` — all three under a `pg_advisory_xact_lock` + row `FOR UPDATE`. This is the single most concurrency-sensitive write path in the app, and Phase 10 (below) deliberately left it untouched.
+- **Payment is collectible while `status = 'CHECKED_IN'` or `COMPLETED`** (`_lock_appointment_for_payment`) — widened from CHECKED_IN-only after Option C's own work made a COMPLETED-with-unpaid-fee visit visible via the Dashboard/Exception Engine but not yet collectible (see `tests/test_consultation_payments.py`'s `*_allowed_after_visit_completed` tests). Queue-token issuance is correctly skipped when the appointment is already COMPLETED — a token for a finished visit would be a meaningless artifact in that doctor's live queue view.
 
-**Ledger B — encounter-level, the newer model** (migration `0033`, widened by `0038`/`0039`/`0046`/`0050`):
+**Ledger B — encounter-level, the newer model** (migration `0033`, widened by `0038`/`0039`/`0046`/`0050`, and by Phase 10's `0058`/`0059` below):
 - `invoices` (one per encounter) → `charges` (`source_type` = LAB/RADIOLOGY/PROCEDURE/SERVICE/PHARMACY/PACKAGE/CONSUMABLES/CONSULTATION/OTHER) → `payments`.
-- Covers everything except the consultation fee in practice. `CONSULTATION` is a legal `charges.source_type` value, but nothing in the app ever auto-creates one — a billing clerk *could* manually add a charge and hand-pick `CONSULTATION`, creating an ad-hoc, unlinked duplicate of what Ledger A already tracks. Not currently prevented.
+- **As of Phase 10, this now genuinely includes the consultation fee**: `record_payment_service` records it as a real `CONSULTATION`-sourced charge + payment here (not just Ledger A), linked back via `appointments.consultation_payment_id`. See `docs/architecture/BILLING_LEDGER_UNIFICATION.md` for the full mechanism — this is real absorption, not a mirror.
 - Not gated on appointment status at all — a charge/payment can be recorded before, during, or well after the visit.
 
-**No foreign key or trigger connects the two.** They are separately-maintained tables, not two views over the same data.
+**A foreign key now connects the two**, for the consultation fee specifically: `appointments.consultation_payment_id → payments.id` (migration `0058_billing_ledger_unification.sql`). Everything else (lab, radiology, pharmacy, package) remains Ledger-B-only, as it always was — there was never a Ledger A equivalent for those.
 
-### Where each screen reads from (as of Phase 7)
+### Where each screen reads from
 
 | Screen / endpoint | Reads |
 |---|---|
-| `GET /dashboard/billing` (`BillingPanel.tsx`) | **Both, combined as of Phase 9 Option C** — see below. |
-| Billing History / Payment History (`BillingHistoryPanel.tsx`/`PaymentHistoryPanel.tsx`) | Ledger B only. Not addressed by Option C — see Gap. |
-| Exception Engine's `PAYMENT_PENDING` (`app/services/exception_engine.py`) | **Both, combined as of Phase 9 Option C.** |
+| `GET /dashboard/billing` (`BillingPanel.tsx`) | Ledger A (via `EFFECTIVE_PAYMENT_*_SQL`, which itself reads through to the real Ledger B consultation payment) combined with Ledger B's non-consultation charges — Phase 9 Option C, reconciled with Phase 10 below. |
+| Billing History / Payment History (`BillingHistoryPanel.tsx`/`PaymentHistoryPanel.tsx`) | Ledger B, unconditionally — now genuinely complete, since Phase 10 made the consultation fee a real Ledger B row these screens' existing, unmodified queries already see. |
+| Exception Engine's `PAYMENT_PENDING` (`app/services/exception_engine.py`) | Both, combined — reconciled with Phase 10's `EFFECTIVE_PAYMENT_STATUS_SQL` (see Gap history below). |
 | `AppointmentBillingPanel.tsx` (ConsultationWorkspace's Billing tab) | Ledger B only. |
-| `BookAppointmentPanel.tsx` (check-in payment step) / `AppointmentDetailsModal.tsx` | Ledger A only. |
-| Visit Completion checklist (`visit_completion_service.py`) | Both, kept intentionally separate (`billing_completed` from Ledger B, `payment_completed` from Ledger A) — this is a deliberate two-item checklist, not treated as a gap. |
+| `BookAppointmentPanel.tsx` (check-in payment step) / `AppointmentDetailsModal.tsx` | Ledger A (via the effective fragments). |
+| Visit Completion checklist (`visit_completion_service.py`) | Both, via the effective fragments — kept as a deliberate two-item checklist (`billing_completed` from Ledger B, `payment_completed` from the effective consultation status), not treated as a gap. |
 
-### Secondary asymmetries (not addressed by Option C)
+### Secondary asymmetries
 
-- **Refund semantics differ.** Ledger A: `record_refund_service` sets `payment_status = 'REFUNDED'` unconditionally, even for a partial refund, and refuses a second refund attempt outright. Ledger B: `payments.refunded_amount` is a running numeric total on a payment that stays `COMPLETED`, supporting incremental partial refunds. Unifying the ledgers means picking one of these two models.
-- **`FAILED`/`DECLINED`** exist on both (Ledger A since `0018`; Ledger B added `DECLINED` in `0050`, explicitly modeled to mirror Ledger A's `FAILED`), but `AppointmentBillingPanel.tsx` doesn't yet expose the `DECLINED` outcome in its UI (API-only today).
-- **A `CONSULTATION`-sourced charge is possible but never auto-created** — see above. Latent double-counting risk if a billing clerk ever manually adds one.
+- **Refund semantics differ.** Ledger A: `record_refund_service` sets `payment_status = 'REFUNDED'` unconditionally, even for a partial refund, and refuses a second refund attempt outright (still true for a not-yet-linked appointment). Ledger B: `payments.refunded_amount` is a running numeric total on a payment that stays `COMPLETED`, supporting incremental partial refunds. Phase 10 picked Ledger B's model going forward — `record_refund_service` delegates to it when `consultation_payment_id` is linked (true for every payment recorded after Phase 10, and every historical row `migrations/0059` backfilled), while still updating the legacy columns too (see `BILLING_LEDGER_UNIFICATION.md`'s "Refunds" section for why).
+- **`FAILED`/`DECLINED`** exist on both (Ledger A since `0018`; Ledger B added `DECLINED` in `0050`), but `AppointmentBillingPanel.tsx` doesn't yet expose the `DECLINED` outcome in its UI (API-only today).
+- **A `CONSULTATION`-sourced charge could always be manually added via `POST /bill/charges`** — Phase 10 didn't close this off; `charges_one_consultation_per_invoice` (one ACTIVE consultation charge per invoice) means a manual add now competes with the real one for the same slot rather than creating a silent duplicate, which is a real improvement, but a clerk manually adding one before a real payment is recorded is still an accepted, unaddressed edge case.
 
 ## Target State
 
-One of the three options the audit identified, not yet chosen beyond Option C:
+- **Option A — Ledger B absorbs Ledger A.** **Implemented as of Phase 10** for the consultation fee's payment/refund path (`docs/architecture/BILLING_LEDGER_UNIFICATION.md`). `generate_queue_token_service`'s trigger itself was deliberately left untouched (still `outcome == 'PAID'` on the legacy call), not moved to "this encounter's invoice balance is 0" — a narrower, lower-risk absorption than this doc originally scoped Option A to be.
+- **Option B — Ledger A absorbs Ledger B.** Not attempted, and superseded by Option A's implementation — there is no remaining reason to pursue this direction for the consultation fee. (Note: ADR-009 in `docs/OPD_HIMS_ARCHITECTURE_AUDIT.md` used "Option B" for a different, since-superseded mechanism — an additive mirror, not this doc's "Ledger A absorbs Ledger B" — a real vocabulary collision between two independently-written docs, flagged rather than quietly fixed.)
+- **Option C — merge only the read side.** Done for Dashboard and the Exception Engine (see above); still the live mechanism for `GET /dashboard/billing`'s non-consultation collections, since Ledger B was never unified for lab/radiology/pharmacy/package charges (there is no Ledger A equivalent to absorb).
 
-- **Option A — Ledger B absorbs Ledger A.** Auto-create a `CONSULTATION`-sourced charge on check-in, retire Ledger A entirely, move `generate_queue_token_service`'s trigger to "this encounter's invoice balance is 0." Cleanest end state; touches the highest-risk path in the app and needs a historical-data migration.
-- **Option B — Ledger A absorbs Ledger B.** Keep token issuance untouched; make Ledger B write through to `appointments.payment_amount`/`payment_status` as a derived total. Avoids the token-issuance risk, but Ledger A's status enum has no `PARTIALLY_PAID` value, which Ledger B already needs.
-- **Option C — merge only the read side (this phase).** Leave both write paths exactly as they are; build combined read views for screens that need "the whole picture." Lowest risk, ships incrementally, but leaves two permanent write paths — not a real unification, a mitigation.
+## Gap history (resolved)
 
-## Gap
+Two gaps this doc originally named here are now closed:
 
-Option C is done for the two screens where the split was most concretely damaging (§ below). Still split, deliberately left alone this phase:
+- **Billing History / Payment History** — no longer Ledger B only. Phase 10's real Ledger B absorption means these screens' existing, unmodified queries now see the consultation fee as an ordinary row — no synthetic row-shape design was needed after all, since the underlying data model itself now speaks Ledger B's language.
+- **A visit closed with its consultation fee still unpaid is now collectible**, not just visible: `record_payment_service`/`waive_consultation_fee_service`/`settle_free_visit_service`'s shared `_lock_appointment_for_payment` guard accepts `COMPLETED` as well as `CHECKED_IN`, with queue-token issuance correctly skipped for the `COMPLETED` case.
 
-- **Billing History / Payment History** — still Ledger B only. Unlike the Dashboard/Exception-Engine fixes (summary/aggregate queries), these are paginated listing screens over structurally different row shapes (an "invoice" row has line items, tax, discount; a consultation-fee row has none of that). Folding them into one feed means designing a synthetic row shape for Ledger A entries, which is a real design decision, not a mechanical read-merge — left for a future phase.
-- **A visit closed with its consultation fee still unpaid is now visible (Exception Engine, Dashboard) but still not collectible** through any existing endpoint, since `record_payment_service` requires `CHECKED_IN`. This is a genuine, newly-surfaced gap (previously it was invisible *and* uncollectible; it is now visible and still uncollectible) — a write-path change, explicitly out of scope for Option C's read-only merge.
-- Options A and B themselves — neither has been started. Full unification remains future work.
+**A third gap was introduced, then found and fixed, by the collision between Phase 10 and Option C landing on main independently**: Phase 10's `EFFECTIVE_PAYMENT_*_SQL` fragments make Ledger A's own queries already read through to the real Ledger B consultation payment, but Option C's Dashboard/Exception-Engine helpers were written assuming Ledger A and B were still disjoint — combining them double-counted every real consultation-fee payment (once via the effective fragment, once via Option C's unfiltered Ledger B query), to the point of a live 500 error when an earlier, now-removed ADR-009 mirror mechanism was also in the mix (two competing writers to the same `charges_one_consultation_per_invoice` slot). Fixed by excluding the consultation charge/payment (`source_type <> 'CONSULTATION'`, or the specific payment linked via `consultation_payment_id`) from every generic Ledger B query in `app/api/dashboard.py` and `app/services/exception_engine.py`, and by updating `_payment_pending`'s own Ledger A query to use `EFFECTIVE_PAYMENT_STATUS_SQL` instead of the raw `payment_status` column (see `docs/architecture/BILLING_LEDGER_UNIFICATION.md`'s reader table for the corrected account). `tests/test_billing_report.py`, `tests/test_exception_engine.py`, and `tests/test_billing_ledger_reconciliation_gap.py` all exercise this.
 
-## Recommended Implementation
-
-Given the newly-surfaced "visible but uncollectible" gap, the next concretely useful increment is narrower than a full Option A/B unification: allow `record_payment_service` (and its waive/settle-free-visit siblings) to also apply to a `COMPLETED` appointment whose `payment_status` is still `UNPAID`/`FAILED` — a small, well-scoped loosening of one existing status guard, not a ledger merge. That, plus Billing History/Payment History's row-shape design question, are the two next items; full Option A (the real unification) should stay its own, separately-scoped, explicitly-approved phase given the token-issuance risk documented above.
+**Still genuinely unstarted**: moving `generate_queue_token_service`'s own trigger off the legacy `outcome == 'PAID'` check (e.g. onto "this encounter's invoice balance is 0") — Phase 10 explicitly left this alone given it's the single most concurrency-sensitive path in the app. Not currently scoped.

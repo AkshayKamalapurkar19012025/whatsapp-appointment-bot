@@ -794,7 +794,7 @@ def record_appointment_payment(
             except svc_exc.InvalidStatusTransition:
                 raise HTTPException(
                     status_code=409,
-                    detail="Payment can only be recorded for a Checked-In appointment",
+                    detail="Payment can only be recorded for a Checked-In or Completed appointment",
                 )
             except svc_exc.PaymentStateConflict:
                 raise HTTPException(
@@ -831,7 +831,7 @@ def waive_appointment_payment(
             except svc_exc.InvalidStatusTransition:
                 raise HTTPException(
                     status_code=409,
-                    detail="The consultation fee can only be waived for a Checked-In appointment",
+                    detail="The consultation fee can only be waived for a Checked-In or Completed appointment",
                 )
             except svc_exc.PaymentStateConflict:
                 raise HTTPException(
@@ -872,7 +872,7 @@ def settle_free_appointment_visit(
             except svc_exc.InvalidStatusTransition:
                 raise HTTPException(
                     status_code=409,
-                    detail="A visit can only be settled as free for a Checked-In appointment",
+                    detail="A visit can only be settled as free for a Checked-In or Completed appointment",
                 )
             except svc_exc.PaymentStateConflict:
                 raise HTTPException(

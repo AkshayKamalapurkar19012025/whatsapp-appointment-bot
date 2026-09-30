@@ -49,6 +49,11 @@ this repo is still single-tenant in practice (see hospital_id's own
 hospital's different thresholds is speculative until one exists.
 """
 
+from app.services.appointment_services import (
+    EFFECTIVE_PAYMENT_JOIN_SQL,
+    EFFECTIVE_PAYMENT_STATUS_SQL,
+)
+
 # Minutes. STAT/URGENT orders get shorter thresholds than ROUTINE --
 # the one place clinical priority (orders.priority, already established
 # in migrations/0030) changes how soon a delay becomes actionable.
@@ -299,18 +304,16 @@ def _payment_pending(cur, hospital_id: int) -> list[dict]:
     encounter can owe money on one ledger, the other, or both without
     being reported twice.
 
-    The first query's gross/paid LATERAL joins exclude
-    legacy_appointment_id IS NOT NULL rows -- ADR-009 Option B's
-    mirrored consultation-fee charges/payments (migrations/0058,
-    docs/OPD_HIMS_ARCHITECTURE_AUDIT.md). Without this exclusion, a
-    consultation fee mirrored as FAILED (an ACTIVE mirrored charge with
-    no matching COMPLETED payment, since a declined attempt mirrors to
-    a DECLINED payment row) would show up as outstanding *here* via the
-    generic invoice-balance calculation, on top of the second query
-    below already reporting the exact same unpaid fee directly from
-    Ledger A -- the same double-counting risk
-    app/api/dashboard.py:get_billing_report's own Ledger B helpers
-    guard against, for the same reason.
+    The first query's gross/paid LATERAL joins exclude the consultation
+    fee's own charge/payment (source_type = 'CONSULTATION', or the
+    specific payment linked via appointments.consultation_payment_id --
+    migrations/0058_billing_ledger_unification.sql). Without this
+    exclusion, a real consultation-fee charge/payment would show up as
+    outstanding *here* via the generic invoice-balance calculation, on
+    top of the second query below already reporting the exact same
+    unpaid fee via EFFECTIVE_PAYMENT_STATUS_SQL -- the same
+    double-counting risk app/api/dashboard.py:get_billing_report's own
+    Ledger B helpers guard against, for the same reason.
     """
     cur.execute(
         """
@@ -324,11 +327,12 @@ def _payment_pending(cur, hospital_id: int) -> list[dict]:
         JOIN patients p ON p.id = e.patient_id
         LEFT JOIN LATERAL (
             SELECT SUM(amount) AS amount FROM charges
-            WHERE invoice_id = inv.id AND status = 'ACTIVE' AND legacy_appointment_id IS NULL
+            WHERE invoice_id = inv.id AND status = 'ACTIVE' AND source_type <> 'CONSULTATION'
         ) gross ON TRUE
         LEFT JOIN LATERAL (
             SELECT SUM(amount - refunded_amount) AS amount FROM payments
-            WHERE invoice_id = inv.id AND status = 'COMPLETED' AND legacy_appointment_id IS NULL
+            WHERE invoice_id = inv.id AND status = 'COMPLETED'
+              AND id NOT IN (SELECT consultation_payment_id FROM appointments WHERE consultation_payment_id IS NOT NULL)
         ) paid ON TRUE
         WHERE e.hospital_id = %s
           AND inv.status = 'OPEN'
@@ -358,8 +362,17 @@ def _payment_pending(cur, hospital_id: int) -> list[dict]:
     # uses: consultation_fee + any ad-hoc invoice_line_items -- a FAILED
     # attempt still owes the full amount (nothing was actually
     # collected, see record_payment_service's own docstring).
+    #
+    # Uses EFFECTIVE_PAYMENT_STATUS_SQL, not the raw payment_status
+    # column: Phase 10 (Billing Ledger Unification) stopped writing
+    # payment_status for a real (nonzero) payment recorded after that
+    # phase -- it stays whatever it was before (UNPAID) forever, with
+    # the real status now living on the linked ledger-2 payment via
+    # appointments.consultation_payment_id. Reading the raw column here
+    # would wrongly keep flagging a properly-paid visit as pending
+    # forever.
     cur.execute(
-        """
+        f"""
         SELECT a.encounter_id, e.patient_id, p.name, e.closed_at,
                EXTRACT(EPOCH FROM (NOW() - e.closed_at)) / 60,
                dat.consultation_fee + COALESCE(li.total, 0) AS amount
@@ -368,12 +381,13 @@ def _payment_pending(cur, hospital_id: int) -> list[dict]:
         JOIN patients p ON p.id = e.patient_id
         JOIN doctor_appointment_types dat
             ON dat.doctor_id = a.doctor_id AND dat.appointment_type_id = a.appointment_type_id
+        {EFFECTIVE_PAYMENT_JOIN_SQL}
         LEFT JOIN LATERAL (
             SELECT SUM(amount) AS total FROM invoice_line_items WHERE appointment_id = a.id
         ) li ON TRUE
         WHERE e.hospital_id = %s
           AND e.status = 'CLOSED'
-          AND a.payment_status IN ('UNPAID', 'FAILED')
+          AND {EFFECTIVE_PAYMENT_STATUS_SQL} IN ('UNPAID', 'FAILED')
           AND e.closed_at <= NOW() - (%s || ' minutes')::INTERVAL
         """,
         (hospital_id, _PAYMENT_PENDING_MINUTES),

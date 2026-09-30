@@ -79,11 +79,6 @@ from app.services.exceptions import (
     RefundExceedsPayment,
     PaymentRefundExceedsAmount,
 )
-from app.services.billing_services import (
-    mirror_consultation_payment,
-    mirror_consultation_fee_waived,
-    mirror_consultation_payment_refunded,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -1655,13 +1650,25 @@ def add_invoice_line_item_service(cur, appointment_id: int, *, description: str,
 
 
 def _lock_appointment_for_payment(cur, appointment_id: int):
-    """Shared row lookup/lock for record_payment_service and
-    waive_consultation_fee_service -- both gate on the same two things
-    (appointment exists and is CHECKED_IN) before doing anything
-    payment-specific, and both need doctor_tz afterward: record_payment_
-    service and waive_consultation_fee_service each call
-    generate_queue_token_service on success, which needs it for its own
-    "which doctor-local day is this" token-numbering question."""
+    """Shared row lookup/lock for record_payment_service,
+    waive_consultation_fee_service, and settle_free_visit_service --
+    all three gate on the same two things (appointment exists and is
+    CHECKED_IN or COMPLETED) before doing anything payment-specific,
+    and all three need doctor_tz afterward for generate_queue_token_
+    service's own "which doctor-local day is this" token-numbering
+    question.
+
+    Accepts COMPLETED as well as CHECKED_IN: a visit closed with its
+    consultation fee still UNPAID/FAILED (mark_completed_service never
+    checks payment_status) was visible via the Dashboard/Exception
+    Engine's combined-ledger view but had no API path to actually
+    collect it. Returns status too, specifically so each caller can
+    decide whether calling generate_queue_token_service still makes
+    sense -- it does for CHECKED_IN (the patient is still in the
+    queue), it does not for COMPLETED (the visit is over; a fresh
+    token for an already-finished visit would be a confusing,
+    incorrect artifact in that doctor's live queue view, not an
+    idempotent replay -- see each caller's own updated docstring)."""
     cur.execute(
         """
         SELECT a.status, a.payment_status, a.doctor_id, a.patient_id,
@@ -1681,13 +1688,13 @@ def _lock_appointment_for_payment(cur, appointment_id: int):
 
     status, payment_status, doctor_id, patient_id, visited_at, doctor_tz, consultation_payment_id = row
 
-    if status != "CHECKED_IN":
+    if status not in ("CHECKED_IN", "COMPLETED"):
         raise InvalidStatusTransition()
 
     if not validate_timezone(doctor_tz):
         doctor_tz = "Asia/Kolkata"
 
-    return payment_status, doctor_id, patient_id, visited_at, doctor_tz, consultation_payment_id
+    return status, payment_status, doctor_id, patient_id, visited_at, doctor_tz, consultation_payment_id
 
 
 def record_payment_service(cur, appointment_id: int, *, method: str, outcome: str, staff_id: int):
@@ -1731,14 +1738,19 @@ def record_payment_service(cur, appointment_id: int, *, method: str, outcome: st
     "patient enters the queue" trigger as of Phase 4, no longer
     check-in itself. A FAILED outcome never does: the patient stays
     outside the queue until payment succeeds or is waived, per the
-    core business rule.
+    core business rule. Also skipped when the appointment is already
+    COMPLETED (the "collect a late fee" path this function was widened
+    to allow, docs/architecture/BILLING_LEDGERS.md's own Recommended
+    Implementation) -- the visit is over, so a fresh token would be a
+    confusing, incorrect artifact in that doctor's live queue view, not
+    a real queue entry.
 
     amount charged is consultation_fee plus any ad-hoc invoice_line_
     items added for this appointment (migrations/0026, add_invoice_
     line_item_service) -- still never client-supplied, just a wider
     server-side total than the original single-fee model.
     """
-    payment_status, doctor_id, patient_id, visited_at, doctor_tz, consultation_payment_id = (
+    status, payment_status, doctor_id, patient_id, visited_at, doctor_tz, consultation_payment_id = (
         _lock_appointment_for_payment(cur, appointment_id)
     )
 
@@ -1786,7 +1798,7 @@ def record_payment_service(cur, appointment_id: int, *, method: str, outcome: st
             (outcome, method, staff_id, appointment_id),
         )
         token_just_issued = False
-        if outcome == "PAID":
+        if outcome == "PAID" and status == "CHECKED_IN":
             token_result = generate_queue_token_service(cur, appointment_id, doctor_id=doctor_id, doctor_tz=doctor_tz)
             token_just_issued = token_result["newly_generated"]
         return {**_current_payment_record(cur, appointment_id), "token_just_issued": token_just_issued}
@@ -1800,21 +1812,8 @@ def record_payment_service(cur, appointment_id: int, *, method: str, outcome: st
         (result["consultation_payment_id"], appointment_id),
     )
 
-    # ADR-009 (docs/OPD_HIMS_ARCHITECTURE_AUDIT.md), Option B: mirror
-    # into the invoices/charges/payments model so Dashboard/Payment
-    # History/the Exception Engine see this too -- additive only,
-    # doesn't change anything above. Guarded on amount > 0 since
-    # charges.amount has CHECK (amount > 0) and a genuinely free visit
-    # (amount == 0) has nothing to mirror -- that case is
-    # settle_free_visit_service's, not this function's, but nothing
-    # stops a caller reaching amount == 0 here too (e.g. a fee
-    # reconfigured to 0 after check-in), so this guards defensively
-    # rather than assuming it can't happen.
-    if amount > 0:
-        mirror_consultation_payment(cur, appointment_id, staff_id=staff_id, amount=amount)
-
     token_just_issued = False
-    if outcome == "PAID":
+    if outcome == "PAID" and status == "CHECKED_IN":
         token_result = generate_queue_token_service(cur, appointment_id, doctor_id=doctor_id, doctor_tz=doctor_tz)
         token_just_issued = token_result["newly_generated"]
 
@@ -1841,9 +1840,13 @@ def waive_consultation_fee_service(cur, appointment_id: int, *, reason: str, sta
     On success, also generates the queue token (generate_queue_token_
     service) -- same Phase 4 trigger record_payment_service's PAID
     outcome uses: "payment complete or waived" is what admits a patient
-    to the queue, not check-in itself.
+    to the queue, not check-in itself. Skipped when the appointment is
+    already COMPLETED (the "waive a fee on a closed visit" path this
+    function was widened to allow), same reasoning as record_payment_
+    service's own updated docstring -- the visit is over, a token now
+    would be meaningless.
     """
-    payment_status, doctor_id, patient_id, visited_at, doctor_tz, consultation_payment_id = (
+    status, payment_status, doctor_id, patient_id, visited_at, doctor_tz, consultation_payment_id = (
         _lock_appointment_for_payment(cur, appointment_id)
     )
 
@@ -1900,24 +1903,12 @@ def waive_consultation_fee_service(cur, appointment_id: int, *, reason: str, sta
         (reason, staff_id, appointment_id),
     )
 
-    # ADR-009 (docs/OPD_HIMS_ARCHITECTURE_AUDIT.md), Option B: mirror
-    # the waived fee as a VOIDED Ledger B charge -- see
-    # mirror_consultation_fee_waived's own docstring for why VOIDED
-    # rather than a $0 payment. The fee amount is recomputed here the
-    # same way record_payment_service does (this function's own
-    # payment_amount column is always 0 for a waiver, which isn't the
-    # amount that was actually waived). Guarded on > 0 for the same
-    # reason record_payment_service's mirror call is: nothing stops a
-    # $0-configured fee from reaching this function too, and that case
-    # has nothing to mirror.
-    waived_charge = get_consultation_charge_service(cur, appointment_id)
-    waived_amount = waived_charge["consultation_fee"] + _invoice_extra_charges_total(cur, appointment_id)
-    if waived_amount > 0:
-        mirror_consultation_fee_waived(cur, appointment_id, staff_id=staff_id, amount=waived_amount, reason=reason)
+    token_just_issued = False
+    if status == "CHECKED_IN":
+        token_result = generate_queue_token_service(cur, appointment_id, doctor_id=doctor_id, doctor_tz=doctor_tz)
+        token_just_issued = token_result["newly_generated"]
 
-    token_result = generate_queue_token_service(cur, appointment_id, doctor_id=doctor_id, doctor_tz=doctor_tz)
-
-    return {**_current_payment_record(cur, appointment_id), "token_just_issued": token_result["newly_generated"]}
+    return {**_current_payment_record(cur, appointment_id), "token_just_issued": token_just_issued}
 
 
 def settle_free_visit_service(cur, appointment_id: int):
@@ -1953,9 +1944,13 @@ def settle_free_visit_service(cur, appointment_id: int):
     charge. Also FreeVisitNotEligible if any ad-hoc invoice_line_items
     (migrations/0026) have been added for this appointment: a visit
     with a real extra charge on it isn't "free" just because the base
-    consultation_fee happens to be 0.
+    consultation_fee happens to be 0. Also skips queue-token generation
+    when the appointment is already COMPLETED (the "settle a closed
+    free visit" path this function was widened to allow), same
+    reasoning as record_payment_service/waive_consultation_fee_
+    service's own updated docstrings.
     """
-    payment_status, doctor_id, patient_id, visited_at, doctor_tz, consultation_payment_id = (
+    status, payment_status, doctor_id, patient_id, visited_at, doctor_tz, consultation_payment_id = (
         _lock_appointment_for_payment(cur, appointment_id)
     )
 
@@ -1993,9 +1988,12 @@ def settle_free_visit_service(cur, appointment_id: int):
         (appointment_id,),
     )
 
-    token_result = generate_queue_token_service(cur, appointment_id, doctor_id=doctor_id, doctor_tz=doctor_tz)
+    token_just_issued = False
+    if status == "CHECKED_IN":
+        token_result = generate_queue_token_service(cur, appointment_id, doctor_id=doctor_id, doctor_tz=doctor_tz)
+        token_just_issued = token_result["newly_generated"]
 
-    return {**_current_payment_record(cur, appointment_id), "token_just_issued": token_result["newly_generated"]}
+    return {**_current_payment_record(cur, appointment_id), "token_just_issued": token_just_issued}
 
 
 def record_refund_service(cur, appointment_id: int, *, amount, reason: str, staff_id: int):
@@ -2127,12 +2125,6 @@ def record_refund_service(cur, appointment_id: int, *, amount, reason: str, staf
         """,
         (amount, reason, staff_id, appointment_id),
     )
-
-    # ADR-009 (docs/OPD_HIMS_ARCHITECTURE_AUDIT.md), Option B: mirror
-    # onto the already-mirrored COMPLETED payment (guaranteed to exist,
-    # since this function only ever runs from payment_status = PAID,
-    # which is exactly when mirror_consultation_payment created it).
-    mirror_consultation_payment_refunded(cur, appointment_id, staff_id=staff_id, amount=amount, reason=reason)
 
     return _current_payment_record(cur, appointment_id)
 
