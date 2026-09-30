@@ -48,6 +48,7 @@ from app.api.waiting_time_analytics import router as waiting_time_analytics_rout
 from app.api.module_licensing import router as module_licensing_router
 from app.api.fhir import router as fhir_router
 from app.api.agent import router as agent_router
+from app.agent.worker import build_worker_pool
 
 configure_logging()
 access_logger = logging.getLogger("app.access")
@@ -61,7 +62,14 @@ async def lifespan(app: FastAPI):
     # app process starting, which would let a bad migration take down
     # every instance in a rolling deploy at once.
     open_pool()
+    # AI agent layer (Phase 3): background workers, only when a model
+    # provider is configured (app/agent/worker.py's build_worker_pool).
+    agent_workers = build_worker_pool()
+    if agent_workers is not None:
+        agent_workers.start()
     yield
+    if agent_workers is not None:
+        agent_workers.stop()
     close_pool()
 
 

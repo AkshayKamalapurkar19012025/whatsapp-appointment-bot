@@ -82,6 +82,7 @@ EXEMPT_TABLES = {
     "agent_approvals",
     "agent_verifications",
     "agent_audit_events",
+    "agent_jobs",
     # pharmacy_stock is NOT in this list -- it has no FK to any
     # hospital-scoped entity at all (physical inventory, not a child of
     # a visit), so it got its own hospital_id column instead

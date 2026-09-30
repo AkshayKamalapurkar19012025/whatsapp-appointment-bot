@@ -165,3 +165,12 @@ TEST_STATIC_OTP = os.environ.get("TEST_STATIC_OTP", "") if ENVIRONMENT != "produ
 AGENT_LLM_PROVIDER = os.environ.get("AGENT_LLM_PROVIDER", "")
 AGENT_LLM_MODEL = os.environ.get("AGENT_LLM_MODEL", "claude-opus-5-5")
 AGENT_LLM_EFFORT = os.environ.get("AGENT_LLM_EFFORT", "low")
+
+# Phase 3 (background execution): "background" (default) means POST
+# /api/agent/tasks records the task and returns at once, and worker threads
+# started with the app run it; "inline" runs the pipeline in the request.
+# AGENT_WORKER_THREADS=0 disables the in-process workers (e.g. if you run
+# them elsewhere); tasks then wait in the queue.
+AGENT_EXECUTION_MODE = os.environ.get("AGENT_EXECUTION_MODE", "background")
+AGENT_WORKER_THREADS = int(os.environ.get("AGENT_WORKER_THREADS", "2"))
+AGENT_WORKER_POLL_SECONDS = float(os.environ.get("AGENT_WORKER_POLL_SECONDS", "1.0"))

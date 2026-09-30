@@ -194,7 +194,7 @@ def _ledger_b_collections_by_doctor(cur, window_start):
     """Same as above, attributed by encounters.doctor_id (every invoice
     belongs to exactly one encounter, and every encounter has a
     doctor_id directly -- migrations/0028_encounters.sql -- no need to
-    go through appointments). Same consultation-payment exclusion as
+    go through appointments). Same consultation_payment_id exclusion as
     _ledger_b_collections_by_method, same reason."""
     cur.execute(
         """
