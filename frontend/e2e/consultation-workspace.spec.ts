@@ -362,5 +362,16 @@ test.describe('ConsultationWorkspace', () => {
     // And the name match specifically is not wearing the clinical
     // warning tint -- amber is reserved for the recorded allergy.
     expect(conflictBg).not.toBe('rgb(253, 242, 223)')
+
+    // The CHECK pill inside that card is pinned the same way. Without
+    // this, a restyle could re-amber the pill alone and silently undo
+    // the distinction: the card would still pass the assertions above
+    // while the badge the eye actually lands on went back to matching
+    // .pill.severity-severe.
+    const checkPill = conflict.locator('.pill.severity-check')
+    await expect(checkPill).toBeVisible()
+    const checkPillBg = await checkPill.evaluate((el) => getComputedStyle(el).backgroundColor)
+    expect(checkPillBg).not.toBe(severeBg)
+    expect(checkPillBg).not.toBe('rgb(253, 242, 223)')
   })
 })
