@@ -373,6 +373,11 @@ class Orchestrator:
             pass
         except _Stop as stop:
             self._finish(run, stop)
+        except store.StaleTaskState:
+            # Someone else moved the task (a worker that took over an expired
+            # lease, a cancellation): they own it now. Escalating here would
+            # clobber their progress.
+            logger.warning("agent task %s changed under this worker; standing down", run.task_id)
         except Exception as exc:  # last resort -- never leave a task non-terminal
             logger.exception("agent task %s crashed", run.task_id)
             self._finish(run, _Stop(states.ESCALATED, f"internal error: {type(exc).__name__}"))

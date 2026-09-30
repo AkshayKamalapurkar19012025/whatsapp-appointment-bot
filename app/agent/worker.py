@@ -36,9 +36,43 @@ logger = logging.getLogger("app.agent.worker")
 BACKOFF_SECONDS = (5, 30, 120)
 
 
+class _Heartbeat:
+    """Renews a claimed job's lease until stopped. If the job has been taken
+    over (renewal matches no row), it stops and records `lost`."""
+
+    def __init__(self, connect, job_id: int, worker_id: str, lease_seconds: int, interval: float):
+        self._connect, self._job_id, self._worker_id = connect, job_id, worker_id
+        self._lease, self._interval = lease_seconds, interval
+        self._stop = threading.Event()
+        self.lost = False
+        self._thread = threading.Thread(target=self._run, name=f"agent-job-{job_id}-heartbeat", daemon=True)
+
+    def __enter__(self):
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        self._thread.join(5)
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._interval):
+            try:
+                with self._connect() as conn:
+                    with conn.cursor() as cur:
+                        if not store.extend_lease(cur, self._job_id, self._worker_id, lease_seconds=self._lease):
+                            self.lost = True
+                            logger.warning("agent job %s was taken over by another worker", self._job_id)
+                            return
+            except Exception:  # a missed beat is survivable; the next one retries
+                logger.exception("agent job %s heartbeat failed", self._job_id)
+
+
 class AgentWorker:
-    def __init__(self, orchestrator: Orchestrator, *, name: str | None = None, connection_factory=None):
+    def __init__(self, orchestrator: Orchestrator, *, name: str | None = None, connection_factory=None,
+                 lease_seconds: int | None = None):
         self.orchestrator = orchestrator
+        self.lease_seconds = lease_seconds if lease_seconds is not None else config.AGENT_JOB_LEASE_SECONDS
         self.name = name or f"{socket.gethostname()}:{os.getpid()}:{threading.get_ident()}"
         if connection_factory is None:
             from app.db.connection import get_connection as connection_factory
@@ -48,7 +82,7 @@ class AgentWorker:
         """Claim and process at most one job. True if a job was handled."""
         with self._connect() as conn:
             with conn.cursor() as cur:
-                job = store.claim_job(cur, self.name)
+                job = store.claim_job(cur, self.name, lease_seconds=self.lease_seconds)
         if job is None:
             return False
 
@@ -59,7 +93,8 @@ class AgentWorker:
             return True
 
         try:
-            outcome = self.orchestrator.process_job(task_id, kind=job["kind"])
+            with _Heartbeat(self._connect, job_id, self.name, self.lease_seconds, self.lease_seconds / 3):
+                outcome = self.orchestrator.process_job(task_id, kind=job["kind"])
         except Exception as exc:
             logger.exception("agent job %s (task %s) raised", job_id, task_id)
             self._retry_or_give_up(job, f"{type(exc).__name__}: {exc}")
@@ -67,9 +102,12 @@ class AgentWorker:
 
         with self._connect() as conn:
             with conn.cursor() as cur:
-                store.finish_job(cur, job_id, status="done")
-                store.add_event(cur, task_id, "job_finished", details={"job_id": job_id, "outcome": outcome,
-                                                                       "worker": self.name})
+                if store.finish_job(cur, job_id, status="done", worker_id=self.name):
+                    store.add_event(cur, task_id, "job_finished",
+                                    details={"job_id": job_id, "outcome": outcome, "worker": self.name})
+                else:
+                    logger.warning("agent job %s finished by %s but had been taken over; leaving it to the new owner",
+                                   job_id, self.name)
         return True
 
     def drain(self, limit: int = 1000) -> int:
@@ -95,7 +133,7 @@ class AgentWorker:
     def _give_up(self, job: dict, error: str) -> None:
         with self._connect() as conn:
             with conn.cursor() as cur:
-                store.finish_job(cur, job["id"], status="failed", error=error)
+                store.finish_job(cur, job["id"], status="failed", error=error, worker_id=self.name)
                 task = store.get_task_by_id(cur, job["task_id"])
         if task is not None:
             self.orchestrator.escalate(job["task_id"], task["hospital_id"], f"background job failed: {error}")
