@@ -454,3 +454,69 @@ def test_metrics_report_the_queue(client, db_connection, world, background_api):
     _worker(orch).drain()
     m = client.get("/api/agent/metrics", headers=world.admin_headers).json()
     assert m["jobs_queued"] == 0 and m["average_queue_wait_s"] >= 0 and m["job_failure_rate"] == 0.0
+
+
+# ---- lease heartbeat and takeover ------------------------------------------------------------------
+
+def test_a_long_running_job_keeps_its_lease_and_cannot_be_claimed_by_another_worker(world, monkeypatch):
+    world.appointment(world.patient("Ravi Kumar"))
+    orch, _ = world.orchestrator(slice_script(day=world.day), repeat_last=True)
+    view = orch.submit_async(world.ctx(), "check in Ravi")
+    started, release = threading.Event(), threading.Event()
+
+    def slow(task_id, *, kind):
+        started.set()
+        release.wait(10)
+        return "slow_done"
+
+    monkeypatch.setattr(orch, "process_job", slow)
+    worker = AgentWorker(orch, name="slow-worker", lease_seconds=2)      # heartbeat every ~0.67s
+    t = threading.Thread(target=worker.run_once)
+    t.start()
+    assert started.wait(5)
+    time.sleep(3)                                                        # longer than the whole lease
+    with world.db.cursor() as cur:
+        assert store.claim_job(cur, "other-worker") is None              # heartbeat kept the lease alive
+    world.db.commit()
+    release.set()
+    t.join(10)
+    assert _job(world, view["task_id"])[0][1] == "done"
+
+
+def test_a_worker_whose_job_was_taken_over_neither_closes_it_nor_keeps_beating(world):
+    orch, _ = world.orchestrator(slice_script(day=world.day), repeat_last=True)
+    view = orch.submit_async(world.ctx(), "check in Ravi")
+    with world.db.cursor() as cur:
+        job = store.claim_job(cur, "old-owner", lease_seconds=60)
+    world.db.commit()
+    _expire_leases(world)
+    with world.db.cursor() as cur:
+        assert store.claim_job(cur, "new-owner")["id"] == job["id"]      # taken over
+        assert store.extend_lease(cur, job["id"], "old-owner") is False   # the old owner can't renew
+        assert store.finish_job(cur, job["id"], status="done", worker_id="old-owner") is False
+        assert store.finish_job(cur, job["id"], status="done", worker_id="new-owner") is True
+    world.db.commit()
+    from app.agent.worker import _Heartbeat
+    from app.db.connection import get_connection
+
+    world.rows("UPDATE agent_jobs SET status = 'running', locked_by = 'new-owner', finished_at = NULL")
+    with _Heartbeat(get_connection, job["id"], "old-owner", 60, 0.05) as beat:
+        time.sleep(0.3)
+    assert beat.lost is True
+
+
+def test_a_worker_that_lost_the_task_to_someone_else_stands_down_instead_of_escalating(world):
+    """Another actor moves the task while this worker is mid-step: the worker must not clobber it."""
+    world.appointment(world.patient("Ravi Kumar"))
+    script = slice_script(day=world.day)
+
+    def meanwhile_someone_else_takes_over(payload):
+        world.rows("UPDATE agent_tasks SET state = 'STEP_VERIFIED' WHERE state = 'EXECUTING'")  # a takeover moved it
+        return {"action": "call_tool", "tool": payload["step"]["tool"], "notes": ""}
+
+    script["executor"] = [meanwhile_someone_else_takes_over]
+    orch, _ = world.orchestrator(script, repeat_last=True)
+    view = orch.submit_async(world.ctx(), "check in Ravi")
+    _worker(orch).drain()
+    assert _state(world, view["task_id"]) != states.ESCALATED
+    assert world.rows("SELECT final_reason FROM agent_tasks")[0][0] is None

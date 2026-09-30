@@ -71,7 +71,7 @@ Money is never typed by a model: `record_payment`'s `expected_amount` must be a 
 
 - **No broker.** The queue is a table in the existing Postgres; multiple threads or app processes claim distinct jobs safely. One live job per task (unique partial index).
 - **Nothing secret in a job.** A resume needs no approval token: the worker re-verifies the decided approval from `agent_approvals` (approved, unexpired, unspent, same arguments, approver ≠ initiator). Public `resume()` still requires the bearer token.
-- **Crash recovery.** A claimed job holds a 10-minute lease; if the process dies the lease expires and the job is re-claimed. `process_job` is state-driven: `RECEIVED` starts the pipeline; `PLANNED…NEXT_STEP`/`APPROVED` continue execution (finished steps are skipped; a write that already committed is detected by its precheck or replayed from its recorded call -- never repeated; a decided-but-unspent approval is honored rather than re-requested); a crash before a plan exists (`INTAKE…PLANNING`) escalates because nothing ran and a human should resubmit.
+- **Crash recovery.** A claimed job holds a lease (`AGENT_JOB_LEASE_SECONDS`, default 600) that a heartbeat thread renews every third of the lease while the job runs; if the process dies the heartbeat stops, the lease expires, and the job is re-claimed. A worker whose job was taken over stands down quietly (`StaleTaskState`) rather than escalating the task, and cannot close the new owner's job. `process_job` is state-driven: `RECEIVED` starts the pipeline; `PLANNED…NEXT_STEP`/`APPROVED` continue execution (finished steps are skipped; a write that already committed is detected by its precheck or replayed from its recorded call -- never repeated; a decided-but-unspent approval is honored rather than re-requested); a crash before a plan exists (`INTAKE…PLANNING`) escalates because nothing ran and a human should resubmit.
 - **Failures.** An exception escaping the orchestrator requeues the job with backoff (5s/30s/120s); after 3 attempts the job is `failed` and the task `ESCALATED`.
 - **Cancellation** while queued/running is best-effort: the task becomes `CANCELLED` and the worker treats it as terminal at its next state change; a step already in flight completes.
 - Metrics add `jobs_queued`, `average_queue_wait_s`, `job_failure_rate`.
@@ -83,7 +83,7 @@ Money is never typed by a model: `record_payment`'s `expected_amount` must be a 
 ## Gap
 
 - No frontend surface yet (API only).
-- The worker is in-process (a restart interrupts running jobs; the lease + re-entrancy cover it) and has no heartbeat: a single task must finish within the 10-minute lease or it may be re-claimed by a second worker (writes stay safe via idempotency, but model calls would be repeated).
+- The worker is in-process: a restart interrupts running jobs (the lease + re-entrancy cover it). A takeover after a long GC/network stall can still briefly run the same task in two workers; writes stay safe via idempotency and the loser stands down at its next state change, but a model call may be repeated.
 - Clients must poll; there is no push/streaming of task progress.
 - `staff_roles.department_id` is carried in the context but, like the existing `require_permission`, not enforced.
 - The existing `POST /appointments/{id}/visit`, patient/queue/invoice/encounter GETs still authorize with `get_current_staff` only, and several services still don't filter by hospital. The agent layer compensates in its tools; the endpoints are unchanged (a separate, deliberate follow-up).

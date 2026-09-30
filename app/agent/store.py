@@ -30,7 +30,14 @@ _TASK_COLUMNS = (
 
 
 class InvalidTransition(Exception):
-    pass
+    """A move the lifecycle doesn't allow (a bug in the caller)."""
+
+
+class StaleTaskState(InvalidTransition):
+    """The task is no longer in the state the caller believed it was in --
+    someone else (another worker that took over an expired lease, a
+    cancellation, an approval) moved it. Not a bug and not a reason to
+    escalate: whoever moved it owns the task now."""
 
 
 class ApprovalError(Exception):
@@ -137,7 +144,7 @@ def transition(cur, task_id: int, from_state: str, to_state: str, *, reason: str
          terminal, task_id, from_state),
     )
     if cur.rowcount != 1:
-        raise InvalidTransition(f"task {task_id} is no longer in state {from_state}")
+        raise StaleTaskState(f"task {task_id} is no longer in state {from_state}")
     add_event(cur, task_id, "state_changed", from_state=from_state, to_state=to_state,
               actor_id=actor_id, details={"reason": reason} if reason else None)
 
@@ -507,7 +514,7 @@ def plan_trace(cur, task_id: int, plan_id: int, plan_version: int) -> list[dict]
 # Jobs (background execution)
 # ---------------------------------------------------------------------
 
-JOB_LEASE_MINUTES = 10
+JOB_LEASE_SECONDS = 600
 
 
 def enqueue_job(cur, task_id: int, kind: str) -> int | None:
@@ -527,15 +534,15 @@ def enqueue_job(cur, task_id: int, kind: str) -> int | None:
     return row[0] if row else None
 
 
-def claim_job(cur, worker_id: str) -> dict | None:
+def claim_job(cur, worker_id: str, *, lease_seconds: int = JOB_LEASE_SECONDS) -> dict | None:
     """Claim the oldest runnable job: queued and due, or running with an
     expired lease (its worker died). FOR UPDATE SKIP LOCKED lets any number
     of workers -- threads or processes -- claim distinct jobs safely."""
     cur.execute(
-        f"""
+        """
         UPDATE agent_jobs
         SET status = 'running', attempts = attempts + 1, locked_by = %s,
-            lease_expires_at = NOW() + INTERVAL '{JOB_LEASE_MINUTES} minutes',
+            lease_expires_at = NOW() + make_interval(secs => %s),
             started_at = COALESCE(started_at, NOW())
         WHERE id = (
             SELECT id FROM agent_jobs
@@ -547,17 +554,37 @@ def claim_job(cur, worker_id: str) -> dict | None:
         )
         RETURNING id, task_id, kind, attempts, max_attempts
         """,
-        (worker_id,),
+        (worker_id, lease_seconds),
     )
     row = cur.fetchone()
     return dict(zip(("id", "task_id", "kind", "attempts", "max_attempts"), row)) if row else None
 
 
-def finish_job(cur, job_id: int, *, status: str, error: str | None = None) -> None:
+def extend_lease(cur, job_id: int, worker_id: str, *, lease_seconds: int = JOB_LEASE_SECONDS) -> bool:
+    """Heartbeat: push the lease out while the worker is alive and still
+    the job's owner. False means the job was taken over (lease expired and
+    another worker re-claimed it) -- the caller should stop caring."""
     cur.execute(
-        "UPDATE agent_jobs SET status = %s, last_error = %s, finished_at = NOW(), lease_expires_at = NULL WHERE id = %s",
-        (status, error, job_id),
+        """
+        UPDATE agent_jobs SET lease_expires_at = NOW() + make_interval(secs => %s)
+        WHERE id = %s AND status = 'running' AND locked_by = %s
+        """,
+        (lease_seconds, job_id, worker_id),
     )
+    return cur.rowcount == 1
+
+
+def finish_job(cur, job_id: int, *, status: str, error: str | None = None, worker_id: str | None = None) -> bool:
+    """Close a job. With worker_id, only if that worker still owns it -- a
+    worker whose lease was taken over must not close the new owner's job."""
+    cur.execute(
+        """
+        UPDATE agent_jobs SET status = %s, last_error = %s, finished_at = NOW(), lease_expires_at = NULL
+        WHERE id = %s AND (%s::text IS NULL OR locked_by = %s)
+        """,
+        (status, error, job_id, worker_id, worker_id),
+    )
+    return cur.rowcount == 1
 
 
 def latest_job(cur, task_id: int) -> dict | None:

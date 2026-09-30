@@ -174,3 +174,7 @@ AGENT_LLM_EFFORT = os.environ.get("AGENT_LLM_EFFORT", "low")
 AGENT_EXECUTION_MODE = os.environ.get("AGENT_EXECUTION_MODE", "background")
 AGENT_WORKER_THREADS = int(os.environ.get("AGENT_WORKER_THREADS", "2"))
 AGENT_WORKER_POLL_SECONDS = float(os.environ.get("AGENT_WORKER_POLL_SECONDS", "1.0"))
+# A worker's claim on a job lasts this long and is renewed by a heartbeat
+# every third of it while the job runs; if the process dies the heartbeat
+# stops and another worker re-claims the job after the lease expires.
+AGENT_JOB_LEASE_SECONDS = int(os.environ.get("AGENT_JOB_LEASE_SECONDS", "600"))
