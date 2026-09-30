@@ -53,7 +53,7 @@ from app.services.appointment_services import (
     recall_queue_entry_service,
     set_priority_service,
 )
-from app.services.availability_engine import list_available_dates_in_range
+from app.services.availability_engine import list_available_dates_in_range, list_doctors_with_slots_for_date
 from app.services.check_in_service import front_desk_check_in_service
 from app.services.front_desk_billing_service import (
     front_desk_record_payment_service,
@@ -279,6 +279,48 @@ def get_appointments_calendar(
         "year": year,
         "month": month,
         "dates": dates,
+    }
+
+
+@router.get("/availability/by-department")
+def get_appointments_availability_by_department(
+    department_id: int,
+    appointment_type_id: int,
+    selected_date: date,
+    staff: dict = Depends(get_current_staff),
+):
+    """
+    Staff-only equivalent of GET /web/availability/by-date (app/api/
+    patient_scheduling.py) for the admin Book Appointment page's
+    doctor x time grid -- every doctor in the department offering this
+    appointment type, each with their own real slots for the date,
+    already attached (list_doctors_with_slots_for_date, include_
+    unavailable=True, same as the patient-facing call). Deliberately
+    NOT that endpoint directly, for the same reason GET /appointments/
+    calendar above isn't GET /web/calendar: the patient-facing one
+    both rejects a request outside the patient scheduling window (409)
+    and is unauthenticated (fine for patients, but this is the
+    staff-only booking screen, matching GET /appointments/calendar's
+    staff dep) -- see that endpoint's own docstring. No
+    enforce_scheduling_window check here, matching every other admin
+    booking path in this router (create_appointment's own
+    enforce_scheduling_window=False).
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            doctors = list_doctors_with_slots_for_date(
+                cur,
+                department_id,
+                appointment_type_id,
+                selected_date,
+                include_unavailable=True,
+            )
+
+    return {
+        "department_id": department_id,
+        "appointment_type_id": appointment_type_id,
+        "date": selected_date.isoformat(),
+        "doctors": doctors,
     }
 
 

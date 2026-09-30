@@ -5927,7 +5927,9 @@ a.link.danger {
 .book-selected-patient-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   justify-content: space-between;
+  gap: var(--space-2);
   font-size: 0.78rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -5974,20 +5976,31 @@ a.link.danger {
 .book-date-nav {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-2);
   margin-bottom: var(--space-3);
 }
 
-.book-date-nav-label {
+.book-date-nav-input {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 14px;
+  padding: 6px 10px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-surface);
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
+  color: var(--color-primary);
+}
+
+.book-date-nav-input input[type='date'] {
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--color-text);
+  background: transparent;
+  width: 108px;
 }
 
 .book-availability-row {
@@ -6055,6 +6068,342 @@ a.link.danger {
   justify-content: center;
   gap: 6px;
   width: 100%;
+}
+
+/* Single-screen scheduler (department x type x date x doctor grid,
+   replacing the doctor-first step wizard above for the picker only --
+   .book-review-* above is reused verbatim for the right-hand summary,
+   and the success screen below is completely unchanged). Three
+   columns: persistent patient panel, the grid, persistent summary --
+   see docs/ux/SCREEN_MAP.md's BookAppointmentPanel.tsx entry. */
+.book-scheduler-layout {
+  display: grid;
+  /* The doctor x time grid is this page's primary content -- trimmed
+     down from an earlier 296px/300px split that starved it on a real
+     laptop viewport (~870px available here after the admin shell's own
+     nav rail and padding, not the full window width). The middle
+     column still won't fit a full clinic day at this width without
+     help, so .book-grid-card scrolls its own header+rows horizontally
+     (see below) rather than the grid ever being allowed to squeeze
+     hour ticks into illegibility or force the whole page to scroll. */
+  grid-template-columns: 240px minmax(0, 1fr) 240px;
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.book-scheduler-patient {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  position: sticky;
+  top: var(--space-4);
+}
+
+.book-scheduler-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.book-scheduler-filters {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.book-scheduler-filter-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.book-scheduler-filter-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-right: 2px;
+}
+
+.book-type-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.book-type-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-weight: 500;
+  font-size: 0.85rem;
+}
+
+.book-type-option .muted {
+  font-size: 0.78rem;
+}
+
+.book-type-option.active {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  font-weight: 600;
+}
+
+.book-grid-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  /* Horizontal, not hidden: the doctor column + a full clinic day of
+     hour ticks need more width than the middle grid column reliably
+     has (see .book-scheduler-layout above). Scrolling this card's own
+     content keeps the hour ticks/slots legible at any width instead of
+     letting them get squeezed into an overlapping pile -- .book-grid-
+     header and .book-grid-row both carry the same min-width so the
+     header's hour ticks and each row's slots stay aligned as one
+     scrolls. */
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.book-grid-placeholder {
+  flex-grow: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  min-height: 160px;
+  text-align: center;
+  padding: var(--space-4);
+}
+
+.book-grid-header {
+  display: flex;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+  min-width: 560px;
+}
+
+.book-grid-header-doctor-col {
+  width: 152px;
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-4);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.book-grid-header-hours {
+  flex-grow: 1;
+  min-width: 408px;
+  position: relative;
+  height: 38px;
+}
+
+.book-grid-hour-label {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--color-border);
+  padding: var(--space-3) 0 0 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.book-grid-row {
+  display: flex;
+  border-bottom: 1px solid var(--color-border);
+  min-width: 560px;
+}
+
+.book-grid-row:last-child {
+  border-bottom: none;
+}
+
+.book-grid-row-doctor {
+  width: 152px;
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+
+.book-grid-row-doctor strong {
+  font-size: 0.85rem;
+}
+
+.book-grid-row-doctor .muted {
+  font-size: 0.72rem;
+}
+
+.book-grid-row-track {
+  flex-grow: 1;
+  min-width: 408px;
+  position: relative;
+  height: 52px;
+  background: var(--color-bg-subtle);
+}
+
+.book-grid-slot {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-primary-soft-strong);
+  background: var(--color-primary-soft);
+  cursor: pointer;
+  padding: 0;
+}
+
+.book-grid-slot:hover {
+  background: var(--color-primary-soft-strong);
+}
+
+.book-grid-slot.selected {
+  border: none;
+  background: var(--color-primary);
+}
+
+.book-grid-slot:focus-visible {
+  outline: 3px solid var(--color-text);
+  outline-offset: 1px;
+  z-index: 2;
+}
+
+.book-grid-legend {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  padding: 2px var(--space-1);
+}
+
+.book-grid-legend-items {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+.book-grid-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.book-grid-legend-swatch {
+  width: 13px;
+  height: 13px;
+  border-radius: 4px;
+  display: inline-block;
+}
+
+.book-grid-legend-swatch.available {
+  background: var(--color-primary-soft);
+  border: 1px solid var(--color-primary-soft-strong);
+}
+
+.book-grid-legend-swatch.selected {
+  background: var(--color-primary);
+}
+
+.book-grid-legend-swatch.unavailable {
+  background: var(--color-bg-subtle);
+  border: 1px solid var(--color-border);
+}
+
+.book-grid-legend-hint {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+}
+
+.book-summary-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-subtle);
+}
+
+.book-summary-item.filled {
+  background: var(--color-primary-soft);
+}
+
+.book-summary-item-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+.book-summary-item-body {
+  min-width: 0;
+}
+
+.book-summary-item-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.book-summary-item-value {
+  font-size: 0.85rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.book-summary-footnote {
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-3);
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+@media (max-width: 1100px) {
+  .book-scheduler-layout {
+    grid-template-columns: 1fr;
+  }
+  .book-scheduler-patient,
+  .book-appointment-side {
+    position: static;
+  }
 }
 
 /* The OPD visit success screen (point 10) -- centered, unlike

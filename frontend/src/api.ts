@@ -1447,6 +1447,25 @@ export function getAdminCalendarMonth(
   return request(`/appointments/calendar?${params.toString()}`, { auth: 'staff' })
 }
 
+// Staff-only equivalent of getDoctorsForDate's department-wide sibling
+// (getDoctorsForDate itself is unauthenticated, /web/availability/by-date,
+// patient-facing) -- every doctor in the department offering this
+// appointment type, with their own real slots for the date already
+// attached, no patient scheduling-window restriction, same "why not just
+// call the patient endpoint" reasoning as getAdminCalendarMonth above.
+export function getDoctorsForDateByDepartment(
+  departmentId: number,
+  appointmentTypeId: number,
+  isoDate: string,
+): Promise<{ doctors: DoctorWithSlots[] }> {
+  const params = new URLSearchParams({
+    department_id: String(departmentId),
+    appointment_type_id: String(appointmentTypeId),
+    selected_date: isoDate,
+  })
+  return request(`/appointments/availability/by-department?${params.toString()}`, { auth: 'staff' })
+}
+
 // -- Prescription (OPD/HIMS master spec Phase 8) --------------------------
 
 export function getPrescription(appointmentId: number): Promise<Prescription> {
