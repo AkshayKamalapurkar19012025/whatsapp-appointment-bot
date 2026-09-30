@@ -8671,9 +8671,14 @@ a.link.danger {
   margin-left: 6px;
 }
 
+/* Neutral, not amber. This pill tags the name-only allergen text match
+   (app/services/allergy_check_service.py), which is explicitly not a
+   clinical finding -- see .consult-allergy-conflict-warning below for
+   why it must not share .pill.severity-severe's amber. */
 .pill.severity-check {
-  background: var(--color-warning-soft);
-  color: var(--color-warning);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border-strong);
 }
 
 /* Visit Completion checklist (master spec section 43), inside
@@ -9276,15 +9281,35 @@ a.link.danger {
   gap: var(--space-2);
 }
 
+/* Neutral surface, deliberately NOT the amber of .pill.severity-severe.
+   Amber in this app means a recorded clinical fact about the patient --
+   a documented allergy and its severity. This card is a substring match
+   between a drug name and an allergen string (allergy_check_service.py
+   does `allergen_normalized in name`, no drug-class or ingredient
+   concept), and the card's own copy says so. Dressing an unverified
+   text coincidence in the same colour as a documented anaphylaxis makes
+   the two indistinguishable at a glance and inflates what the check
+   actually proves. Amber survives here only on the warning icon and the
+   "Name match only" disclaimer, which is where it belongs. The card
+   does not need colour to be noticed: it interrupts the add-item flow
+   and cannot be dismissed without choosing Continue or Cancel. */
 .consult-allergy-conflict-warning {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-3);
-  background: var(--color-warning-soft);
-  border: 1px solid var(--color-warning);
+  background: var(--color-surface-hover);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-md);
   margin-bottom: var(--space-3);
+}
+
+.consult-allergy-conflict-body > svg {
+  color: var(--color-warning);
+}
+
+.consult-allergy-conflict-body strong {
+  color: var(--color-warning);
 }
 
 .consult-allergy-conflict-body {

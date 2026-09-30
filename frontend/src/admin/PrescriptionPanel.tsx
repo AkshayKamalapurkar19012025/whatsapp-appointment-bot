@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { PencilSimple, Warning } from '@phosphor-icons/react'
+import { Warning } from '@phosphor-icons/react'
 import {
   ApiError,
   addPrescriptionItem,
@@ -8,7 +8,7 @@ import {
   prescribePrescription,
   removePrescriptionItem,
 } from '../api'
-import type { AllergyConflict, Prescription, PrescriptionItem, PrescriptionItemInput } from '../types'
+import type { AllergyConflict, Prescription, PrescriptionItemInput } from '../types'
 import { formatDateTime } from '../format'
 import MedicationPicker from './MedicationPicker'
 
@@ -59,8 +59,7 @@ export default function PrescriptionPanel({
   const [notCheckedIn, setNotCheckedIn] = useState(false)
 
   const [form, setForm] = useState<PrescriptionItemInput>(BLANK_ITEM)
-  // The add/edit form is collapsed behind "+ Add medication" until
-  // opened -- editing an item (startEditItem) opens it too, pre-filled.
+  // The add form is collapsed behind "+ Add medication" until opened.
   const [showAddForm, setShowAddForm] = useState(false)
   const [adding, setAdding] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -165,31 +164,6 @@ export default function PrescriptionPanel({
     } finally {
       setRemovingId(null)
     }
-  }
-
-  // There is no update-item endpoint (only add and remove -- see
-  // app/api/pharmacy.py) -- "edit" is a genuine, honest composition of
-  // the two real ones: pre-fill the add-item form with this item's
-  // current values, remove the original, and let the clinician
-  // resubmit through the exact same handleAddItem path (including its
-  // own allergy check, which a raw in-place edit would have to
-  // duplicate or bypass). Only reachable pre-send (editable gates the
-  // Edit button in the table below), matching remove's own gate.
-  async function startEditItem(item: PrescriptionItem) {
-    setForm({
-      medicine_name: item.medicine_name,
-      generic_name: item.generic_name ?? '',
-      dosage: item.dosage ?? '',
-      route: item.route ?? '',
-      frequency: item.frequency ?? '',
-      duration: item.duration ?? '',
-      quantity: item.quantity,
-      food_instructions: item.food_instructions ?? '',
-      special_instructions: item.special_instructions ?? '',
-      medication_id: item.medication_id ?? null,
-    })
-    setShowAddForm(true)
-    await handleRemoveItem(item.id)
   }
 
   async function handlePrescribe() {
@@ -475,17 +449,16 @@ export default function PrescriptionPanel({
                     {item.dispense_status.replace('_', ' ')}
                   </span>
                 </td>
+                {/* No Edit control: app/api/pharmacy.py has no update-item
+                    endpoint, only POST items and DELETE items/{id}. An
+                    "edit" would have to compose those two, and both
+                    orderings are unsafe for a prescription -- deleting
+                    first loses the line if the re-add never lands,
+                    adding first leaves a duplicate medication order if
+                    the delete fails. Remove + Add is the honest
+                    workflow until a real PATCH exists (issue #131). */}
                 {editable && (
                   <td className="queue-row-actions">
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      aria-label={`Edit ${item.medicine_name}`}
-                      disabled={removingId === item.id}
-                      onClick={() => startEditItem(item)}
-                    >
-                      <PencilSimple size={15} />
-                    </button>
                     <button
                       type="button"
                       className="btn-danger btn btn-sm"
@@ -504,7 +477,8 @@ export default function PrescriptionPanel({
 
       {prescription.items.length > 0 && (
         <p className="muted consult-prescription-footnote">
-          Items can be edited until sent. After sending, only the whole prescription can be cancelled.
+          Items can be removed and re-added until sent. After sending, only the whole prescription can be
+          cancelled.
         </p>
       )}
 

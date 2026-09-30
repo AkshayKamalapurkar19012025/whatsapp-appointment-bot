@@ -258,7 +258,18 @@ test.describe('ConsultationWorkspace', () => {
     await expect(page.getByLabel(/chief complaint/i)).toBeEnabled()
   })
 
-  test('prescription item can be edited before send; after send only whole-prescription cancel remains', async ({
+  // There is no update endpoint for a prescription item -- app/api/
+  // pharmacy.py exposes only POST .../prescription/items and DELETE
+  // .../prescription/items/{item_id}. Any "Edit" affordance therefore
+  // has to compose a delete and an add, and every ordering of those two
+  // calls is unsafe: delete-first loses the line outright if the re-add
+  // never happens, add-first leaves a duplicate medication order if the
+  // delete fails. Neither is acceptable for a prescription, so the
+  // button is gone until a real PATCH endpoint exists (tracked in
+  // issue #131) and Remove + Add is the honest workflow in the
+  // meantime. This spec pins that: no Edit control, and remove/re-add
+  // still works.
+  test('prescription items have no Edit control; remove and re-add is the pre-send workflow, and after send only whole-prescription cancel remains', async ({
     page,
     request,
   }) => {
@@ -280,12 +291,76 @@ test.describe('ConsultationWorkspace', () => {
     await page.getByRole('button', { name: /save|add/i }).last().click()
 
     const item = page.locator('.consult-prescription-item', { hasText: 'Amlodipine' })
-    await expect(item.getByRole('button', { name: /edit/i })).toBeVisible()
+    await expect(item).toBeVisible()
+    // No Edit control at all -- not merely hidden after send.
+    await expect(item.getByRole('button', { name: /edit/i })).toHaveCount(0)
+
+    // Remove takes the line away for real (the backend DELETE), and the
+    // clinician re-adds a corrected one. Asserted end to end rather
+    // than on the button alone, because the whole point of dropping
+    // Edit is that this path is the only one that touches the server.
+    await item.getByRole('button', { name: /remove/i }).click()
+    await expect(page.locator('.consult-prescription-item', { hasText: 'Amlodipine' })).toHaveCount(0)
+
+    await page.getByRole('button', { name: '+ Add medication' }).click()
+    await page.getByLabel(/medicine name/i).fill('Amlodipine 5mg')
+    await page.getByLabel(/dosage/i).fill('1 tab')
+    await page.getByLabel(/frequency/i).fill('once daily')
+    await page.getByLabel(/duration/i).fill('30 days')
+    await page.getByRole('button', { name: /save|add/i }).last().click()
+
+    const corrected = page.locator('.consult-prescription-item', { hasText: 'Amlodipine 5mg' })
+    await expect(corrected).toBeVisible()
+    await expect(page.getByText(/items can be removed and re-added until sent/i)).toBeVisible()
 
     await page.getByRole('button', { name: /send to pharmacy/i }).click()
 
-    await expect(item.getByRole('button', { name: /edit/i })).toHaveCount(0)
+    await expect(corrected.getByRole('button', { name: /remove/i })).toHaveCount(0)
     await expect(page.getByText(/only the whole prescription can be cancelled/i)).toBeVisible()
     await expect(page.getByRole('button', { name: /cancel prescription/i })).toBeVisible()
+  })
+
+  // The two amber treatments must not be confusable: a recorded SEVERE
+  // allergy is a verified clinical fact, while the prescription
+  // conflict card is a name-only substring match (allergy_check_
+  // service.py) that explicitly is not a clinical check. Option B --
+  // amber stays exclusive to the recorded fact, the name match goes
+  // neutral.
+  test('a SEVERE allergy and the name-match warning are visually distinguishable', async ({ page, request }) => {
+    const token = await loginAdmin(request)
+    const scenario = await seedBasicScenario(request, token)
+    await addAllergy(request, token, scenario.patient.id, 'Amoxicillin', {
+      reaction: 'anaphylaxis',
+      severity: 'SEVERE',
+    })
+    await bookAndCheckIn(request, token, {
+      doctorId: scenario.doctor.id,
+      patientId: scenario.patient.id,
+      appointmentTypeId: scenario.appointmentType.id,
+    })
+
+    await loginAndOpenConsultation(page, scenario.patient.name)
+
+    const severePill = page.locator('.pill.severity-severe').first()
+    await expect(severePill).toBeVisible()
+    const severeBg = await severePill.evaluate((el) => getComputedStyle(el).backgroundColor)
+
+    await page.locator('.consult-tab-prescription').click()
+    await page.getByRole('button', { name: '+ Add medication' }).click()
+    await page.getByLabel(/medicine name/i).fill('Amoxicillin 500mg')
+    await page.getByLabel(/dosage/i).fill('1 cap')
+    await page.getByRole('button', { name: /save|add/i }).last().click()
+
+    const conflict = page.locator('.consult-allergy-conflict-warning')
+    await expect(conflict).toBeVisible()
+    const conflictBg = await conflict.evaluate((el) => getComputedStyle(el).backgroundColor)
+
+    // The actual requirement: the two backgrounds are not the same
+    // colour. Asserted on computed style rather than a class name so a
+    // future restyle that collapses them back together fails here.
+    expect(conflictBg).not.toBe(severeBg)
+    // And the name match specifically is not wearing the clinical
+    // warning tint -- amber is reserved for the recorded allergy.
+    expect(conflictBg).not.toBe('rgb(253, 242, 223)')
   })
 })
