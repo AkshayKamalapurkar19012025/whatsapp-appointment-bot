@@ -75,6 +75,19 @@ export function isoDateToday(): string {
   return clinicNowParts(new Date()).dateStr
 }
 
+// "11:12 AM" in the clinic's own configured timezone -- the same
+// conversion isoDateToday/currentDayOfWeek already go through, exported
+// so the Book Appointment header's "now" reads the clinic's clock
+// rather than the receptionist's device clock. (LiveClock.tsx formats
+// the same thing for the top bar, but holds its own fetched copy of the
+// timezone and renders a whole component; this is just the string.)
+export function clinicClockLabel(now: Date = new Date()): string {
+  const { hour, minute } = clinicNowParts(now)
+  const suffix = hour >= 12 ? 'PM' : 'AM'
+  const hour12 = hour % 12 === 0 ? 12 : hour % 12
+  return `${hour12}:${String(minute).padStart(2, '0')} ${suffix}`
+}
+
 // 1=Monday..7=Sunday, matching doctor_schedule.day_of_week (see
 // DoctorDetail.tsx's original DAY_NAMES/dayOfWeekOccursInRange) -- the
 // opposite of JS's own Date.getDay() (0=Sunday..6=Saturday). Derived from

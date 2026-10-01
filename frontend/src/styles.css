@@ -6600,6 +6600,453 @@ a.link.danger {
   line-height: 1.5;
 }
 
+/* ---- Book Appointment redesign ------------------------------------
+   Soonest-first doctor list, a Next-available offer above it, and a
+   keyboard map printed on the screen. Every colour below is an existing
+   token; nothing here introduces a new literal. */
+
+.book-page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.book-page-heading h2 {
+  margin: 0;
+}
+
+.book-page-context {
+  margin: 2px 0 0;
+  font-size: 0.85rem;
+}
+
+.book-source-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background: var(--color-bg-subtle);
+  border-radius: var(--radius-md);
+}
+
+.book-source-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 36px;
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.book-source-pill.active {
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* The printed access key for a control. Monospace-ish box, never a
+   substitute for the control's own label. */
+.book-key-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  padding: 0 5px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.book-key-hint.on-dark {
+  border-color: var(--color-primary-soft-strong);
+  color: var(--color-on-primary);
+}
+
+.book-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.book-card-head h3 {
+  margin: 0;
+}
+
+.book-patient-result.highlighted {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+
+.book-type-option-name {
+  font-weight: inherit;
+}
+
+.book-type-option-meta {
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.book-type-note {
+  margin: var(--space-2) 0 0;
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+/* The one offer the screen leads with: the soonest bookable slot in
+   this department, bookable in a single keystroke. Inverted so it reads
+   as an answer rather than another row to scan. */
+.book-next-available {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.book-next-available-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.book-next-available-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.book-next-available-eyebrow {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-primary-soft);
+}
+
+.book-next-available-headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.book-next-available-time {
+  font-family: var(--font-heading);
+  font-size: 2rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.book-next-available-eta {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-primary-soft);
+}
+
+.book-next-available-doctor {
+  font-size: 0.95rem;
+  color: var(--color-primary-soft);
+  overflow-wrap: anywhere;
+}
+
+.book-next-available-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 46px;
+  padding: 0 var(--space-4);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-primary-hover);
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.book-next-available-cta:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.book-next-available-cta .book-key-hint {
+  border-color: var(--color-primary-soft-strong);
+  color: var(--color-primary-hover);
+}
+
+.book-next-available-runner-up {
+  font-size: 0.82rem;
+  color: var(--color-primary-soft);
+  border-top: 1px solid var(--color-primary-soft-strong);
+  padding-top: var(--space-3);
+}
+
+/* Walk-in: the date is a statement, not a control. */
+.book-date-locked {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 34px;
+  padding: 0 var(--space-3);
+  border-radius: 999px;
+  background: var(--color-bg-subtle);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.book-type-required {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 160px;
+  padding: var(--space-5);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.book-doctor-list {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.book-doctor-list-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.book-doctor-list-now {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-primary-hover);
+}
+
+.book-now-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-primary-hover);
+}
+
+.book-doctor-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.book-doctor-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.book-doctor-identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.book-doctor-naming {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.book-doctor-naming strong {
+  font-size: 0.9rem;
+}
+
+.book-doctor-naming .muted {
+  font-size: 0.78rem;
+}
+
+.book-doctor-stats {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
+.book-doctor-next {
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.book-doctor-left {
+  font-size: 0.8rem;
+}
+
+/* Same wrapping, duration-sized chip track the time grid uses -- the
+   full day is always visible and never scrolls sideways. */
+.book-doctor-slots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--book-slot-col, 44px), 1fr));
+  align-content: start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* A doctor who cannot be booked today is one line, never an empty
+   expanded row pretending to be bookable. */
+.book-doctor-collapsed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-subtle);
+  font-size: 0.85rem;
+}
+
+.book-doctor-collapsed:last-child {
+  border-bottom: none;
+}
+
+.book-patient-avatar.muted-avatar {
+  background: var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.book-doctor-collapsed-note {
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.book-summary-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: var(--space-2) 0;
+}
+
+.book-summary-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.book-summary-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.book-summary-row .muted {
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.book-walkin-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-subtle);
+}
+
+.book-walkin-toggles label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.book-walkin-toggles input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary);
+  margin: 0;
+}
+
+.book-review-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 48px;
+}
+
+/* The keyboard map stays on screen rather than hiding behind a "?" --
+   this is a screen staff drive at speed, every shift. */
+.book-shortcut-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-5);
+  margin-top: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
+.book-shortcut-bar span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.book-shortcut-title {
+  font-weight: 700;
+  color: var(--color-text);
+}
+
 @media (max-width: 1100px) {
   .book-scheduler-layout {
     grid-template-columns: 1fr;

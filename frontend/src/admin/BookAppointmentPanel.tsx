@@ -1,20 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowRight,
   CalendarBlank,
   CaretLeft,
   CaretRight,
   CheckCircle,
-  Clock,
-  CurrencyInr,
+  Lock,
   MagnifyingGlass,
-  User,
 } from '@phosphor-icons/react'
 import {
   ApiError,
   confirmAndCheckInAdmin,
   createAdminAppointment,
-  getAppConfig,
   getDoctorDepartments,
   getDoctorsForDateByDepartment,
   listAppointmentTypesForDepartment,
@@ -35,17 +32,27 @@ import type {
   Slot,
 } from '../types'
 import { formatAgeCompact, formatDate, formatDateWithWeekday, formatPreciseAge, formatTime } from '../format'
-import { isoDateToday } from './doctorSchedule'
+import { clinicClockLabel, isoDateToday } from './doctorSchedule'
 import PatientFormModal from './PatientFormModal'
 
 // Now persisted on the appointment (migrations/0023) -- see types.ts's
 // BookingSource for the ONLINE/PHONE/WALK_IN/STAFF_ASSISTED reasoning.
-const BOOKING_SOURCES: { key: BookingSource; label: string }[] = [
-  { key: 'ONLINE', label: 'Online' },
-  { key: 'PHONE', label: 'Phone' },
-  { key: 'WALK_IN', label: 'Walk-in' },
-  { key: 'STAFF_ASSISTED', label: 'Staff-assisted' },
+// Walk-in leads because it is the overwhelmingly common front-desk
+// case and the one this screen defaults to. `hint` is the access key
+// the keyboard map below binds (W/P/O/S) and the pill prints.
+const BOOKING_SOURCES: { key: BookingSource; label: string; hint: string }[] = [
+  { key: 'WALK_IN', label: 'Walk-in', hint: 'W' },
+  { key: 'PHONE', label: 'Phone', hint: 'P' },
+  { key: 'ONLINE', label: 'Online', hint: 'O' },
+  { key: 'STAFF_ASSISTED', label: 'Staff-assisted', hint: 'S' },
 ]
+
+const SOURCE_KEY_TO_SOURCE: Record<string, BookingSource> = {
+  w: 'WALK_IN',
+  p: 'PHONE',
+  o: 'ONLINE',
+  s: 'STAFF_ASSISTED',
+}
 
 function addDays(dateStr: string, days: number): string {
   const d = new Date(`${dateStr}T00:00:00`)
@@ -66,23 +73,14 @@ function minutesOfDay(isoString: string): number {
   return Number(match[1]) * 60 + Number(match[2])
 }
 
-// "9:00 AM" from minutesOfDay's own units -- formatTime's conversion
-// for a value that is already minutes-since-midnight rather than an
-// ISO string, so the grid header's day span reads identically to the
-// slot chips below it.
-function formatMinutesOfDay(totalMinutes: number): string {
-  const hour24 = Math.floor(totalMinutes / 60) % 24
-  const suffix = hour24 >= 12 ? 'PM' : 'AM'
-  let hour = hour24 % 12
-  if (hour === 0) hour = 12
-  return `${hour}:${String(totalMinutes % 60).padStart(2, '0')} ${suffix}`
-}
 
-// WCAG 2.5.8's minimum pointer target size. A slot chip is never
-// allowed below this however short the appointment type is -- a
-// 10-minute slot gets the same 44px floor a 35-minute one clears on
-// its own.
-const SLOT_MIN_WIDTH_PX = 44
+// A slot chip's floor. WCAG 2.5.8 puts the minimum pointer target at
+// 44px, but a chip also has to hold its own label, and the widest one
+// ("10:15 PM") needs more than that at this type scale -- at 44px the
+// late-evening slots of a short appointment type clipped. So the floor
+// is the label's requirement, which clears the accessibility minimum
+// comfortably rather than sitting exactly on it.
+const SLOT_MIN_WIDTH_PX = 68
 
 // Each doctor's slot columns are sized from *their own* slot length,
 // not from a fixed hour. The grid this replaces laid every slot out as
@@ -99,6 +97,47 @@ function slotColumnWidth(durationMinutes: number | null): number {
 
 function slotKey(doctorId: number, slot: Slot): string {
   return `${doctorId}:${slot.start_at}`
+}
+
+// Whole minutes from `nowMs` until an ISO instant. Unlike every other
+// time helper here this one DOES go through `new Date(...)`, and must:
+// the ISO string carries its own offset, so parsing it yields the
+// correct absolute instant whatever the viewer's device zone is, and an
+// absolute instant is exactly what "how long until this slot" needs.
+// Reading the wall-clock digits (minutesOfDay above) would instead
+// compare a clinic-local time against a device-local clock, which is
+// only right when the two zones agree.
+function minutesUntil(isoString: string, nowMs: number): number {
+  const target = new Date(isoString).getTime()
+  if (Number.isNaN(target)) return 0
+  return Math.round((target - nowMs) / 60000)
+}
+
+// "in 8 min" / "in 2 hr 10 min" / "now" -- the distance a receptionist
+// reads off the Next available card. Only ever shown for a slot on the
+// current clinic date (see etaFor below): on a future date the number
+// of minutes is both enormous and useless, and the date says it better.
+function formatEta(minutes: number): string {
+  if (minutes <= 0) return 'now'
+  if (minutes < 60) return `in ${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return rest === 0 ? `in ${hours} hr` : `in ${hours} hr ${rest} min`
+}
+
+// "Today, Wed 1 Oct 2026" / "Tomorrow, ..." / "Fri, 3 Oct 2026" -- the
+// date as a statement rather than a control, which is what walk-in
+// needs (the date is locked) and what the other sources' nav sits
+// beside.
+function dayContextLabel(dateStr: string, todayStr: string): string {
+  const full = formatDateWithWeekday(dateStr)
+  // "Today, Thu 1 Oct 2026" -- the weekday's own comma is dropped when
+  // Today/Tomorrow already supplies one, so the line never reads
+  // "Today, Thu, 1 Oct 2026".
+  const unpunctuated = full.replace(', ', ' ')
+  if (dateStr === todayStr) return `Today, ${unpunctuated}`
+  if (dateStr === addDays(todayStr, 1)) return `Tomorrow, ${unpunctuated}`
+  return full
 }
 
 // The patient search box below accepts free text (name, mobile number,
@@ -189,12 +228,20 @@ export default function BookAppointmentPanel({
   // other patient-registration entry point.
   autoOpenRegister?: boolean
 }) {
-  const [timezoneLabel, setTimezoneLabel] = useState<string | null>(null)
+  // Ticks so "in 8 min" and the header's "now" stay honest while the
+  // screen sits open at a front desk. 15s matches LiveClock's own
+  // cadence -- nothing here shows seconds, but a full minute of a
+  // visibly stale countdown reads as broken.
+  const [nowMs, setNowMs] = useState(() => Date.now())
 
   const [bookingSource, setBookingSource] = useState<BookingSource>('WALK_IN')
 
   const [patientSearch, setPatientSearch] = useState('')
   const [patientResults, setPatientResults] = useState<Patient[]>([])
+  // Which search result the arrow keys are on, so a patient can be
+  // picked without a mouse. -1 = none highlighted yet.
+  const [highlightIndex, setHighlightIndex] = useState(-1)
+  const patientSearchRef = useRef<HTMLInputElement | null>(null)
   const [patientResultsLoading, setPatientResultsLoading] = useState(false)
   const [patientSearchError, setPatientSearchError] = useState<string | null>(null)
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null)
@@ -237,6 +284,21 @@ export default function BookAppointmentPanel({
   // fires moved.
   const [selectedDoctorTypes, setSelectedDoctorTypes] = useState<AppointmentType[]>([])
   const [selectedDoctorTypesLoading, setSelectedDoctorTypesLoading] = useState(false)
+
+  // Duration and fee are properties of a (doctor, appointment type)
+  // assignment -- the department-level type list (AppointmentTypeSummary)
+  // carries neither, by design. So the visit-type buttons can only show
+  // real numbers once SOME doctor is known to read them from, and they
+  // say whose they are rather than implying a single clinic-wide value.
+  // The soonest-available doctor is that reference, because they are
+  // also the one the Next available card is offering.
+  const [referenceDoctorTypes, setReferenceDoctorTypes] = useState<AppointmentType[]>([])
+
+  // Walk-in only. Both default on: the patient is physically at the
+  // desk, so the overwhelmingly common case is book-and-check-in, and
+  // a token that gets generated is wanted on paper.
+  const [checkInNow, setCheckInNow] = useState(true)
+  const [printTokenSlip, setPrintTokenSlip] = useState(true)
 
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -288,9 +350,11 @@ export default function BookAppointmentPanel({
       })
       .catch(() => undefined)
       .finally(() => setDepartmentsLoading(false))
-    getAppConfig()
-      .then((c) => setTimezoneLabel(c.default_timezone))
-      .catch(() => undefined)
+  }, [])
+
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 15000)
+    return () => clearInterval(id)
   }, [])
 
   // Backend-driven search (GET /patients/search), not a client-side
@@ -317,6 +381,7 @@ export default function BookAppointmentPanel({
         .then((results) => {
           if (cancelled) return
           setPatientResults(results)
+          setHighlightIndex(-1)
         })
         .catch((err) => {
           if (cancelled) return
@@ -390,6 +455,14 @@ export default function BookAppointmentPanel({
       cancelled = true
     }
   }, [departmentId, appointmentTypeId, date])
+
+  // Walk-in is, by definition, a patient standing at the desk right
+  // now: there is no future date to book them into, so the date stops
+  // being a control at all and the picker disappears with it. Switching
+  // away from walk-in hands the date back unchanged.
+  useEffect(() => {
+    if (bookingSource === 'WALK_IN') setDate(isoDateToday())
+  }, [bookingSource])
 
   useEffect(() => {
     if (!selectedDoctorId) {
@@ -483,36 +556,53 @@ export default function BookAppointmentPanel({
     // the same day.
   }
 
-  async function handleSubmit() {
-    // The Book button is disabled whenever missingSelectionMessage() is
-    // non-null (same fields checked there), so this should be
-    // unreachable in normal use -- kept as a guard, not silently, so a
-    // click that somehow gets through with an incomplete selection
-    // surfaces an actual error instead of doing nothing.
-    if (!selectedPatient || !selectedDoctor || !selectedDoctorType || !selectedSlot) {
+  // `override` lets the Next available card (and Enter pressed with
+  // nothing picked) book a doctor+slot that was never put into
+  // selection state -- the whole point of that card is one keystroke,
+  // not select-then-confirm. Everything else about the booking,
+  // including which appointment-type assignment supplies the fee, is
+  // resolved the same way for both paths.
+  async function handleSubmit(override?: { doctor: DoctorWithSlots; slot: Slot }) {
+    const doctor = override?.doctor ?? selectedDoctor
+    const slot = override?.slot ?? selectedSlot
+    // Duration and fee are per (doctor, type). For the selected doctor
+    // they are already loaded; for an override they may not be, so they
+    // are fetched for that doctor before booking rather than borrowed
+    // from whoever happened to be selected.
+    if (!selectedPatient || !doctor || !slot || !appointmentTypeId) {
       setError('Some required fields are missing. Please review your selection and try again.')
       return
     }
     setError(null)
     setBusy(true)
     try {
+      const doctorTypes =
+        doctor.id === selectedDoctorId && selectedDoctorTypes.length > 0
+          ? selectedDoctorTypes
+          : await listAppointmentTypesForDoctor(doctor.id)
+      const doctorType = doctorTypes.find((t) => String(t.id) === appointmentTypeId)
+      if (!doctorType) {
+        setError('This doctor does not offer this appointment type.')
+        return
+      }
+
       const created = await createAdminAppointment(
-        selectedDoctor.id,
+        doctor.id,
         selectedPatient.id,
-        selectedDoctorType.id,
-        selectedSlot.start_at,
+        doctorType.id,
+        slot.start_at,
         bookingSource,
       )
       setJustBooked({
-        doctorId: selectedDoctor.id,
+        doctorId: doctor.id,
         patientId: selectedPatient.id,
         patientUhid: selectedPatient.uhid,
-        appointmentTypeName: selectedDoctorType.name,
-        consultationFee: selectedDoctorType.consultation_fee,
+        appointmentTypeName: doctorType.name,
+        consultationFee: doctorType.consultation_fee,
         appointmentId: created.id,
-        doctorName: selectedDoctor.name,
+        doctorName: doctor.name,
         patientName: selectedPatient.name,
-        slot: selectedSlot,
+        slot,
         bookingSource,
       })
       setArrivalResult(null)
@@ -520,6 +610,15 @@ export default function BookAppointmentPanel({
       setPaymentSettleResult(null)
       setPaymentSettleError(null)
       resetForm()
+
+      // The walk-in patient is already standing there, so "Check in
+      // now" (on by default) does at booking time exactly what the
+      // success screen's own button does -- the receptionist should not
+      // have to press a second button to state something that was
+      // already true when they started.
+      if (bookingSource === 'WALK_IN' && checkInNow) {
+        await runCheckIn(created.id, doctorType.consultation_fee)
+      }
     } catch (err) {
       setError(
         err instanceof ApiError
@@ -543,16 +642,18 @@ export default function BookAppointmentPanel({
   // Charge step for a visit that was never going to charge anything. A
   // nonzero fee never reaches this branch at all; that patient's
   // payment step still happens on the Appointments page, unchanged.
-  async function handleConfirmAndCheckIn() {
-    if (!justBooked) return
+  // Takes its appointment id and fee as arguments rather than reading
+  // justBooked, so handleSubmit can run it in the same tick it books --
+  // the state setter above has not committed yet at that point.
+  async function runCheckIn(appointmentId: number, consultationFee: number) {
     setArrivalBusy(true)
     setArrivalError(null)
     try {
-      const result = await confirmAndCheckInAdmin(justBooked.appointmentId)
+      const result = await confirmAndCheckInAdmin(appointmentId)
       setArrivalResult(result)
-      if (result.arrival_kind === 'checked_in' && justBooked.consultationFee === 0) {
+      if (result.arrival_kind === 'checked_in' && consultationFee === 0) {
         try {
-          const settled = await settleFreeVisitAdmin(justBooked.appointmentId)
+          const settled = await settleFreeVisitAdmin(appointmentId)
           setPaymentSettleResult(settled)
         } catch (err) {
           setPaymentSettleError(err instanceof ApiError ? err.message : 'Could not settle this free visit automatically.')
@@ -563,6 +664,11 @@ export default function BookAppointmentPanel({
     } finally {
       setArrivalBusy(false)
     }
+  }
+
+  function handleConfirmAndCheckIn() {
+    if (!justBooked) return
+    void runCheckIn(justBooked.appointmentId, justBooked.consultationFee)
   }
 
   const today = isoDateToday()
@@ -577,36 +683,51 @@ export default function BookAppointmentPanel({
     setDate(next)
   }
 
-  // The real span of bookable time across every returned doctor, in
-  // minutes-since-midnight -- never a hardcoded "9am-5pm" assumption,
-  // so a department whose doctors run earlier/later/longer hours still
-  // describes itself correctly. Exact slot edges, not padded out to
-  // whole hours: this is now a header *label* ("9:00 AM - 4:55 PM"),
-  // not the denominator of a proportional axis.
-  //
-  // It stopped being a denominator because that axis was the bug. Slot
-  // chips used to be absolutely positioned at `left: pct(start)` with
-  // `width: pct(end) - pct(start)`, which ties every chip's width to
-  // how long the clinic day happens to be: the same 35-minute slot
-  // renders 26px wide in an 8-hour day and half that in a 16-hour one,
-  // and no width is wide enough to hold its own "9:00 AM" label. The
-  // track below is a wrapping grid of real, labelled chips instead --
-  // reading order is still chronological, so the time axis survives as
-  // the chip labels themselves rather than as a scale nothing fits on.
-  const gridBounds = useMemo(() => {
-    let min = Infinity
-    let max = -Infinity
-    for (const doc of doctorsWithSlots) {
-      for (const s of doc.slots) {
-        const startMin = minutesOfDay(s.start_at)
-        const endMin = minutesOfDay(s.end_at)
-        if (startMin < min) min = startMin
-        if (endMin > max) max = endMin
-      }
-    }
-    if (!isFinite(min) || !isFinite(max) || min >= max) return null
-    return { start: min, end: max }
-  }, [doctorsWithSlots])
+
+  // The three lists the centre column is built from. A doctor with
+  // slots is bookable and sorts by their own first free time, because
+  // "who can see this patient soonest" is the only question being asked
+  // at a walk-in desk. A doctor without slots cannot be ranked that way
+  // and collapses instead -- and the two reasons they have none are not
+  // the same fact: total_slots is that day's capacity, so >0 with
+  // nothing left means genuinely fully booked, while 0 means they hold
+  // no clinic that day at all. The endpoint returns both (include_
+  // unavailable=True); conflating them would tell staff a doctor is
+  // booked solid when they are simply off.
+  const bookableDoctors = useMemo(
+    () =>
+      doctorsWithSlots
+        .filter((d) => d.slots.length > 0)
+        .sort((a, b) => minutesOfDay(a.slots[0].start_at) - minutesOfDay(b.slots[0].start_at)),
+    [doctorsWithSlots],
+  )
+
+  const unbookableDoctors = useMemo(
+    () => doctorsWithSlots.filter((d) => d.slots.length === 0),
+    [doctorsWithSlots],
+  )
+
+  const nextAvailable = useMemo(() => {
+    const doc = bookableDoctors[0]
+    if (!doc) return null
+    return { doctor: doc, slot: doc.slots[0] }
+  }, [bookableDoctors])
+
+  const runnerUp = useMemo(() => {
+    const doc = bookableDoctors[1]
+    if (!doc) return null
+    return { doctor: doc, slot: doc.slots[0] }
+  }, [bookableDoctors])
+
+  const isToday = date === today
+
+  // Only ever shown for a slot on the current clinic date -- see
+  // formatEta. On a future date the minute count is both huge and
+  // meaningless, so the date label carries it instead.
+  function etaFor(slot: Slot): string | null {
+    if (!isToday) return null
+    return formatEta(minutesUntil(slot.start_at, nowMs))
+  }
 
   // Roving tabindex's "current" cell -- state when the grid has been
   // navigated, otherwise the first doctor's first slot, recomputed
@@ -614,12 +735,134 @@ export default function BookAppointmentPanel({
   // focus onto the grid on its own; only an explicit arrow-key press
   // (handleGridKeyDown below) ever calls .focus() directly.
   const firstCellKey =
-    doctorsWithSlots.length > 0 && doctorsWithSlots[0].slots.length > 0
-      ? slotKey(doctorsWithSlots[0].id, doctorsWithSlots[0].slots[0])
-      : null
+    bookableDoctors.length > 0 ? slotKey(bookableDoctors[0].id, bookableDoctors[0].slots[0]) : null
   const activeKeyIsValid =
-    activeCellKey !== null && doctorsWithSlots.some((d) => d.slots.some((s) => slotKey(d.id, s) === activeCellKey))
+    activeCellKey !== null && bookableDoctors.some((d) => d.slots.some((s) => slotKey(d.id, s) === activeCellKey))
   const effectiveActiveKey = activeKeyIsValid ? activeCellKey : firstCellKey
+
+  // The soonest-available doctor supplies the duration/fee shown on the
+  // visit-type buttons. One request, not one per doctor: it returns
+  // every type that doctor offers, which is exactly the list being
+  // rendered.
+  useEffect(() => {
+    const referenceId = bookableDoctors[0]?.id
+    if (!referenceId) {
+      setReferenceDoctorTypes([])
+      return
+    }
+    let cancelled = false
+    listAppointmentTypesForDoctor(referenceId)
+      .then((ts) => {
+        if (!cancelled) setReferenceDoctorTypes(ts)
+      })
+      .catch(() => {
+        if (!cancelled) setReferenceDoctorTypes([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [bookableDoctors])
+
+  // Everything the keyboard map needs that isn't already a plain
+  // handler. Deliberately on document, not the section: "/" and the
+  // source keys have to work before anything inside this screen has
+  // been focused, which is the state a receptionist starts in.
+  //
+  // Every binding is suppressed while focus is in a text field --
+  // otherwise typing a patient called "Walk" would silently change the
+  // booking source four times. Modified presses are left alone so
+  // browser and OS shortcuts keep working.
+  const bookNextAvailable = useCallback(() => {
+    if (!nextAvailable) return
+    void handleSubmit({ doctor: nextAvailable.doctor, slot: nextAvailable.slot })
+    // handleSubmit is redefined every render; depending on it would
+    // re-bind the listener constantly for no benefit, and it only ever
+    // reads current state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nextAvailable])
+
+  useEffect(() => {
+    function isTypingTarget(target: EventTarget | null): boolean {
+      if (!(target instanceof HTMLElement)) return false
+      const tag = target.tagName
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return
+      // A modal owns the keyboard while it is open. Without this, Esc
+      // pressed to dismiss the register form would also wipe the
+      // patient, doctor and slot chosen on the screen behind it, and
+      // "/" or a source key typed into that form would leak out here.
+      if (document.querySelector('.modal-overlay')) return
+      const typing = isTypingTarget(e.target)
+
+      if (e.key === 'Escape') {
+        // Always drops focus, not only out of a text field: Esc means
+        // "get me back to a clean slate", and leaving focus parked on
+        // whatever button was last clicked would swallow the Enter that
+        // normally books.
+        if (e.target instanceof HTMLElement) e.target.blur()
+        setPatientSearch('')
+        setHighlightIndex(-1)
+        setSelectedDoctorId(null)
+        setSelectedSlot(null)
+        return
+      }
+
+      if (typing) return
+
+      if (e.key === '/') {
+        e.preventDefault()
+        patientSearchRef.current?.focus()
+        return
+      }
+
+      const source = SOURCE_KEY_TO_SOURCE[e.key.toLowerCase()]
+      if (source) {
+        e.preventDefault()
+        setBookingSource(source)
+        return
+      }
+
+      // Enter from anywhere outside the grid books: whatever is
+      // selected, or else the Next available offer the card is already
+      // showing. A chip handles its own Enter (see handleGridKeyDown),
+      // so this never double-fires.
+      if (e.key === 'Enter') {
+        if (e.target instanceof HTMLElement && e.target.closest('.book-grid-slot')) return
+        if (e.target instanceof HTMLElement && e.target.closest('button, a')) return
+        if (busy) return
+        e.preventDefault()
+        if (selectedDoctor && selectedSlot) void handleSubmit()
+        else bookNextAvailable()
+      }
+    }
+
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookNextAvailable, busy, selectedDoctor, selectedSlot])
+
+  // Arrow keys/Enter inside the patient results list, so a patient can
+  // be chosen without leaving the search field.
+  function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (patientResults.length === 0) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setHighlightIndex((i) => Math.min(i + 1, patientResults.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setHighlightIndex((i) => Math.max(i - 1, 0))
+    } else if (e.key === 'Enter') {
+      const target = highlightIndex >= 0 ? patientResults[highlightIndex] : patientResults[0]
+      if (target) {
+        e.preventDefault()
+        selectPatient(target)
+        e.currentTarget.blur()
+      }
+    }
+  }
 
   function pickSlot(doctorId: number, slot: Slot) {
     setSelectedDoctorId(doctorId)
@@ -635,11 +878,22 @@ export default function BookAppointmentPanel({
   // itself, never via a reactive effect (see effectiveActiveKey above
   // for why).
   function handleGridKeyDown(e: React.KeyboardEvent<HTMLButtonElement>, doctorIndex: number, slotIndex: number) {
-    const rows = doctorsWithSlots
+    // Only the bookable rows are navigable -- the collapsed ones hold
+    // no chips to move between.
+    const rows = bookableDoctors
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
       const doc = rows[doctorIndex]
-      pickSlot(doc.id, doc.slots[slotIndex])
+      const slot = doc.slots[slotIndex]
+      // First Enter selects; a second Enter on the slot already
+      // selected books it, so a keyboard booking never has to leave the
+      // grid to find the confirm button.
+      const alreadySelected = selectedDoctorId === doc.id && selectedSlot?.start_at === slot.start_at
+      if (alreadySelected && e.key === 'Enter') {
+        if (!busy) void handleSubmit({ doctor: doc, slot })
+        return
+      }
+      pickSlot(doc.id, slot)
       return
     }
 
@@ -815,46 +1069,47 @@ export default function BookAppointmentPanel({
     )
   }
 
-  const summaryPatientLabel = selectedPatient ? selectedPatient.name : 'Search or select a patient'
-  const summaryTypeLabel = (() => {
-    const t = deptTypes.find((dt) => String(dt.id) === appointmentTypeId)
-    if (!t) return 'Not selected'
-    return selectedDoctorType ? `${t.name} · ₹${selectedDoctorType.consultation_fee}` : t.name
-  })()
-  const summarySlotLabel =
-    selectedDoctor && selectedSlot ? `${selectedDoctor.name} · ${formatTime(selectedSlot.start_at)}` : 'Pick an open slot on the grid'
+  const sourceLabel = BOOKING_SOURCES.find((s) => s.key === bookingSource)?.label ?? 'Walk-in'
+  const dateContext = dayContextLabel(date, today)
+  const departmentName = departments.find((d) => String(d.id) === departmentId)?.name ?? null
+  const summaryTypeName = deptTypes.find((t) => String(t.id) === appointmentTypeId)?.name ?? 'Not selected'
+
+  // The per-(doctor, type) assignment behind the current selection --
+  // the only place a real duration and fee exist.
+  const summaryDuration = selectedDoctorType ? `${selectedDoctorType.duration_minutes} min` : null
+  const summaryFee = selectedDoctorType ? selectedDoctorType.consultation_fee : null
+
+  // The button says what pressing it does, which for a walk-in with
+  // "Check in now" ticked is two things, not one.
   const bookLabel = busy
     ? 'Booking…'
-    : canSubmit
-      ? 'Book Appointment'
-      : !selectedPatient
-        ? 'Select a patient first'
-        : !appointmentTypeId
-          ? 'Select an appointment type'
-          : !selectedSlot
-            ? 'Pick a time slot'
-            : 'Loading…'
+    : isWalkIn && checkInNow
+      ? 'Book & check in'
+      : 'Book appointment'
 
   return (
     <section className="book-appointment-page">
-      <div className="admin-content-header">
-        <div>
-          <h2>Book Appointment</h2>
-          <p className="muted">Schedule an appointment for a patient by phone, walk-in, or on their behalf.</p>
+      <div className="book-page-header">
+        <div className="book-page-heading">
+          <h2>Book appointment</h2>
+          <p className="muted book-page-context">
+            {sourceLabel} · {dateContext} · {clinicClockLabel(new Date(nowMs))}
+          </p>
         </div>
         <div className="booking-source-picker">
           <span className="field-label">Booking source</span>
-          <div className="booking-source-pills" role="radiogroup" aria-label="Booking source">
+          <div className="book-source-pills" role="radiogroup" aria-label="Booking source">
             {BOOKING_SOURCES.map((s) => (
               <button
                 key={s.key}
                 type="button"
                 role="radio"
                 aria-checked={s.key === bookingSource}
-                className={s.key === bookingSource ? 'date-scope-pill active' : 'date-scope-pill'}
+                className={s.key === bookingSource ? 'book-source-pill active' : 'book-source-pill'}
                 onClick={() => setBookingSource(s.key)}
               >
                 {s.label}
+                <span className="book-key-hint" aria-hidden="true">{s.hint}</span>
               </button>
             ))}
           </div>
@@ -864,32 +1119,24 @@ export default function BookAppointmentPanel({
       {error && <p className="error">{error}</p>}
 
       <div className="book-scheduler-layout">
-        {/* Persistent patient panel -- not a gated step, always visible
-            and switchable regardless of what else has been picked. */}
+        {/* Left: who, and what kind of visit. */}
         <div className="book-scheduler-patient">
           <div className="book-step-card">
-            <div className="book-step-heading">
-              <span className={`book-step-number${selectedPatient ? ' done' : ' current'}`} aria-hidden="true">
-                1
-              </span>
-              <div>
-                <h3>{isWalkIn ? 'Walk-in patient' : 'Patient'}</h3>
-                <p className="muted">
-                  {isWalkIn
-                    ? 'Search for the patient who has arrived, or register them now.'
-                    : 'Search for an existing patient or register a new one.'}
-                </p>
-              </div>
+            <div className="book-card-head">
+              <h3>{isWalkIn ? 'Walk-in patient' : 'Patient'}</h3>
+              <span className="book-key-hint" aria-hidden="true">/</span>
             </div>
             <div className="book-step1-body">
               <div className="book-patient-search">
                 <label className="filter-bar-search-input book-patient-search-input">
                   <MagnifyingGlass size={16} aria-hidden="true" />
                   <input
+                    ref={patientSearchRef}
                     type="search"
                     placeholder="Search by name, mobile number, or UHID…"
                     value={patientSearch}
                     onChange={(e) => setPatientSearch(e.target.value)}
+                    onKeyDown={handleSearchKeyDown}
                     aria-label="Search by name, mobile number, or UHID"
                   />
                 </label>
@@ -914,11 +1161,19 @@ export default function BookAppointmentPanel({
                           : `${patientResults.length} patients found — select the correct one`}
                       </p>
                       <ul className="book-patient-results">
-                        {patientResults.map((p) => {
+                        {patientResults.map((p, index) => {
                           const age = p.date_of_birth ? formatPreciseAge(p.date_of_birth) : null
                           return (
                             <li key={p.id}>
-                              <button type="button" className="book-patient-result" onClick={() => selectPatient(p)}>
+                              <button
+                                type="button"
+                                className={
+                                  index === highlightIndex
+                                    ? 'book-patient-result highlighted'
+                                    : 'book-patient-result'
+                                }
+                                onClick={() => selectPatient(p)}
+                              >
                                 <span className="book-patient-avatar" aria-hidden="true">
                                   {p.name.slice(0, 2).toUpperCase()}
                                 </span>
@@ -963,17 +1218,6 @@ export default function BookAppointmentPanel({
 
               {selectedPatient && (
                 <div className="book-selected-patient-card">
-                  {/* Three stacked rows, not a two-column split: a
-                      badge/actions header, then avatar + name on one
-                      line, then the identifiers underneath spanning
-                      the card's full width. The previous layout put
-                      the avatar and the whole four-line text block
-                      side by side and vertically centered -- in this
-                      narrow column that left the initials floating
-                      mid-card against a name wrapping in a ~150px
-                      gutter beside them, with "Edit"/"Change" falling
-                      out of the wrapping header onto a bare row of
-                      their own above the patient's name. */}
                   <div className="book-selected-patient-header">
                     <span className="book-selected-patient-badge">
                       <CheckCircle size={14} weight="bold" aria-hidden="true" /> Selected
@@ -994,10 +1238,6 @@ export default function BookAppointmentPanel({
                       </span>
                       <strong className="book-selected-patient-name">{selectedPatient.name}</strong>
                     </div>
-                    {/* Age, not just the date of birth. The search
-                        results list above already shows both; staff
-                        confirming the right patient at the counter
-                        were the ones left doing the arithmetic. */}
                     <div className="muted book-selected-patient-meta">
                       {selectedPatient.uhid}
                       {selectedPatient.date_of_birth ? ` · ${formatDate(selectedPatient.date_of_birth)}` : ''}
@@ -1010,53 +1250,94 @@ export default function BookAppointmentPanel({
                     </div>
                     <div className="muted book-selected-patient-meta">{selectedPatient.whatsapp_number}</div>
                   </div>
-                  {selectedPatient.patient_type && (
-                    <div className="book-selected-patient-type">
-                      {selectedPatient.patient_type === 'recurring' ? 'Existing patient' : 'First-time patient'}
-                    </div>
-                  )}
                 </div>
               )}
             </div>
           </div>
 
           <div className="book-step-card">
-            <div className="book-step-heading">
-              <span className={`book-step-number${appointmentTypeId ? ' done' : departmentId ? ' current' : ''}`} aria-hidden="true">
-                2
-              </span>
-              <div>
-                <h3>Appointment type</h3>
-                <p className="muted">{deptTypesLoading ? 'Loading…' : 'Duration/fee depend on the doctor you pick.'}</p>
-              </div>
+            <div className="book-card-head">
+              <h3>Visit type</h3>
             </div>
-            <div role="radiogroup" aria-label="Appointment type" className="book-type-list">
-              {deptTypes.map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={String(t.id) === appointmentTypeId}
-                  className={String(t.id) === appointmentTypeId ? 'book-type-option active' : 'book-type-option'}
-                  disabled={!departmentId}
-                  onClick={() => setAppointmentTypeId(String(t.id))}
-                >
-                  {t.name}
-                </button>
-              ))}
+            <div role="radiogroup" aria-label="Visit type" className="book-type-list">
+              {deptTypes.map((t) => {
+                const reference = referenceDoctorTypes.find((rt) => rt.id === t.id)
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={String(t.id) === appointmentTypeId}
+                    className={String(t.id) === appointmentTypeId ? 'book-type-option active' : 'book-type-option'}
+                    disabled={!departmentId}
+                    onClick={() => setAppointmentTypeId(String(t.id))}
+                  >
+                    <span className="book-type-option-name">{t.name}</span>
+                    {reference && (
+                      <span className="muted book-type-option-meta">
+                        {reference.duration_minutes} min · ₹{reference.consultation_fee}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+              {deptTypesLoading && <p className="muted">Loading…</p>}
               {!deptTypesLoading && departmentId && deptTypes.length === 0 && (
                 <p className="muted">No appointment types are configured for this department yet.</p>
               )}
             </div>
+            {/* Duration and fee belong to a (doctor, type) pair, never
+                to a type on its own, so these numbers are attributed
+                rather than presented as a clinic-wide truth. */}
+            {referenceDoctorTypes.length > 0 && bookableDoctors[0] && (
+              <p className="muted book-type-note">
+                Duration and fee shown for {bookableDoctors[0].name}. Each doctor sets their own.
+              </p>
+            )}
           </div>
         </div>
 
-        {/* Grid: department filter + date nav above a doctor x time
-            grid, gated on an appointment type being chosen (GET
-            /appointments/availability/by-department requires one). */}
+        {/* Centre: the soonest offer, then everyone, soonest first. */}
         <div className="book-scheduler-main">
+          {appointmentTypeId && nextAvailable && (
+            <section className="book-next-available" aria-label="Next available">
+              <div className="book-next-available-main">
+                <div className="book-next-available-body">
+                  <div className="book-next-available-eyebrow">
+                    Next available{departmentName ? ` · ${departmentName}` : ''}
+                  </div>
+                  <div className="book-next-available-headline">
+                    <span className="book-next-available-time">{formatTime(nextAvailable.slot.start_at)}</span>
+                    {etaFor(nextAvailable.slot) && (
+                      <span className="book-next-available-eta">{etaFor(nextAvailable.slot)}</span>
+                    )}
+                  </div>
+                  <div className="book-next-available-doctor">
+                    {nextAvailable.doctor.name}
+                    {nextAvailable.doctor.specialization ? ` · ${nextAvailable.doctor.specialization}` : ''}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="book-next-available-cta"
+                  disabled={busy || !selectedPatient}
+                  onClick={() => handleSubmit({ doctor: nextAvailable.doctor, slot: nextAvailable.slot })}
+                >
+                  {selectedPatient ? 'Book now' : 'Select a patient first'}
+                  <span className="book-key-hint on-dark" aria-hidden="true">Enter ↵</span>
+                </button>
+              </div>
+              {runnerUp && (
+                <div className="book-next-available-runner-up">
+                  Also soon: {runnerUp.doctor.name} at {formatTime(runnerUp.slot.start_at)}
+                  {etaFor(runnerUp.slot) ? ` (${etaFor(runnerUp.slot)})` : ''}
+                </div>
+              )}
+            </section>
+          )}
+
           <div className="book-scheduler-filters">
-            <div className="book-scheduler-filter-group">
+            <div className="book-scheduler-filter-group book-dept-pills">
               <span className="book-scheduler-filter-label">Department</span>
               {departmentsLoading ? (
                 <span className="muted">Loading…</span>
@@ -1073,50 +1354,60 @@ export default function BookAppointmentPanel({
                 ))
               )}
             </div>
-            <div className="book-date-nav" style={{ marginBottom: 0 }}>
-              <button type="button" className="icon-btn" aria-label="Previous day" onClick={() => stepDay(-1)}>
-                <CaretLeft size={16} />
-              </button>
-              <button
-                type="button"
-                className={date === today ? 'date-scope-pill active' : 'date-scope-pill'}
-                onClick={() => jumpToDate(today)}
-              >
-                Today
-              </button>
-              <button
-                type="button"
-                className={date === addDays(today, 1) ? 'date-scope-pill active' : 'date-scope-pill'}
-                onClick={() => jumpToDate(addDays(today, 1))}
-              >
-                Tomorrow
-              </button>
-              {/* The native control still does the picking (its
-                  calendar, its keyboard handling, its min=today
-                  clamp) -- it is just made transparent and laid over
-                  the label, so what staff actually read is our own
-                  unambiguous rendering instead of the browser's
-                  locale-ordered "01/10/2026", which means 1 October
-                  under en-GB and 10 January under en-US. */}
-              <label className="book-date-nav-input">
-                <CalendarBlank size={15} weight="bold" aria-hidden="true" />
-                <span className="book-date-nav-value">{formatDateWithWeekday(date)}</span>
-                <input
-                  type="date"
-                  aria-label="Jump to date"
-                  min={today}
-                  value={date}
-                  onChange={(e) => e.target.value && jumpToDate(e.target.value)}
-                />
-              </label>
-              <button type="button" className="icon-btn" aria-label="Next day" onClick={() => stepDay(1)}>
-                <CaretRight size={16} />
-              </button>
-            </div>
+            {/* A walk-in is here now; there is no other day to put them
+                on, so the date is stated and the controls that would
+                offer one are not rendered at all. */}
+            {isWalkIn ? (
+              <span className="book-date-locked">
+                <Lock size={14} weight="bold" aria-hidden="true" />
+                {dateContext}
+              </span>
+            ) : (
+              <div className="book-date-nav" style={{ marginBottom: 0 }}>
+                <button type="button" className="icon-btn" aria-label="Previous day" onClick={() => stepDay(-1)}>
+                  <CaretLeft size={16} />
+                </button>
+                <button
+                  type="button"
+                  className={date === today ? 'date-scope-pill active' : 'date-scope-pill'}
+                  onClick={() => jumpToDate(today)}
+                >
+                  Today
+                </button>
+                <button
+                  type="button"
+                  className={date === addDays(today, 1) ? 'date-scope-pill active' : 'date-scope-pill'}
+                  onClick={() => jumpToDate(addDays(today, 1))}
+                >
+                  Tomorrow
+                </button>
+                <label className="book-date-nav-input">
+                  <CalendarBlank size={15} weight="bold" aria-hidden="true" />
+                  <span className="book-date-nav-value">{formatDateWithWeekday(date)}</span>
+                  <input
+                    type="date"
+                    aria-label="Jump to date"
+                    min={today}
+                    value={date}
+                    onChange={(e) => e.target.value && jumpToDate(e.target.value)}
+                  />
+                </label>
+                <button type="button" className="icon-btn" aria-label="Next day" onClick={() => stepDay(1)}>
+                  <CaretRight size={16} />
+                </button>
+              </div>
+            )}
           </div>
 
-          {appointmentTypeId ? (
-            <div className="book-grid-card">
+          {/* Slot length is a property of (doctor, visit type), so until
+              a type is chosen there is no honest width to draw a chip
+              at -- and a fixed grid would show slots that do not fit. */}
+          {!appointmentTypeId ? (
+            <div className="book-type-required">
+              Choose a visit type to see who is free. Slot length and fee depend on it.
+            </div>
+          ) : (
+            <section className="book-doctor-list">
               {gridError && <p className="error" style={{ margin: 'var(--space-3) var(--space-4) 0' }}>{gridError}</p>}
               {gridLoading && (
                 <div className="state-block">
@@ -1127,158 +1418,183 @@ export default function BookAppointmentPanel({
               {!gridLoading && !gridError && doctorsWithSlots.length === 0 && (
                 <div className="state-block empty">No doctors offer this appointment type in this department.</div>
               )}
-              {/* Not gated on gridBounds any more: that guard blanked
-                  the entire grid -- no rows, no doctor names, no
-                  "Unavailable" markers -- whenever *every* returned
-                  doctor happened to have zero slots, which is exactly
-                  the case the endpoint's include_unavailable=True
-                  exists to render. */}
               {!gridLoading && !gridError && doctorsWithSlots.length > 0 && (
                 <>
-                  <div className="book-grid-header">
-                    <div className="book-grid-header-doctor-col">Doctor</div>
-                    <div className="book-grid-header-hours">
-                      <span>Available times</span>
-                      {gridBounds && (
-                        <span className="book-grid-header-span">
-                          {formatMinutesOfDay(gridBounds.start)} – {formatMinutesOfDay(gridBounds.end)}
-                        </span>
-                      )}
+                  <div className="book-doctor-list-header">
+                    <div>
+                      {bookableDoctors.length} {bookableDoctors.length === 1 ? 'doctor' : 'doctors'} available
+                      <span className="muted"> · soonest first</span>
+                    </div>
+                    <div className="book-doctor-list-now">
+                      <span className="book-now-dot" aria-hidden="true" />
+                      Now {clinicClockLabel(new Date(nowMs))}
                     </div>
                   </div>
-                  {doctorsWithSlots.map((doc, doctorIndex) => {
-                    const duration = doc.slots.length > 0 ? minutesOfDay(doc.slots[0].end_at) - minutesOfDay(doc.slots[0].start_at) : null
+
+                  {bookableDoctors.map((doc, doctorIndex) => {
+                    const duration = minutesOfDay(doc.slots[0].end_at) - minutesOfDay(doc.slots[0].start_at)
                     return (
-                      <div className="book-grid-row" key={doc.id}>
-                        <div className="book-grid-row-doctor">
-                          <strong>{doc.name}</strong>
-                          <span className="muted">
-                            {doc.specialization}
-                            {duration != null ? ` · ${duration}-min slots` : ''}
-                          </span>
+                      <div className="book-doctor-row" key={doc.id}>
+                        <div className="book-doctor-row-head">
+                          <div className="book-doctor-identity">
+                            <span className="book-patient-avatar" aria-hidden="true">
+                              {doc.name.replace(/^Dr\.?\s*/i, '').slice(0, 2).toUpperCase()}
+                            </span>
+                            <div className="book-doctor-naming">
+                              <strong>{doc.name}</strong>
+                              <span className="muted">
+                                {doc.specialization}
+                                {duration > 0 ? ` · ${duration}-min slots` : ''}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="book-doctor-stats">
+                            <span className="book-doctor-next">{formatTime(doc.slots[0].start_at)}</span>
+                            <span className="book-doctor-left muted">{doc.slots.length} left</span>
+                          </div>
                         </div>
-                        {/* The track wraps instead of scrolling. A
-                            full clinic day of 44px-or-wider chips is
-                            simply wider than this column at any
-                            laptop viewport, so a single-line track
-                            can only ever be clipped (it was: 584px
-                            of content in a 360px box, opening
-                            mid-morning with the start of the day
-                            already scrolled off the left). Wrapping
-                            trades one axis for two and clips at
-                            neither width. */}
                         <div
-                          className="book-grid-row-track"
+                          className="book-doctor-slots"
                           style={{ '--book-slot-col': `${slotColumnWidth(duration)}px` } as React.CSSProperties}
                         >
-                          {doc.slots.length === 0 ? (
-                            <span className="book-grid-unavailable">Unavailable</span>
-                          ) : (
-                            doc.slots.map((slot, slotIndex) => {
-                              const key = slotKey(doc.id, slot)
-                              const isSelected = selectedDoctorId === doc.id && selectedSlot?.start_at === slot.start_at
-                              return (
-                                <button
-                                  key={key}
-                                  ref={(el) => {
-                                    if (el) cellRefs.current.set(key, el)
-                                    else cellRefs.current.delete(key)
-                                  }}
-                                  type="button"
-                                  className={isSelected ? 'book-grid-slot selected' : 'book-grid-slot'}
-                                  tabIndex={key === effectiveActiveKey ? 0 : -1}
-                                  title={`${doc.name} · ${formatTime(slot.start_at)}`}
-                                  aria-label={`${doc.name}, ${formatTime(slot.start_at)}`}
-                                  aria-pressed={isSelected}
-                                  onClick={() => pickSlot(doc.id, slot)}
-                                  onKeyDown={(e) => handleGridKeyDown(e, doctorIndex, slotIndex)}
-                                >
-                                  {formatTime(slot.start_at)}
-                                </button>
-                              )
-                            })
-                          )}
+                          {doc.slots.map((slot, slotIndex) => {
+                            const key = slotKey(doc.id, slot)
+                            const isSelected = selectedDoctorId === doc.id && selectedSlot?.start_at === slot.start_at
+                            return (
+                              <button
+                                key={key}
+                                ref={(el) => {
+                                  if (el) cellRefs.current.set(key, el)
+                                  else cellRefs.current.delete(key)
+                                }}
+                                type="button"
+                                className={isSelected ? 'book-grid-slot selected' : 'book-grid-slot'}
+                                tabIndex={key === effectiveActiveKey ? 0 : -1}
+                                title={`${doc.name} · ${formatTime(slot.start_at)}`}
+                                aria-label={`${doc.name}, ${formatTime(slot.start_at)}`}
+                                aria-pressed={isSelected}
+                                onClick={() => pickSlot(doc.id, slot)}
+                                onKeyDown={(e) => handleGridKeyDown(e, doctorIndex, slotIndex)}
+                              >
+                                {formatTime(slot.start_at)}
+                              </button>
+                            )
+                          })}
                         </div>
                       </div>
                     )
                   })}
+
+                  {/* One line each. "Fully booked" and "no clinic" are
+                      different facts -- total_slots is the day's
+                      capacity, so a doctor with capacity and nothing
+                      left is booked out, and a doctor with none simply
+                      is not working. */}
+                  {unbookableDoctors.map((doc) => (
+                    <div className="book-doctor-collapsed" key={doc.id}>
+                      <div className="book-doctor-identity">
+                        <span className="book-patient-avatar muted-avatar" aria-hidden="true">
+                          {doc.name.replace(/^Dr\.?\s*/i, '').slice(0, 2).toUpperCase()}
+                        </span>
+                        <span className="muted">
+                          <strong>{doc.name}</strong>
+                          {doc.total_slots > 0 ? ' · fully booked' : ' · not working this day'}
+                        </span>
+                      </div>
+                      <span className="muted book-doctor-collapsed-note">
+                        {doc.total_slots > 0 ? `${doc.total_slots} slots, all taken` : 'No clinic scheduled'}
+                      </span>
+                    </div>
+                  ))}
                 </>
               )}
-            </div>
-          ) : (
-            <div className="book-grid-placeholder">
-              Pick an appointment type on the left to see who's available.
-            </div>
+            </section>
           )}
-
-          <div className="book-grid-legend">
-            <div className="book-grid-legend-items">
-              <div className="book-grid-legend-item">
-                <span className="book-grid-legend-swatch available" /> Available
-              </div>
-              <div className="book-grid-legend-item">
-                <span className="book-grid-legend-swatch selected" /> Selected
-              </div>
-              <div className="book-grid-legend-item">
-                <span className="book-grid-legend-swatch unavailable" /> Unavailable
-              </div>
-            </div>
-            <span className="book-grid-legend-hint">Tab into the grid once, then arrow keys between slots, Enter to pick</span>
-          </div>
         </div>
 
-        {/* Persistent summary -- fills in progressively, not six
-            "Not selected" rows shown from the very start. */}
+        {/* Right: exactly what is about to happen. */}
         <div className="book-appointment-side">
           <div className="book-review-card">
             <h3>This appointment</h3>
 
-            <div className="book-review-list" style={{ gap: 'var(--space-2)' }}>
-              <div className={selectedPatient ? 'book-summary-item filled' : 'book-summary-item'} style={{ border: 'none' }}>
-                <span className="book-summary-item-icon">
-                  <User size={14} weight="bold" aria-hidden="true" />
-                </span>
-                <div className="book-summary-item-body">
-                  <div className="book-summary-item-label">Patient</div>
-                  <div className="book-summary-item-value">{summaryPatientLabel}</div>
+            <div className="book-summary-rows">
+              <div className="book-summary-row book-summary-patient">
+                <div className="book-summary-item-label">Patient</div>
+                <div className="book-summary-item-value">
+                  {selectedPatient ? selectedPatient.name : 'Search or select a patient'}
+                </div>
+                {selectedPatient && <div className="muted">{selectedPatient.uhid}</div>}
+              </div>
+              <div className="book-summary-row book-summary-doctor">
+                <div className="book-summary-item-label">Doctor</div>
+                <div className="book-summary-item-value">
+                  {selectedDoctor ? selectedDoctor.name : 'Pick an open slot'}
+                </div>
+                {selectedDoctor?.specialization && <div className="muted">{selectedDoctor.specialization}</div>}
+              </div>
+              <div className="book-summary-row book-summary-when">
+                <div className="book-summary-item-label">When</div>
+                <div className="book-summary-item-value">
+                  {selectedSlot ? `${dateContext.split(',')[0]}, ${formatTime(selectedSlot.start_at)}` : 'Not selected'}
+                </div>
+                <div className="muted">
+                  {selectedSlot && etaFor(selectedSlot) ? `${etaFor(selectedSlot)} · ` : ''}
+                  {summaryTypeName}
+                  {summaryDuration ? `, ${summaryDuration}` : ''}
                 </div>
               </div>
-              <div className={appointmentTypeId ? 'book-summary-item filled' : 'book-summary-item'} style={{ border: 'none' }}>
-                <span className="book-summary-item-icon">
-                  <CurrencyInr size={14} weight="bold" aria-hidden="true" />
-                </span>
-                <div className="book-summary-item-body">
-                  <div className="book-summary-item-label">Type</div>
-                  <div className="book-summary-item-value">{summaryTypeLabel}</div>
-                </div>
-              </div>
-              <div className={selectedSlot ? 'book-summary-item filled' : 'book-summary-item'} style={{ border: 'none' }}>
-                <span className="book-summary-item-icon">
-                  <Clock size={14} weight="bold" aria-hidden="true" />
-                </span>
-                <div className="book-summary-item-body">
-                  <div className="book-summary-item-label">Doctor &amp; time</div>
-                  <div className="book-summary-item-value">{summarySlotLabel}</div>
+              <div className="book-summary-row book-summary-fee">
+                <div className="book-summary-item-label">Fee</div>
+                <div className="book-summary-item-value">
+                  {summaryFee === null ? '—' : `₹${summaryFee}`}
                 </div>
               </div>
             </div>
 
-            {timezoneLabel && <p className="muted" style={{ fontSize: '0.72rem' }}>Doctor's time zone: {timezoneLabel}</p>}
+            {/* Walk-in only: both of these are already true of a patient
+                standing at the desk, so they are offered here instead
+                of as a second trip through the success screen. */}
+            {isWalkIn && (
+              <div className="book-walkin-toggles">
+                <label className="book-checkin-toggle">
+                  <input type="checkbox" checked={checkInNow} onChange={(e) => setCheckInNow(e.target.checked)} />
+                  Check in now
+                </label>
+                <label className="book-print-toggle">
+                  <input
+                    type="checkbox"
+                    checked={printTokenSlip}
+                    onChange={(e) => setPrintTokenSlip(e.target.checked)}
+                  />
+                  Print token slip
+                </label>
+              </div>
+            )}
 
             {!busy && (
               <p className="muted book-review-hint" aria-live="polite">
-                {missingSelection ?? 'Ready to book -- review the details above, then confirm.'}
+                {missingSelection ?? 'Ready to book — review the details above, then confirm.'}
               </p>
             )}
 
-            <button type="button" className="btn book-review-cta" disabled={!canSubmit} onClick={handleSubmit}>
-              <CalendarBlank size={16} weight="bold" aria-hidden="true" /> {bookLabel}
+            <button type="button" className="btn book-review-cta" disabled={!canSubmit} onClick={() => handleSubmit()}>
+              {bookLabel}
             </button>
             <button type="button" className="btn-secondary btn" onClick={resetForm}>
               Cancel
+              <span className="book-key-hint" aria-hidden="true">Esc</span>
             </button>
           </div>
         </div>
+      </div>
+
+      <div className="book-shortcut-bar">
+        <span className="book-shortcut-title">Keyboard</span>
+        <span><span className="book-key-hint">/</span> find patient</span>
+        <span><span className="book-key-hint">W P O S</span> booking source</span>
+        <span><span className="book-key-hint">← → ↑ ↓</span> move between slots</span>
+        <span><span className="book-key-hint">↵</span> book</span>
+        <span><span className="book-key-hint">Esc</span> clear</span>
       </div>
 
       {showRegisterModal && (

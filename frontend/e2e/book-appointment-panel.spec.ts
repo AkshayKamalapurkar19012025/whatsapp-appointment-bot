@@ -14,7 +14,13 @@ import {
 } from './helpers'
 
 // Layout regressions on the single-screen scheduler (BookAppointment
-// Panel.tsx). Every assertion here is about *rendered geometry* -- a
+// Panel.tsx). Carried across the Book Appointment redesign: the
+// defects these cover are still defects, so the assertions are
+// unchanged -- only the containers they look in moved (the proportional
+// time grid became a soonest-first doctor list), and
+// every spot that needs a date other than today now picks a booking
+// source other than walk-in first, because walk-in deliberately has no
+// date control at all. Every assertion here is about *rendered geometry* -- a
 // chip's measured width, whether two elements share a row, whether a
 // scroll container is wider than its own viewport -- which is exactly
 // the class of bug a DOM-only or mocked test cannot see: every one of
@@ -93,6 +99,10 @@ async function openBookAppointment(
   await page.getByText('Book Appointment', { exact: true }).first().click()
   await page.waitForLoadState('networkidle')
 
+  // Walk-in is the default and is locked to today; these specs assert
+  // on a doctor's whole working day, so they need a date they control.
+  await page.getByRole('radio', { name: /Phone/i }).click()
+
   await page.getByLabel(/Search by name, mobile number, or UHID/i).fill(scenario.patient.name)
   await page.locator('.book-patient-result').first().click()
   await expect(page.locator('.book-selected-patient-card')).toBeVisible()
@@ -106,7 +116,7 @@ async function openBookAppointment(
   await page.getByRole('button', { name: 'Tomorrow', exact: true }).click()
   await page.waitForLoadState('networkidle')
   if (opts.expectSlots === false) {
-    await expect(page.locator('.book-grid-row').first()).toBeVisible()
+    await expect(page.locator('.book-doctor-collapsed').first()).toBeVisible()
   } else {
     await expect(page.locator('.book-grid-slot').first()).toBeVisible()
   }
@@ -215,7 +225,7 @@ test.describe('BookAppointmentPanel layout', () => {
   })
 
   for (const vp of VIEWPORTS) {
-    // Fix 3 -- the grid is clipped: .book-grid-card scrolls its own
+    // Fix 3 -- the grid was clipped: the card scrolled its own
     // content (scrollWidth 584 vs clientWidth 360 as measured), so the
     // day both starts scrolled away from 9 AM and runs off the right
     // edge after midday.
@@ -224,7 +234,7 @@ test.describe('BookAppointmentPanel layout', () => {
       await page.setViewportSize(vp)
       await openBookAppointment(page, scenario)
 
-      const clipping = await page.locator('.book-grid-card').evaluate((el) => ({
+      const clipping = await page.locator('.book-doctor-list').evaluate((el) => ({
         scrollWidth: el.scrollWidth,
         clientWidth: el.clientWidth,
         scrollLeft: el.scrollLeft,
@@ -239,7 +249,7 @@ test.describe('BookAppointmentPanel layout', () => {
       await expect(page.locator('.book-grid-slot')).toHaveText(labels)
 
       // ...and every one of them is actually inside the card's box.
-      const cardBox = await box(page.locator('.book-grid-card'))
+      const cardBox = await box(page.locator('.book-doctor-list'))
       const count = await page.locator('.book-grid-slot').count()
       for (let i = 0; i < count; i++) {
         const b = await box(page.locator('.book-grid-slot').nth(i))
@@ -354,9 +364,13 @@ test.describe('BookAppointmentPanel layout', () => {
     await page.setViewportSize(VIEWPORTS[0])
     await openBookAppointment(page, { token, department, appointmentType, doctor, patient }, { expectSlots: false })
 
-    await expect(page.locator('.book-grid-row')).toHaveCount(1)
-    await expect(page.locator('.book-grid-row-doctor')).toContainText(doctor.name)
-    await expect(page.locator('.book-grid-unavailable')).toHaveCount(1)
+    // The redesign collapses an unbookable doctor to one line instead
+    // of drawing an empty expanded row -- but the point this spec was
+    // written for still holds: the doctor is rendered and named, not
+    // silently dropped because nobody in the department had a slot.
+    await expect(page.locator('.book-doctor-row')).toHaveCount(0)
+    await expect(page.locator('.book-doctor-collapsed')).toHaveCount(1)
+    await expect(page.locator('.book-doctor-collapsed')).toContainText(doctor.name)
   })
 
   // Fix 6 -- Available and Unavailable were both pale tints
@@ -365,8 +379,17 @@ test.describe('BookAppointmentPanel layout', () => {
   // color vision deficiency.
   test('available and unavailable are separated by lightness and border, not hue', async ({ page, request }) => {
     const scenario = await seedScenario(request)
+    // A second doctor in the same department who holds no clinic, so
+    // the unbookable treatment is actually on screen to compare against.
+    const idle = await createDoctor(request, scenario.token, uniq('Dr Idle'), 'Cardiology')
+    await assignDoctorToDepartment(request, scenario.token, idle.id, scenario.department.id)
+    await assignAppointmentType(request, scenario.token, idle.id, scenario.appointmentType.id, {
+      duration_minutes: 35,
+      consultation_fee: 280,
+    })
     await page.setViewportSize(VIEWPORTS[0])
     await openBookAppointment(page, scenario)
+    await expect(page.locator('.book-doctor-collapsed')).toHaveCount(1)
 
     const read = (sel: string) =>
       page.locator(sel).first().evaluate((el) => {
@@ -379,8 +402,12 @@ test.describe('BookAppointmentPanel layout', () => {
         }
       })
 
-    const available = await read('.book-grid-legend-swatch.available')
-    const unavailable = await read('.book-grid-legend-swatch.unavailable')
+    // The standalone legend is gone (the redesign states each doctor's
+    // state in their own row instead), so this is now asserted where it
+    // actually matters: a bookable slot chip against the collapsed row
+    // of a doctor who cannot be booked.
+    const available = await read('.book-grid-slot')
+    const unavailable = await read('.book-doctor-collapsed')
 
     // Lightness, not hue: a real contrast ratio between the two fills.
     const la = luminance(available.background)
@@ -400,9 +427,11 @@ test.describe('BookAppointmentPanel layout', () => {
       expect(r).toBeLessThanOrEqual(Math.max(g, b) + 4)
     }
 
-    // The same treatment reaches the real chips, not just the legend.
-    const chip = await read('.book-grid-slot')
-    expect(luminance(chip.background)).toBeCloseTo(la, 2)
+    // Selected is a third, darker step again, so the three states never
+    // rely on hue alone.
+    await page.locator('.book-grid-slot').first().click()
+    const selected = await read('.book-grid-slot.selected')
+    expect(luminance(selected.background)).toBeLessThan(lu)
   })
 
   // Fix 7 -- the date nav rendered a raw <input type="date">, whose
@@ -470,9 +499,10 @@ test.describe('BookAppointmentPanel layout', () => {
       expect(v.overflowX).toBeLessThanOrEqual(1)
     }
 
-    // The booked time is readable in full.
-    const slotValue = values.last()
-    await expect(slotValue).toContainText(expectedSlotLabels()[0])
-    await expect(slotValue).toContainText(scenario.doctor.name)
+    // The booked time is readable in full. The redesign gives the
+    // doctor and the time their own labelled rows rather than one
+    // "Dr X · 9:00 AM" line, which is what used to truncate.
+    await expect(page.locator('.book-summary-when')).toContainText(expectedSlotLabels()[0])
+    await expect(page.locator('.book-summary-doctor')).toContainText(scenario.doctor.name)
   })
 })
