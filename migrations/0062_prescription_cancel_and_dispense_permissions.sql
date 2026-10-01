@@ -28,8 +28,7 @@
 --                           sign-off, which prescription.create's
 --                           holders can do but which is not "drafting"
 --   pharmacy.dispense    -- the physical act of dispensing, which is
---                           the pharmacist's job and not the
---                           prescriber's
+--                           not the prescriber's job
 INSERT INTO permissions (name) VALUES
     ('prescription.cancel'),
     ('pharmacy.dispense');
@@ -70,7 +69,23 @@ SELECT (SELECT id FROM roles WHERE name = 'PHARMACIST'), id
 FROM permissions
 WHERE name = 'pharmacy.dispense';
 
--- NURSE/RECEPTIONIST/LAB_TECH/BILLING get neither, per the same "no
+-- NURSE: dispenses too. A nurse handing medication to a patient is
+-- routine in the 100+ bed multi-speciality hospitals this system
+-- targets, and in smaller units there is often no separate pharmacist
+-- on every shift at all -- the same "common in a small clinic without
+-- a separate step" reasoning migrations/0048 used to give DOCTOR
+-- vitals.record rather than reserving it for NURSE. Withholding this
+-- would not enforce a separation of duties, it would just stop nurses
+-- doing a job they already do. Deliberately NOT prescription.cancel:
+-- voiding a doctor's signed prescription is a prescriber's decision,
+-- and NOT pharmacy.manage_stock, which stays PHARMACIST/ADMIN --
+-- dispensing against stock is not the same authority as adjusting it.
+INSERT INTO role_permissions (role_id, permission_id)
+SELECT (SELECT id FROM roles WHERE name = 'NURSE'), id
+FROM permissions
+WHERE name = 'pharmacy.dispense';
+
+-- RECEPTIONIST/LAB_TECH/BILLING get neither, per the same "no
 -- permission row unless the role's real-world duties call for it"
 -- discipline migrations/0043 and 0048 established. LAB_TECH holding
 -- either of these is the specific defect #133 reports.

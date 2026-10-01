@@ -302,6 +302,45 @@ def test_pharmacist_can_dispense_but_not_cancel(client, db_connection):
     assert dispensed.status_code == 200
 
 
+def test_nurse_can_dispense_but_not_cancel(client, db_connection):
+    """A nurse dispensing on the ward is routine practice, so NURSE
+    holds pharmacy.dispense (migrations/0062) -- but not
+    prescription.cancel, which stays a prescriber's decision."""
+    ctx = _checked_in_context(client, db_connection, "Dr. Rx RbacNurse")
+    appointment_id = ctx["appointment"]["id"]
+    _add_item(client, appointment_id, ctx["admin_headers"], quantity=10)
+    prescribed = client.post(
+        f"/api/appointments/{appointment_id}/prescription/prescribe", headers=ctx["admin_headers"]
+    ).json()
+    item_id = prescribed["items"][0]["id"]
+
+    nurse_headers = create_staff_and_get_headers(db_connection, role="NURSE")
+
+    # Cancel asserted before any dispense, for the same reason as the
+    # pharmacist test above: a 409 from the already-dispensing rule
+    # would otherwise mask the authorization verdict.
+    cancelled = client.post(
+        f"/api/appointments/{appointment_id}/prescription/cancel",
+        json={"reason": "not a nurse's call"},
+        headers=nurse_headers,
+    )
+    assert cancelled.status_code == 403
+
+    dispensed = client.post(
+        f"/api/pharmacy/items/{item_id}/dispense", json={"quantity": 3}, headers=nurse_headers
+    )
+    assert dispensed.status_code == 200
+
+    # Dispensing is not stock administration -- that stays PHARMACIST/
+    # ADMIN via pharmacy.manage_stock.
+    stock = client.post(
+        "/api/pharmacy/stock",
+        json={"medicine_name": "Paracetamol", "batch_number": "NURSE-1", "quantity_on_hand": 5},
+        headers=nurse_headers,
+    )
+    assert stock.status_code == 403
+
+
 def test_doctor_can_cancel_but_not_dispense(client, db_connection):
     ctx = _checked_in_context(client, db_connection, "Dr. Rx RbacDoctor")
     appointment_id = ctx["appointment"]["id"]

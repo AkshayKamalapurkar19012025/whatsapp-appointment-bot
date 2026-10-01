@@ -91,8 +91,15 @@ const ROLE_VISIBLE_SECTIONS: Partial<Record<StaffRole, Set<Section>>> = {
   RECEPTIONIST: new Set<Section>([
     'dashboard', 'appointments', 'book-appointment', 'queue', 'consultation', 'department-queue', 'patients',
   ]),
+  // 'pharmacy' because NURSE holds pharmacy.dispense (migrations/0062)
+  // -- a nurse dispensing on the ward is routine. Without the section
+  // the grant would be unreachable: the permission would exist
+  // server-side with no screen to exercise it. Stock management inside
+  // PharmacyPanel stays gated on canManageStock (ADMIN/PHARMACIST), so
+  // a nurse gets the dispense queue without stock administration.
   NURSE: new Set<Section>([
     'dashboard', 'department-queue', 'appointments', 'book-appointment', 'queue', 'consultation', 'patients',
+    'pharmacy',
   ]),
   DOCTOR: new Set<Section>([
     'dashboard', 'appointments', 'book-appointment', 'queue', 'consultation', 'department-queue', 'patients',

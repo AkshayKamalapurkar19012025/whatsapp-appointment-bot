@@ -395,11 +395,12 @@ def update_medication_active(
 def dispense_prescription_item(
     item_id: int,
     body: DispenseCreate,
-    # New permission in migrations/0062: handing the drug over is the
-    # pharmacist's act, not the prescriber's, so this is granted to
-    # PHARMACIST/ADMIN/STAFF and deliberately not DOCTOR -- collapsing
-    # prescribing and dispensing into one authority would remove the
-    # separation of duties the pharmacy queue exists to enforce.
+    # New permission in migrations/0062: handing the drug over is not
+    # the prescriber's act, so this is granted to PHARMACIST/NURSE/
+    # ADMIN/STAFF and deliberately not DOCTOR -- collapsing prescribing
+    # and dispensing into one authority would remove the separation of
+    # duties the pharmacy queue exists to enforce. NURSE holds it
+    # because a nurse dispensing is routine ward practice, not a gap.
     # pharmacy.manage_stock does not cover this: that gates stock and
     # medication-master management, not dispensing. Previously bare
     # get_current_staff (issue #133).
