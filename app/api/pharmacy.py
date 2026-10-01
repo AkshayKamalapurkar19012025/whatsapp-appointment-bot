@@ -195,7 +195,12 @@ def add_prescription_item(
 def remove_prescription_item(
     appointment_id: int,
     item_id: int,
-    staff: dict = Depends(get_current_staff),
+    # Removing a line from a DRAFT prescription is the same authority as
+    # adding one -- the prescription is not signed off yet, so this
+    # reuses prescription.create rather than inventing a permission for
+    # half of one editing action. Previously bare get_current_staff,
+    # which authenticates but does not authorize (issue #133).
+    staff: dict = Depends(require_permission("prescription.create")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -260,7 +265,15 @@ def prescribe(appointment_id: int, staff: dict = Depends(require_permission("pre
 def cancel_prescription(
     appointment_id: int,
     body: PrescriptionCancel,
-    staff: dict = Depends(get_current_staff),
+    # Its own permission, not prescription.create: this voids a
+    # prescription that has already been signed off and sent to
+    # pharmacy, which is a reversing action rather than drafting --
+    # the same distinction this schema already draws between
+    # consultation.amend and consultation.write, and between bill.void*
+    # and bill.add_charge. Granted to ADMIN/STAFF/DOCTOR in
+    # migrations/0062, deliberately not PHARMACIST. Previously bare
+    # get_current_staff (issue #133).
+    staff: dict = Depends(require_permission("prescription.cancel")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -382,7 +395,16 @@ def update_medication_active(
 def dispense_prescription_item(
     item_id: int,
     body: DispenseCreate,
-    staff: dict = Depends(get_current_staff),
+    # New permission in migrations/0062: handing the drug over is not
+    # the prescriber's act, so this is granted to PHARMACIST/NURSE/
+    # ADMIN/STAFF and deliberately not DOCTOR -- collapsing prescribing
+    # and dispensing into one authority would remove the separation of
+    # duties the pharmacy queue exists to enforce. NURSE holds it
+    # because a nurse dispensing is routine ward practice, not a gap.
+    # pharmacy.manage_stock does not cover this: that gates stock and
+    # medication-master management, not dispensing. Previously bare
+    # get_current_staff (issue #133).
+    staff: dict = Depends(require_permission("pharmacy.dispense")),
 ):
     with get_connection() as conn:
         with conn.cursor() as cur:

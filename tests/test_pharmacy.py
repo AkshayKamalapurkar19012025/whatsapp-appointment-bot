@@ -9,7 +9,7 @@ POST /api/pharmacy/items/{item_id}/dispense.
 
 from datetime import date, timedelta
 
-from tests.helpers import create_admin_and_get_headers, seed_basic_doctor
+from tests.helpers import create_admin_and_get_headers, create_staff_and_get_headers, seed_basic_doctor
 
 
 def _next_weekday(from_date: date | None = None) -> date:
@@ -195,6 +195,177 @@ def test_failed_removal_writes_no_audit_row(client, db_connection):
     )
     assert response.status_code == 404
     assert _audit_rows(db_connection, "prescription", prescription["id"]) == []
+
+
+# ---------------------------------------------------------------------
+# RBAC (issue #133): three mutating endpoints were on bare
+# get_current_staff, which authenticates but does not authorize. A
+# LAB_TECH -- a role with no prescription or pharmacy permission of any
+# kind -- could remove prescription items, cancel whole prescriptions
+# and dispense medication, while correctly being refused 403 when
+# *adding* a prescription item. Each test below asserts the refusal and
+# then that the underlying state is genuinely untouched, since a 403
+# that still performed the write would be worse than no gate at all.
+# ---------------------------------------------------------------------
+
+
+def test_lab_tech_cannot_remove_prescription_item(client, db_connection):
+    ctx = _checked_in_context(client, db_connection, "Dr. Rx RbacRemove")
+    appointment_id = ctx["appointment"]["id"]
+    prescription = _add_item(client, appointment_id, ctx["admin_headers"], medicine_name="Warfarin")
+    item_id = prescription["items"][0]["id"]
+
+    lab_headers = create_staff_and_get_headers(db_connection, role="LAB_TECH")
+    response = client.delete(
+        f"/api/appointments/{appointment_id}/prescription/items/{item_id}", headers=lab_headers
+    )
+
+    assert response.status_code == 403
+    still_there = client.get(
+        f"/api/appointments/{appointment_id}/prescription", headers=ctx["admin_headers"]
+    ).json()
+    assert [i["medicine_name"] for i in still_there["items"]] == ["Warfarin"]
+
+
+def test_lab_tech_cannot_cancel_prescription(client, db_connection):
+    ctx = _checked_in_context(client, db_connection, "Dr. Rx RbacCancel")
+    appointment_id = ctx["appointment"]["id"]
+    _add_item(client, appointment_id, ctx["admin_headers"])
+    client.post(f"/api/appointments/{appointment_id}/prescription/prescribe", headers=ctx["admin_headers"])
+
+    lab_headers = create_staff_and_get_headers(db_connection, role="LAB_TECH")
+    response = client.post(
+        f"/api/appointments/{appointment_id}/prescription/cancel",
+        json={"reason": "not my call to make"},
+        headers=lab_headers,
+    )
+
+    # Nothing is dispensed yet, so the "cancel blocked after dispensing
+    # started" rule cannot fire -- a non-403 here would be the
+    # authorization verdict, not a business rule.
+    assert response.status_code == 403
+    after = client.get(
+        f"/api/appointments/{appointment_id}/prescription", headers=ctx["admin_headers"]
+    ).json()
+    assert after["status"] == "PRESCRIBED"
+
+
+def test_lab_tech_cannot_dispense(client, db_connection):
+    ctx = _checked_in_context(client, db_connection, "Dr. Rx RbacDispense")
+    appointment_id = ctx["appointment"]["id"]
+    _add_item(client, appointment_id, ctx["admin_headers"], quantity=10)
+    prescribed = client.post(
+        f"/api/appointments/{appointment_id}/prescription/prescribe", headers=ctx["admin_headers"]
+    ).json()
+    item_id = prescribed["items"][0]["id"]
+
+    lab_headers = create_staff_and_get_headers(db_connection, role="LAB_TECH")
+    response = client.post(f"/api/pharmacy/items/{item_id}/dispense", json={"quantity": 1}, headers=lab_headers)
+
+    assert response.status_code == 403
+    after = client.get(
+        f"/api/appointments/{appointment_id}/prescription", headers=ctx["admin_headers"]
+    ).json()
+    assert after["items"][0]["quantity_dispensed"] == 0
+
+
+def test_pharmacist_can_dispense_but_not_cancel(client, db_connection):
+    """The grants are not just "deny LAB_TECH" -- the roles whose job
+    each action is must still be able to do it, and only it."""
+    ctx = _checked_in_context(client, db_connection, "Dr. Rx RbacPharmacist")
+    appointment_id = ctx["appointment"]["id"]
+    _add_item(client, appointment_id, ctx["admin_headers"], quantity=10)
+    prescribed = client.post(
+        f"/api/appointments/{appointment_id}/prescription/prescribe", headers=ctx["admin_headers"]
+    ).json()
+    item_id = prescribed["items"][0]["id"]
+
+    pharmacist_headers = create_staff_and_get_headers(db_connection, role="PHARMACIST")
+
+    # Cancel is checked BEFORE anything is dispensed, deliberately.
+    # cancel_prescription_service refuses a prescription that has
+    # started dispensing with a 409, so asserting 403 after a successful
+    # dispense would pass whether or not the authorization gate exists
+    # -- the business rule would mask the auth verdict. A pharmacist who
+    # cannot fill something raises it with the prescriber; they do not
+    # void the prescription themselves.
+    cancelled = client.post(
+        f"/api/appointments/{appointment_id}/prescription/cancel",
+        json={"reason": "out of stock"},
+        headers=pharmacist_headers,
+    )
+    assert cancelled.status_code == 403
+
+    dispensed = client.post(
+        f"/api/pharmacy/items/{item_id}/dispense", json={"quantity": 2}, headers=pharmacist_headers
+    )
+    assert dispensed.status_code == 200
+
+
+def test_nurse_can_dispense_but_not_cancel(client, db_connection):
+    """A nurse dispensing on the ward is routine practice, so NURSE
+    holds pharmacy.dispense (migrations/0062) -- but not
+    prescription.cancel, which stays a prescriber's decision."""
+    ctx = _checked_in_context(client, db_connection, "Dr. Rx RbacNurse")
+    appointment_id = ctx["appointment"]["id"]
+    _add_item(client, appointment_id, ctx["admin_headers"], quantity=10)
+    prescribed = client.post(
+        f"/api/appointments/{appointment_id}/prescription/prescribe", headers=ctx["admin_headers"]
+    ).json()
+    item_id = prescribed["items"][0]["id"]
+
+    nurse_headers = create_staff_and_get_headers(db_connection, role="NURSE")
+
+    # Cancel asserted before any dispense, for the same reason as the
+    # pharmacist test above: a 409 from the already-dispensing rule
+    # would otherwise mask the authorization verdict.
+    cancelled = client.post(
+        f"/api/appointments/{appointment_id}/prescription/cancel",
+        json={"reason": "not a nurse's call"},
+        headers=nurse_headers,
+    )
+    assert cancelled.status_code == 403
+
+    dispensed = client.post(
+        f"/api/pharmacy/items/{item_id}/dispense", json={"quantity": 3}, headers=nurse_headers
+    )
+    assert dispensed.status_code == 200
+
+    # Dispensing is not stock administration -- that stays PHARMACIST/
+    # ADMIN via pharmacy.manage_stock.
+    stock = client.post(
+        "/api/pharmacy/stock",
+        json={"medicine_name": "Paracetamol", "batch_number": "NURSE-1", "quantity_on_hand": 5},
+        headers=nurse_headers,
+    )
+    assert stock.status_code == 403
+
+
+def test_doctor_can_cancel_but_not_dispense(client, db_connection):
+    ctx = _checked_in_context(client, db_connection, "Dr. Rx RbacDoctor")
+    appointment_id = ctx["appointment"]["id"]
+    _add_item(client, appointment_id, ctx["admin_headers"], quantity=10)
+    prescribed = client.post(
+        f"/api/appointments/{appointment_id}/prescription/prescribe", headers=ctx["admin_headers"]
+    ).json()
+    item_id = prescribed["items"][0]["id"]
+
+    doctor_headers = create_staff_and_get_headers(db_connection, role="DOCTOR")
+
+    # Prescriber is not the dispenser -- collapsing the two would remove
+    # the separation of duties the pharmacy queue exists to enforce.
+    dispensed = client.post(
+        f"/api/pharmacy/items/{item_id}/dispense", json={"quantity": 1}, headers=doctor_headers
+    )
+    assert dispensed.status_code == 403
+
+    cancelled = client.post(
+        f"/api/appointments/{appointment_id}/prescription/cancel",
+        json={"reason": "patient reports prior reaction"},
+        headers=doctor_headers,
+    )
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "CANCELLED"
 
 
 def test_remove_nonexistent_item_is_404(client, db_connection):

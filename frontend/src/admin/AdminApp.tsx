@@ -91,8 +91,15 @@ const ROLE_VISIBLE_SECTIONS: Partial<Record<StaffRole, Set<Section>>> = {
   RECEPTIONIST: new Set<Section>([
     'dashboard', 'appointments', 'book-appointment', 'queue', 'consultation', 'department-queue', 'patients',
   ]),
+  // 'pharmacy' because NURSE holds pharmacy.dispense (migrations/0062)
+  // -- a nurse dispensing on the ward is routine. Without the section
+  // the grant would be unreachable: the permission would exist
+  // server-side with no screen to exercise it. Stock management inside
+  // PharmacyPanel stays gated on canManageStock (ADMIN/PHARMACIST), so
+  // a nurse gets the dispense queue without stock administration.
   NURSE: new Set<Section>([
     'dashboard', 'department-queue', 'appointments', 'book-appointment', 'queue', 'consultation', 'patients',
+    'pharmacy',
   ]),
   DOCTOR: new Set<Section>([
     'dashboard', 'appointments', 'book-appointment', 'queue', 'consultation', 'department-queue', 'patients',
@@ -281,6 +288,14 @@ export default function AdminApp() {
   const canWriteConsultation = isAdmin || staff.role === 'STAFF' || staff.role === 'DOCTOR'
   const canCreateOrders = canWriteConsultation
   const canCreatePrescriptions = canWriteConsultation
+  // prescription.cancel (migrations/0062) -- voiding a signed-off
+  // prescription. Its grant set is currently identical to
+  // prescription.create (ADMIN/STAFF/DOCTOR), but it is a separate
+  // permission server-side and gets its own boolean so the UI still
+  // tracks it if the two diverge. Deliberately excludes PHARMACIST,
+  // who can reach a prescription but raises a problem with the
+  // prescriber rather than voiding their script.
+  const canCancelPrescriptions = canWriteConsultation
   // order.result (migrations/0051) -- ADMIN/STAFF/DOCTOR keep the same
   // access as every other clinical-documentation gate; LAB_TECH is the
   // new addition, the Lab Worklist's whole reason to exist. Phase 7's
@@ -532,6 +547,7 @@ export default function AdminApp() {
               canWriteConsultation={canWriteConsultation}
               canCreateOrders={canCreateOrders}
               canCreatePrescriptions={canCreatePrescriptions}
+              canCancelPrescriptions={canCancelPrescriptions}
               onBack={() => goTo('queue')}
               onOpenLabWorklist={() => goTo('lab-worklist')}
             />

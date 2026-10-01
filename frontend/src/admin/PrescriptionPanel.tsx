@@ -36,6 +36,7 @@ export default function PrescriptionPanel({
   appointmentId,
   appointmentCheckedIn,
   canCreatePrescriptions,
+  canCancelPrescriptions,
   patientName,
   patientUhid,
   doctorName,
@@ -49,6 +50,12 @@ export default function PrescriptionPanel({
   // prescribe actions below would 403 server-side, so they're hidden
   // rather than left to fail.
   canCreatePrescriptions: boolean
+  // prescription.cancel (migrations/0062). Separate from
+  // canCreatePrescriptions: cancelling voids a prescription that
+  // has already been signed off and sent to pharmacy, which is a
+  // different server-side permission even though the two grant
+  // sets currently match.
+  canCancelPrescriptions: boolean
   patientName: string
   patientUhid: string
   doctorName: string
@@ -218,7 +225,15 @@ export default function PrescriptionPanel({
 
   const editable = prescription.status === 'DRAFT' && appointmentCheckedIn && canCreatePrescriptions
   const canPrescribe = editable && prescription.items.length > 0
-  const canCancel = prescription.status === 'PRESCRIBED' && !prescription.items.some((i) => i.quantity_dispensed > 0)
+  // Role-gated as well as state-gated. Without canCancelPrescriptions
+  // here, a role that can open this panel but lacks prescription.cancel
+  // (NURSE, PHARMACIST) would see a Cancel button that always fails
+  // with "Insufficient permissions" -- exactly what canCreate
+  // Prescriptions above exists to avoid for the add/prescribe actions.
+  const canCancel =
+    canCancelPrescriptions &&
+    prescription.status === 'PRESCRIBED' &&
+    !prescription.items.some((i) => i.quantity_dispensed > 0)
 
   return (
     <div className="detail-section">
