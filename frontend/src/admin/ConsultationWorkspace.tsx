@@ -208,6 +208,7 @@ export default function ConsultationWorkspace({
   canWriteConsultation,
   canCreateOrders,
   canCreatePrescriptions,
+  canCancelPrescriptions,
   onBack,
   onOpenLabWorklist,
 }: {
@@ -225,6 +226,7 @@ export default function ConsultationWorkspace({
   canWriteConsultation: boolean
   canCreateOrders: boolean
   canCreatePrescriptions: boolean
+  canCancelPrescriptions: boolean
   onBack: () => void
   // Real navigation to the Lab/Radiology Worklist section (AdminApp.tsx),
   // not this component's own onBack (which returns to the queue) --
@@ -1859,6 +1861,7 @@ export default function ConsultationWorkspace({
               appointmentId={appointmentId}
               appointmentCheckedIn={encounter.appointment_status === 'CHECKED_IN'}
               canCreatePrescriptions={canCreatePrescriptions}
+              canCancelPrescriptions={canCancelPrescriptions}
               patientName={encounter.patient_name}
               patientUhid={encounter.patient_uhid}
               doctorName={encounter.doctor_name}
