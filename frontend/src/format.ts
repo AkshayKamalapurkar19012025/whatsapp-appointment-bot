@@ -42,6 +42,51 @@ export function formatDate(isoDate: string): string {
   return `${day} ${MONTH_NAMES[month - 1]} ${year}`
 }
 
+const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+// "Thu, 1 Oct 2026" -- formatDate's output with the weekday in front.
+// A bare numeric date ("01/10/2026", which is what an unstyled <input
+// type="date"> renders) is genuinely ambiguous: the same value reads as
+// 1 October under en-GB and 10 January under en-US, and a receptionist
+// booking into the wrong day only finds out when the patient arrives.
+// Spelling the month out removes the ambiguity; the weekday is what
+// staff actually schedule against ("the Thursday clinic"), and it also
+// makes an off-by-one day visible at a glance.
+//
+// Deliberately built from the string's own digits like formatDate
+// above, never through Date parsing of the ISO text -- the Date here is
+// constructed from already-extracted local y/m/d purely to ask the
+// calendar which weekday that is, which carries no timezone
+// reinterpretation risk (unlike `new Date("2026-10-01")`, which parses
+// as UTC midnight and can report the previous day west of Greenwich).
+export function formatDateWithWeekday(isoDate: string): string {
+  const match = isoDate.match(/(\d{4})-(\d{2})-(\d{2})/)
+  if (!match) return isoDate
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const weekday = WEEKDAY_NAMES[new Date(year, month - 1, day).getDay()]
+  return `${weekday}, ${day} ${MONTH_NAMES[month - 1]} ${year}`
+}
+
+// "27" -- the compact age token for a one-line demographics summary
+// ("HOS-0000003 · 1 Sep 1999 · 27 · Male"), where the DOB immediately
+// to its left already establishes that the number is an age and
+// formatPreciseAge's "27 years" would just repeat the unit.
+//
+// Only collapses to a bare number once the unit is unambiguous: under
+// 3 years old it defers to formatPreciseAge in full ("8 months", "2
+// years 4 months"), because a bare "2" next to a DOB two years ago
+// would read as 2 years when the child may be 2 years 10 months --
+// precision that matters for paediatric dosing, which is exactly why
+// formatPreciseAge exists.
+export function formatAgeCompact(dateOfBirth: string): string | null {
+  const precise = formatPreciseAge(dateOfBirth)
+  if (precise === null) return null
+  const match = precise.match(/^(\d+) years$/)
+  return match ? match[1] : precise
+}
+
 export function isoDateOnly(year: number, month: number, day: number): string {
   return `${year}-${pad(month)}-${pad(day)}`
 }
