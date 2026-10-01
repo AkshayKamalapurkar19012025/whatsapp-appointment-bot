@@ -279,19 +279,45 @@ def add_prescription_item_service(
 
 
 def remove_prescription_item_service(cur, appointment_id: int, item_id: int, *, staff_id: int):
+    """Removes one line from a DRAFT prescription.
+
+    Returns {"prescription": ..., "removed": ...}. `removed` carries the
+    line's identifying details (captured by the RETURNING clause below,
+    since after the DELETE there is nothing left to read them from) so
+    the caller can write an audit row naming the drug rather than a bare
+    item id -- see app/api/pharmacy.py's remove_prescription_item and
+    issue #131. Removing a drafted medication is a clinical write and
+    previously left no audit record at all.
+    """
     prescription = _get_prescription_for_appointment(cur, appointment_id)
 
     if prescription["status"] != "DRAFT":
         raise PrescriptionAlreadyPrescribed()
 
     cur.execute(
-        "DELETE FROM prescription_items WHERE id = %s AND prescription_id = %s",
+        """
+        DELETE FROM prescription_items
+        WHERE id = %s AND prescription_id = %s
+        RETURNING id, medicine_name, generic_name, dosage, frequency, duration, quantity
+        """,
         (item_id, prescription["id"]),
     )
-    if cur.rowcount == 0:
+    row = cur.fetchone()
+    if row is None:
         raise PrescriptionItemNotFound()
 
-    return _full_prescription_dict(cur, prescription["id"])
+    return {
+        "prescription": _full_prescription_dict(cur, prescription["id"]),
+        "removed": {
+            "item_id": row[0],
+            "medicine_name": row[1],
+            "generic_name": row[2],
+            "dosage": row[3],
+            "frequency": row[4],
+            "duration": row[5],
+            "quantity": row[6],
+        },
+    }
 
 
 def prescribe_service(cur, appointment_id: int, *, staff_id: int, hospital_id: int):
