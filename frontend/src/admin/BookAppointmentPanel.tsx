@@ -34,7 +34,7 @@ import type {
   Patient,
   Slot,
 } from '../types'
-import { formatDate, formatPreciseAge, formatTime } from '../format'
+import { formatAgeCompact, formatDate, formatDateWithWeekday, formatPreciseAge, formatTime } from '../format'
 import { isoDateToday } from './doctorSchedule'
 import PatientFormModal from './PatientFormModal'
 
@@ -66,12 +66,35 @@ function minutesOfDay(isoString: string): number {
   return Number(match[1]) * 60 + Number(match[2])
 }
 
-function formatHourTick(totalMinutes: number): string {
+// "9:00 AM" from minutesOfDay's own units -- formatTime's conversion
+// for a value that is already minutes-since-midnight rather than an
+// ISO string, so the grid header's day span reads identically to the
+// slot chips below it.
+function formatMinutesOfDay(totalMinutes: number): string {
   const hour24 = Math.floor(totalMinutes / 60) % 24
   const suffix = hour24 >= 12 ? 'PM' : 'AM'
   let hour = hour24 % 12
   if (hour === 0) hour = 12
-  return `${hour} ${suffix}`
+  return `${hour}:${String(totalMinutes % 60).padStart(2, '0')} ${suffix}`
+}
+
+// WCAG 2.5.8's minimum pointer target size. A slot chip is never
+// allowed below this however short the appointment type is -- a
+// 10-minute slot gets the same 44px floor a 35-minute one clears on
+// its own.
+const SLOT_MIN_WIDTH_PX = 44
+
+// Each doctor's slot columns are sized from *their own* slot length,
+// not from a fixed hour. The grid this replaces laid every slot out as
+// a percentage of a padded whole-hour axis, which made a 35-minute
+// slot 26px of unlabelled sliver on a real laptop viewport -- the
+// shorter the appointment type, the less clickable and less readable
+// its own screen became. Sizing by duration instead means a longer
+// appointment reads as a wider chip (which is true and useful), while
+// the floor above keeps a short one usable.
+function slotColumnWidth(durationMinutes: number | null): number {
+  if (durationMinutes === null || durationMinutes <= 0) return SLOT_MIN_WIDTH_PX
+  return Math.max(SLOT_MIN_WIDTH_PX, Math.round(durationMinutes * 2))
 }
 
 function slotKey(doctorId: number, slot: Slot): string {
@@ -554,12 +577,22 @@ export default function BookAppointmentPanel({
     setDate(next)
   }
 
-  // Grid axis bounds, in minutes-since-midnight, spanning every real
-  // returned slot across every doctor -- never a hardcoded "9am-5pm"
-  // assumption, so a department whose doctors run earlier/later/longer
-  // hours still lays out correctly. Padded out to the nearest whole
-  // hour on each side purely so the header's hour ticks land on clean
-  // boundaries.
+  // The real span of bookable time across every returned doctor, in
+  // minutes-since-midnight -- never a hardcoded "9am-5pm" assumption,
+  // so a department whose doctors run earlier/later/longer hours still
+  // describes itself correctly. Exact slot edges, not padded out to
+  // whole hours: this is now a header *label* ("9:00 AM - 4:55 PM"),
+  // not the denominator of a proportional axis.
+  //
+  // It stopped being a denominator because that axis was the bug. Slot
+  // chips used to be absolutely positioned at `left: pct(start)` with
+  // `width: pct(end) - pct(start)`, which ties every chip's width to
+  // how long the clinic day happens to be: the same 35-minute slot
+  // renders 26px wide in an 8-hour day and half that in a 16-hour one,
+  // and no width is wide enough to hold its own "9:00 AM" label. The
+  // track below is a wrapping grid of real, labelled chips instead --
+  // reading order is still chronological, so the time axis survives as
+  // the chip labels themselves rather than as a scale nothing fits on.
   const gridBounds = useMemo(() => {
     let min = Infinity
     let max = -Infinity
@@ -572,20 +605,8 @@ export default function BookAppointmentPanel({
       }
     }
     if (!isFinite(min) || !isFinite(max) || min >= max) return null
-    return { start: Math.floor(min / 60) * 60, end: Math.ceil(max / 60) * 60 }
+    return { start: min, end: max }
   }, [doctorsWithSlots])
-
-  const hourTicks = useMemo(() => {
-    if (!gridBounds) return []
-    const ticks: number[] = []
-    for (let m = gridBounds.start; m <= gridBounds.end; m += 60) ticks.push(m)
-    return ticks
-  }, [gridBounds])
-
-  function pct(totalMinutes: number): number {
-    if (!gridBounds) return 0
-    return ((totalMinutes - gridBounds.start) / (gridBounds.end - gridBounds.start)) * 100
-  }
 
   // Roving tabindex's "current" cell -- state when the grid has been
   // navigated, otherwise the first doctor's first slot, recomputed
@@ -942,8 +963,19 @@ export default function BookAppointmentPanel({
 
               {selectedPatient && (
                 <div className="book-selected-patient-card">
+                  {/* Three stacked rows, not a two-column split: a
+                      badge/actions header, then avatar + name on one
+                      line, then the identifiers underneath spanning
+                      the card's full width. The previous layout put
+                      the avatar and the whole four-line text block
+                      side by side and vertically centered -- in this
+                      narrow column that left the initials floating
+                      mid-card against a name wrapping in a ~150px
+                      gutter beside them, with "Edit"/"Change" falling
+                      out of the wrapping header onto a bare row of
+                      their own above the patient's name. */}
                   <div className="book-selected-patient-header">
-                    <span>
+                    <span className="book-selected-patient-badge">
                       <CheckCircle size={14} weight="bold" aria-hidden="true" /> Selected
                     </span>
                     <span className="book-selected-patient-actions">
@@ -956,20 +988,27 @@ export default function BookAppointmentPanel({
                     </span>
                   </div>
                   <div className="book-selected-patient-body">
-                    <span className="book-patient-avatar" aria-hidden="true">
-                      {selectedPatient.name.slice(0, 2).toUpperCase()}
-                    </span>
-                    <div>
-                      <strong>{selectedPatient.name}</strong>
-                      <div className="muted">
-                        {selectedPatient.uhid}
-                        {selectedPatient.date_of_birth ? ` · ${formatDate(selectedPatient.date_of_birth)}` : ''}
-                        {selectedPatient.gender
-                          ? ` · ${selectedPatient.gender.charAt(0)}${selectedPatient.gender.slice(1).toLowerCase()}`
-                          : ''}
-                      </div>
-                      <div className="muted">{selectedPatient.whatsapp_number}</div>
+                    <div className="book-selected-patient-identity">
+                      <span className="book-patient-avatar" aria-hidden="true">
+                        {selectedPatient.name.slice(0, 2).toUpperCase()}
+                      </span>
+                      <strong className="book-selected-patient-name">{selectedPatient.name}</strong>
                     </div>
+                    {/* Age, not just the date of birth. The search
+                        results list above already shows both; staff
+                        confirming the right patient at the counter
+                        were the ones left doing the arithmetic. */}
+                    <div className="muted book-selected-patient-meta">
+                      {selectedPatient.uhid}
+                      {selectedPatient.date_of_birth ? ` · ${formatDate(selectedPatient.date_of_birth)}` : ''}
+                      {selectedPatient.date_of_birth && formatAgeCompact(selectedPatient.date_of_birth)
+                        ? ` · ${formatAgeCompact(selectedPatient.date_of_birth)}`
+                        : ''}
+                      {selectedPatient.gender
+                        ? ` · ${selectedPatient.gender.charAt(0)}${selectedPatient.gender.slice(1).toLowerCase()}`
+                        : ''}
+                    </div>
+                    <div className="muted book-selected-patient-meta">{selectedPatient.whatsapp_number}</div>
                   </div>
                   {selectedPatient.patient_type && (
                     <div className="book-selected-patient-type">
@@ -1052,8 +1091,16 @@ export default function BookAppointmentPanel({
               >
                 Tomorrow
               </button>
+              {/* The native control still does the picking (its
+                  calendar, its keyboard handling, its min=today
+                  clamp) -- it is just made transparent and laid over
+                  the label, so what staff actually read is our own
+                  unambiguous rendering instead of the browser's
+                  locale-ordered "01/10/2026", which means 1 October
+                  under en-GB and 10 January under en-US. */}
               <label className="book-date-nav-input">
                 <CalendarBlank size={15} weight="bold" aria-hidden="true" />
+                <span className="book-date-nav-value">{formatDateWithWeekday(date)}</span>
                 <input
                   type="date"
                   aria-label="Jump to date"
@@ -1080,16 +1127,23 @@ export default function BookAppointmentPanel({
               {!gridLoading && !gridError && doctorsWithSlots.length === 0 && (
                 <div className="state-block empty">No doctors offer this appointment type in this department.</div>
               )}
-              {!gridLoading && !gridError && doctorsWithSlots.length > 0 && gridBounds && (
+              {/* Not gated on gridBounds any more: that guard blanked
+                  the entire grid -- no rows, no doctor names, no
+                  "Unavailable" markers -- whenever *every* returned
+                  doctor happened to have zero slots, which is exactly
+                  the case the endpoint's include_unavailable=True
+                  exists to render. */}
+              {!gridLoading && !gridError && doctorsWithSlots.length > 0 && (
                 <>
                   <div className="book-grid-header">
                     <div className="book-grid-header-doctor-col">Doctor</div>
                     <div className="book-grid-header-hours">
-                      {hourTicks.map((m) => (
-                        <div key={m} className="book-grid-hour-label" style={{ left: `${pct(m)}%` }}>
-                          {formatHourTick(m)}
-                        </div>
-                      ))}
+                      <span>Available times</span>
+                      {gridBounds && (
+                        <span className="book-grid-header-span">
+                          {formatMinutesOfDay(gridBounds.start)} – {formatMinutesOfDay(gridBounds.end)}
+                        </span>
+                      )}
                     </div>
                   </div>
                   {doctorsWithSlots.map((doc, doctorIndex) => {
@@ -1103,17 +1157,26 @@ export default function BookAppointmentPanel({
                             {duration != null ? ` · ${duration}-min slots` : ''}
                           </span>
                         </div>
-                        <div className="book-grid-row-track">
+                        {/* The track wraps instead of scrolling. A
+                            full clinic day of 44px-or-wider chips is
+                            simply wider than this column at any
+                            laptop viewport, so a single-line track
+                            can only ever be clipped (it was: 584px
+                            of content in a 360px box, opening
+                            mid-morning with the start of the day
+                            already scrolled off the left). Wrapping
+                            trades one axis for two and clips at
+                            neither width. */}
+                        <div
+                          className="book-grid-row-track"
+                          style={{ '--book-slot-col': `${slotColumnWidth(duration)}px` } as React.CSSProperties}
+                        >
                           {doc.slots.length === 0 ? (
-                            <span className="muted" style={{ fontSize: '0.72rem', position: 'absolute', top: 16, left: 12 }}>
-                              Unavailable
-                            </span>
+                            <span className="book-grid-unavailable">Unavailable</span>
                           ) : (
                             doc.slots.map((slot, slotIndex) => {
                               const key = slotKey(doc.id, slot)
                               const isSelected = selectedDoctorId === doc.id && selectedSlot?.start_at === slot.start_at
-                              const left = pct(minutesOfDay(slot.start_at))
-                              const width = pct(minutesOfDay(slot.end_at)) - left
                               return (
                                 <button
                                   key={key}
@@ -1123,14 +1186,15 @@ export default function BookAppointmentPanel({
                                   }}
                                   type="button"
                                   className={isSelected ? 'book-grid-slot selected' : 'book-grid-slot'}
-                                  style={{ left: `calc(${left}% + 2px)`, width: `calc(${width}% - 4px)` }}
                                   tabIndex={key === effectiveActiveKey ? 0 : -1}
                                   title={`${doc.name} · ${formatTime(slot.start_at)}`}
                                   aria-label={`${doc.name}, ${formatTime(slot.start_at)}`}
                                   aria-pressed={isSelected}
                                   onClick={() => pickSlot(doc.id, slot)}
                                   onKeyDown={(e) => handleGridKeyDown(e, doctorIndex, slotIndex)}
-                                />
+                                >
+                                  {formatTime(slot.start_at)}
+                                </button>
                               )
                             })
                           )}

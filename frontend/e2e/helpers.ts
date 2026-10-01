@@ -89,10 +89,47 @@ export async function setFullAvailability(request: APIRequestContext, token: str
   }
 }
 
-export async function createPatient(request: APIRequestContext, token: string, name: string, whatsapp_number: string) {
-  const res = await request.post(`${API_BASE}/patients`, { headers: authed(token), data: { name, whatsapp_number } })
+export async function createPatient(
+  request: APIRequestContext,
+  token: string,
+  name: string,
+  whatsapp_number: string,
+  // date_of_birth/gender are optional on PatientCreate itself (fast
+  // walk-in registration must never be blocked on them), so they stay
+  // optional here too -- only the specs that actually assert on the
+  // rendered demographics line pass them.
+  opts: { date_of_birth?: string; gender?: 'MALE' | 'FEMALE' | 'OTHER' } = {},
+) {
+  const res = await request.post(`${API_BASE}/patients`, {
+    headers: authed(token),
+    data: { name, whatsapp_number, ...opts },
+  })
   if (!res.ok()) throw new Error(`createPatient failed: ${await res.text()}`)
   return res.json()
+}
+
+// A realistic clinic day (09:00-17:00) on every weekday, unlike
+// setFullAvailability's deliberately unrealistic 00:00-23:45. The
+// BookAppointmentPanel grid specs assert on the *shape* of a doctor's
+// working day -- that it starts at its real first slot and shows every
+// slot through its last -- which a 24-hour schedule can't express. Safe
+// against the clock (unlike a narrow schedule used for a booking test)
+// because those specs always navigate to Tomorrow, where the whole day
+// is still ahead regardless of what time the run happens at.
+export async function setClinicHours(
+  request: APIRequestContext,
+  token: string,
+  doctorId: number,
+  startTime = '09:00',
+  endTime = '17:00',
+) {
+  for (let day = 1; day <= 7; day++) {
+    const res = await request.post(`${API_BASE}/doctors/${doctorId}/schedule`, {
+      headers: authed(token),
+      data: { day_of_week: day, start_time: startTime, end_time: endTime },
+    })
+    if (!res.ok()) throw new Error(`setClinicHours failed: ${await res.text()}`)
+  }
 }
 
 export async function addAllergy(
